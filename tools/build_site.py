@@ -429,6 +429,10 @@ def build(output: Path, repository: str = "", revision: str = "main", root: Path
             text = "\n".join(line for line in text.splitlines() if not re.fullmatch(
                 r"\[!\[[^]]*\]\(https://img\.shields\.io/[^)]*\)\]\([^)]*\)", line
             ))
+            text = re.sub(
+                r'<picture><img src="(site/assets/tab-(?:catalog|local|installed|history)\.svg)" width="16" height="16" alt=""></picture>',
+                r'![](\1)', text,
+            )
         renderer = Markdown(root, repository, revision)
         content = render_faq(renderer, text) if filename == "DEVELOPER_FAQ.md" else renderer.render(text)
         headings = [h for h in renderer.headings if h.level == 2]

@@ -55,10 +55,10 @@ No plugin package is downloaded before you choose an enabled action.
 
 | Tab | Use it for |
 | --- | --- |
-| ![](site/assets/tab-catalog.svg) **Catalog** | Browse online community releases and check compatibility before downloading. |
-| ![](site/assets/tab-local.svg) **Local** | Install plugin ZIPs you copied into `local-plugins/`. |
-| ![](site/assets/tab-installed.svg) **On MPC** | See plugins actually present on the device and select available update/removal actions. |
-| ![](site/assets/tab-history.svg) **History** | Compare this stick's saved installation record with the current device and available packages. |
+| <picture><img src="site/assets/tab-catalog.svg" width="16" height="16" alt=""></picture> **Catalog** | Browse online community releases and check compatibility before downloading. |
+| <picture><img src="site/assets/tab-local.svg" width="16" height="16" alt=""></picture> **Local** | Install plugin ZIPs you copied into `local-plugins/`. |
+| <picture><img src="site/assets/tab-installed.svg" width="16" height="16" alt=""></picture> **On MPC** | See plugins actually present on the device and select available update/removal actions. |
+| <picture><img src="site/assets/tab-history.svg" width="16" height="16" alt=""></picture> **History** | Compare this stick's saved installation record with the current device and available packages. |
 
 Uninstall removes the managed plugin and its registration, while keeping its history entry.<br>
 History helps identify previous installations after wiping or changing a device; it does not back up projects or plugin files.
