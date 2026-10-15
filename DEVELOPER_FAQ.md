@@ -132,18 +132,25 @@ establish support for another release.
    single input/bidirectional MIDI port whose name ends in `Private`, then
    starts a transient `mpc-usb-manager` systemd unit.
    Missing, ambiguous or invalid hardware addresses are rejected.
-3. The supervisor creates a root-only socket and session state, plus
-   `/run/systemd/system/<service>.service.d/99-mpc-usb-shortcut.conf`. This RAM
-   drop-in configures the shortcut hook for the next MPC application start.
+3. The supervisor reads the active MPC service's `MainPID` and obtains its
+   effective `LD_PRELOAD` from `/proc/<MainPID>/environ`, including values from
+   `Environment=` and `EnvironmentFile=` settings. It preserves existing preload
+   libraries in order, removes stale manager-hook entries and appends the current
+   hook last. A root-only RAM environment file is read after existing environment
+   files through `/run/systemd/system/<service>.service.d/99-mpc-usb-shortcut.conf`.
 4. The supervisor creates a separate `/tmp/mpc-usb-manager.*` opening.
    `launch.sh` stops the MPC application, waits for its exit and runs the SDL
    manager using KMSDRM with the SD target and settings path.
 5. Return to MPC, five idle minutes, or an unexpected manager exit closes that
    opening, removes its RAM data and starts the MPC application again.
 
-These are **application restarts**. No persistent startup service or root
-filesystem change is installed. Service environment files and an existing
-`LD_PRELOAD` setup are rejected rather than merged blindly.
+These are **application restarts**. The MPC service must be running before
+opening a new USB session so its effective preload configuration can be read.
+Existing service and addin configuration files are not edited.
+No persistent startup service or root filesystem change is installed.
+Preload chaining passed offline checks and an isolated native MPC Live II test
+using generic addin fixtures, without restarting the MPC application.
+Force hardware testing with addins remains pending external review.
 
 ### How does the shortcut work, and what remains after closing?
 
@@ -156,9 +163,9 @@ The supervisor waits on socket, timer, signal and USB-removal events using
 system. It remains active while the USB is present so the manager can reopen.
 
 Closing an opening discards its catalog, downloads and extracted packages.
-USB removal or supervisor termination removes its RAM drop-in, session-state
-file and runtime, then reloads systemd. The lock is released, although the
-`/run/mpc-usb-manager.lock` pathname may remain. An already-running MPC process
+USB removal or supervisor termination removes its RAM drop-in, temporary
+environment file, session-state file and runtime, then reloads systemd.
+The lock is released, although `/run/mpc-usb-manager.lock` may remain. An already-running MPC process
 can retain the loaded hook until its next application restart. Reboot loses
 the transient session; automatic persistent boot recovery is not provided.
 
@@ -357,7 +364,7 @@ test-mode environment settings against a real device as ordinary installation.
 | Rejected firmware executable | Check the official update, ARM executable structure and scanner error; do not bypass a failed validation. |
 | Private MIDI port missing/ambiguous | Setup needs exactly one input/bidirectional hardware MIDI port ending in `Private`. |
 | Missing settings or SD content | Check the existing settings path, `/sdcard/Expansions`, registration and mount options. |
-| Existing environment/preload | The current setup deliberately refuses this combination. |
+| Effective service environment unavailable | MPC must be running; the service MainPID and its process environment must be readable before opening a new session. |
 | Invalid history/preferences | Preserve the original USB JSON before repairing its schema or contents. |
 
 Package subprocesses have a 180-second deadline and a 512 MiB output-file size

@@ -15,5 +15,7 @@ c++ -std=c++17 -O2 -Wall -Wextra -Werror -shared -fPIC src/shortcut_hook.cpp -ld
 c++ -std=c++17 -O2 -Wall -Wextra -Werror src/shortcut.cpp -o build/shortcut
 c++ -std=c++17 -O2 -Wall -Wextra -Werror tests/shortcut_state_test.cpp -o build/shortcut-state-test
 cc -std=c11 -O2 -Wall -Wextra -Werror -shared -fPIC tests/shortcut_fake.c -o build/shortcut-fake.so
-cc -std=c11 -O2 -Wall -Wextra -Werror tests/shortcut_hook_test.c -Lbuild -l:shortcut-fake.so -Wl,-rpath,/tmp/shortcut-test -o build/shortcut-hook-test
+cc -std=c11 -O2 -Wall -Wextra -Werror -shared -fPIC -DADDIN_CALLS=shortcut_addin_first_reads -DADDIN_NEXT='"shortcut-addin-second.so"' tests/shortcut_addin.c -ldl -o build/shortcut-addin-first.so
+cc -std=c11 -O2 -Wall -Wextra -Werror -shared -fPIC -DADDIN_CALLS=shortcut_addin_second_reads -DADDIN_NEXT='"shortcut-hook.so"' tests/shortcut_addin.c -ldl -o build/shortcut-addin-second.so
+cc -std=c11 -O2 -Wall -Wextra -Werror tests/shortcut_hook_test.c -Lbuild -l:shortcut-fake.so -Wl,-rpath,/tmp/shortcut-test -ldl -o build/shortcut-hook-test
 c++ -std=c++17 -O2 -Wall -Wextra -Werror tests/shortcut_integration.cpp -o build/shortcut-integration

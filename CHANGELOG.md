@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.0.3 — 15-10-2026
+
+### Fixed
+
+- Preserve existing addin preload libraries in their original order and append the manager's shortcut hook last.
+- Read the running MPC service's effective `LD_PRELOAD`, including values loaded through environment files.
+- Remove stale manager-hook entries before adding the current hook.
+- Use a root-only temporary RAM environment file, read after existing service environment files, without editing addin configuration.
+- Remove the temporary environment file and service drop-in when the USB session ends.
+
 ## 1.0.2 — 15-10-2026
 
 ### Added

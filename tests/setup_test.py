@@ -68,7 +68,7 @@ exit "${SETUP_DISPATCH_STATUS-0}"
         ])
         self.assertTrue(self.work.is_dir())
         self.assertEqual(self.calls.read_text().splitlines(), [
-            "cat acvs", f"show {service} -p Environment -p EnvironmentFiles",
+            "cat acvs",
         ])
 
     def assert_rejected(self, result, message=None):
@@ -123,17 +123,18 @@ IO hw:0,1,0 USB MIDI
                 self.ports.write_text("IO hw:1,0,1 MPC Private\n" + second + "\n")
                 self.assert_rejected(self.run_setup(), "ambiguous")
 
-    def test_existing_preload_refused_before_port_lookup(self):
-        self.environment.write_text("Environment=LD_PRELOAD=/existing.so\nEnvironmentFiles=\n")
-        self.mock("amidi", 'touch "$SETUP_PORTS.called"\nexit 93\n')
-        self.assert_rejected(self.run_setup(), "Existing preload setup is unsupported")
-        self.assertFalse(Path(str(self.ports) + ".called").exists())
+    def test_existing_preload_reaches_supervisor_without_evaluation(self):
+        content = 'Environment="LD_PRELOAD=/first.so /second.so:$(touch never-run)"\nEnvironmentFiles=\n'
+        self.environment.write_text(content)
+        self.assert_dispatch(self.run_setup())
+        self.assertEqual(self.environment.read_text(), content)
+        self.assertFalse((self.root / "never-run").exists())
 
-    def test_environment_file_refused_before_port_lookup(self):
-        self.environment.write_text("Environment=\nEnvironmentFiles=/existing.env (ignore_errors=no)\n")
-        self.mock("amidi", 'touch "$SETUP_PORTS.called"\nexit 93\n')
-        self.assert_rejected(self.run_setup(), "Existing environment-file setup is unsupported")
-        self.assertFalse(Path(str(self.ports) + ".called").exists())
+    def test_environment_files_reach_supervisor_unchanged(self):
+        content = 'Environment=\nEnvironmentFiles="/existing addin.env" (ignore_errors=no)\n'
+        self.environment.write_text(content)
+        self.assert_dispatch(self.run_setup())
+        self.assertEqual(self.environment.read_text(), content)
 
     def test_arm_only_option_preserves_arguments(self):
         self.assert_dispatch(self.run_setup("--arm-only"), extra=("--arm-only",))

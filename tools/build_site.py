@@ -376,9 +376,9 @@ def landing(readme: str, root: Path, repository: str, revision: str) -> str:
     if not session_notice:
         raise ValueError("README must explain saving the project and the MPC application restart")
     if repository:
-        download = "https://github.com/{}/releases/download/v1.0.2/plugin-manager-usb-v1.0.2.zip".format(repository)
+        download = "https://github.com/{}/releases/download/v1.0.3/plugin-manager-usb-v1.0.3.zip".format(repository)
         actions = '<a class="button primary" href="{}">Download USB installer <span aria-hidden="true">↓</span></a><a class="text-link" href="guide.html#using-a-prepared-usb-bundle">USB setup guide <span aria-hidden="true">→</span></a>'.format(download)
-        release = '<a href="https://github.com/{}/releases/tag/v1.0.2">Version 1.0.2 · release details and SHA-256 checksum</a>'.format(repository)
+        release = '<a href="https://github.com/{}/releases/tag/v1.0.3">Version 1.0.3 · release details and SHA-256 checksum</a>'.format(repository)
         preparation = "Download the USB installer."
     else:
         actions = '<a class="button primary" href="guide.html#using-a-prepared-usb-bundle">Read the USB guide <span aria-hidden="true">↗</span></a><a class="text-link" href="developer.html">Explore the source <span aria-hidden="true">→</span></a>'
