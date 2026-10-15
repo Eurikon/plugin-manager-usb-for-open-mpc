@@ -868,3 +868,11 @@ h1,h2,h3 {
   margin:0 4px 4px 0;
   vertical-align:middle
 }
+.prose img.tab-icon {
+  display:inline-block;
+  width:20px;
+  height:20px;
+  border:0;
+  margin:0 8px 0 0;
+  vertical-align:middle
+}

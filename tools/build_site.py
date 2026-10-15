@@ -33,7 +33,10 @@ SIDEBAR_LABELS = {
     "testing-and-troubleshooting": "Testing Help",
     "contributing-and-preparing-releases": "Contribute",
 }
-ASSETS = {"styles.css": "assets/styles.css", "site.js": "assets/site.js", "assets/manager-catalog.png": "assets/manager-catalog.png"}
+ASSETS = {
+    "styles.css": "assets/styles.css", "site.js": "assets/site.js", "assets/manager-catalog.png": "assets/manager-catalog.png",
+    **{"assets/tab-{}.svg".format(kind): "assets/tab-{}.svg".format(kind) for kind in ("catalog", "local", "installed", "history")},
+}
 NOTICES = {"LICENSE": "license.txt", "licenses/community-tools.txt": "community-tools-license.txt"}
 
 
@@ -168,6 +171,10 @@ class Markdown:
                 source = destination if destination in ASSETS else ""
             else:
                 source = match[2]
+            if source and source.endswith(".svg"):
+                return token('<img class="tab-icon" src="{}" alt="{}" width="20" height="20" loading="lazy">'.format(
+                    ASSETS[source], html.escape(match[1], quote=True)
+                ))
             if not source or not source.endswith(".png"):
                 return token(html.escape(match[1]))
             return token('<img src="{}" alt="{}" width="1280" height="800" loading="lazy">'.format(
@@ -181,6 +188,7 @@ class Markdown:
             value,
         )
         value = re.sub(r"`([^`]+)`", lambda m: token("<code>" + html.escape(m[1]) + "</code>"), value)
+        value = re.sub(r"<br\s*/?>", lambda m: token("<br>"), value, flags=re.I)
         value = html.escape(value)
         value = re.sub(r"\*\*([^*]+)\*\*", r"<strong>\1</strong>", value)
         value = re.sub(r"(?<!\*)\*([^*]+)\*(?!\*)", r"<em>\1</em>", value)
