@@ -55,3 +55,46 @@
 - Return to MPC on request or after five idle minutes, with immediate recovery following an unexpected manager exit.
 - Manager-only USB packaging, ARM build tools and firmware-based offline tests.
 - Developer FAQ, setup guide and documentation website.
+- Standalone MIT-licensed manager source, with the required upstream and third-party notices.
+
+## Project Origins
+
+### Upstream Foundation and USB Prototype
+
+- Built on sd88me's community catalog, plugin package format and installation tooling, preserving the upstream license notices.
+- Adapted the installation workflow from a computer using root SSH to confirmed USB launch directly on the MPC.
+- Investigated the stock USB script reader and implemented autorun metadata and checksum generation without bundling Akai files.
+- Created a single-package USB installation proof of concept before building the reusable plugin manager.
+- Checked stock-reader acceptance, installation through the stock shell and refusal of a target mounted without executable support in a disposable offline environment.
+- Selected the SD card's executable Expansions folder as the plugin destination.
+
+### 05-10-2026 — Touchscreen Manager and Reopening
+
+- Added the on-device manager for catalog browsing, local ZIP installation and removal using community package scripts.
+- Kept catalog data and downloads in RAM, fetched the catalog once per opening and removed temporary data when the opening ended.
+- Corrected the rotated display and mapped touchscreen coordinates to the full-screen interface.
+- Moved OS and firmware-library compatibility checks ahead of catalog downloads, with separate download, checking and installation messages.
+- Captured the hardware panel events and implemented the two-second Shift + Menu hold while preserving the normal short-press Browser shortcut.
+- Added temporary session supervision and shortcut hooks, with cleanup when the stick is removed and no persistent startup installation.
+- Tested manager exit and crash recovery, restoring the MPC application after the manager closes.
+
+### 06-10-2026 — Catalog Design and Installation Records
+
+- Replaced the initial interface with a six-card catalog layout, the community palette, Titillium Web and matching tab/action glyphs.
+- Added light/dark themes and saved the selected theme on the USB stick.
+- Added persistent installation history and comparison with the current device, including installations already present before the manager was used.
+- Expanded device detection to inspect plugin folders, retained manager records and MPC registrations, with duplicate paths resolved.
+- Separated On MPC from History and distinguished installed versions from versions offered by the catalog or local ZIPs.
+- Added installed-card indicators, removal actions and updates for known newer releases, retaining the original-installer requirement for content outside the managed target.
+- Remembered each tab's page while the manager remains open and retained browsing after installation.
+- Added the themed welcome screen, persistent Hide message preference and the project-save reminder in the stock launch prompt.
+- Extended idle return to five minutes, suspended it during active operations and retained immediate recovery after a manager crash.
+- Added download and installation progress, then increased the bar to eight pixels with a graceful completion fade.
+- Cleared obsolete catalog status text from operation confirmations and removed temporary input/debug logging.
+
+### 10-10-2026 — Independent Build
+
+- Separated the manager into a standalone build and verified ARM compilation, shortcut fixtures, script syntax and interface rendering independently of the plugin projects.
+
+The initial prototype predates these dated refinements; its saved records do not establish an exact implementation date.
+These development milestones were consolidated into the first public release, 1.0.0.
