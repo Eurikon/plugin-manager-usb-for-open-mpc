@@ -425,6 +425,10 @@ def build(output: Path, repository: str = "", revision: str = "main", root: Path
     ), encoding="utf-8")
     for filename, (page, title) in DOCUMENTS.items():
         text = (root / filename).read_text(encoding="utf-8")
+        if filename == "README.md":
+            text = "\n".join(line for line in text.splitlines() if not re.fullmatch(
+                r"\[!\[[^]]*\]\(https://img\.shields\.io/[^)]*\)\]\([^)]*\)", line
+            ))
         renderer = Markdown(root, repository, revision)
         content = render_faq(renderer, text) if filename == "DEVELOPER_FAQ.md" else renderer.render(text)
         headings = [h for h in renderer.headings if h.level == 2]
