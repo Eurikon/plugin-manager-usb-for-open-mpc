@@ -29,6 +29,19 @@ def image(data=None):
     return b"AZ01fixture" + lzma.compress(filesystem() if data is None else data)
 
 
+def sectioned_image(data=None):
+    compressed = lzma.compress(filesystem() if data is None else data)
+    strings = b"\0rootfs\0"
+    first = 56 + len(strings) + 8
+    end = first + 64
+    header = bytearray(56)
+    header[:4] = b"AZ0x"
+    struct.pack_into("<7I", header, 4, 1, 0, 56, 56, 56 + len(strings), first, end)
+    struct.pack_into("<HH", header, 36, 1, 1)
+    record = struct.pack("<4sIQQII", b"PART", 1, end, len(compressed), 1, 0) + hashlib.sha256(compressed).digest()
+    return bytes(header) + strings + bytes(8) + record + compressed
+
+
 class RootfsTests(unittest.TestCase):
     def test_bounded_stream_ignores_later_sections_without_mutating_image(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -43,6 +56,29 @@ class RootfsTests(unittest.TestCase):
             self.assertEqual(output.read_bytes(), filesystem())
             self.assertEqual(source.read_bytes(), content)
             self.assertEqual(source.stat().st_mtime_ns, before)
+
+    def test_sectioned_image_checks_payload_and_bounds(self):
+        content = sectioned_image(filesystem() + bytes(range(256)) * 32)
+        for alteration in (None, "payload", "overlap", "name", "count", "truncated"):
+            with self.subTest(alteration=alteration), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                source, output = root / "update.img", root / "rootfs.ext"
+                changed = bytearray(content)
+                first = struct.unpack_from("<I", changed, 24)[0]
+                if alteration == "payload": changed[-20] ^= 1
+                elif alteration == "overlap": struct.pack_into("<Q", changed, first + 8, 56)
+                elif alteration == "name": struct.pack_into("<I", changed, first + 24, 9999)
+                elif alteration == "count": struct.pack_into("<H", changed, 38, 2)
+                elif alteration == "truncated": changed = changed[:-1]
+                source.write_bytes(changed)
+                if alteration is None:
+                    result = FIRMWARE.extract_rootfs(source, output)
+                    self.assertEqual(output.read_bytes(), filesystem())
+                    self.assertEqual(result["section_trailer_bytes"], 8192)
+                else:
+                    with self.assertRaises(ValueError): FIRMWARE.extract_rootfs(source, output)
+                    self.assertFalse(output.exists())
+                self.assertEqual(source.read_bytes(), changed)
 
     def test_header_can_span_decompressor_chunks(self):
         decoder_type = lzma.LZMADecompressor

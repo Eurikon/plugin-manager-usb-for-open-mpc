@@ -2,6 +2,7 @@
 import argparse
 from functools import lru_cache
 import importlib.util
+import hashlib
 import lzma
 import os
 from pathlib import Path
@@ -12,12 +13,62 @@ import subprocess
 import tempfile
 
 MAX_ROOTFS_BYTES = 512 * 1024 * 1024
+MAX_GEN2_ROOTFS_BYTES = 1024 * 1024 * 1024
+MAX_SECTION_TRAILER_BYTES = 64 * 1024 * 1024
 MAX_XZ_MEMORY = 256 * 1024 * 1024
 MAX_IMAGE_BYTES = 1024 * 1024 * 1024
 
 
 def _image_identity(value: os.stat_result) -> tuple[int, int, int, int, int]:
     return value.st_dev, value.st_ino, value.st_size, value.st_mtime_ns, value.st_ctime_ns
+
+
+def _rootfs_region(source, prefix, size):
+    if prefix[:4] == b"AZ01":
+        offset = prefix.find(b"\xfd7zXZ\0")
+        if offset < 0:
+            raise ValueError("Expected an AZ01 image with an XZ root filesystem")
+        return offset, size - offset
+    if prefix[:4] != b"AZ0x" or len(prefix) < 56:
+        raise ValueError("Unsupported firmware image format")
+    version, reserved, header, strings, devices, first, end = struct.unpack_from("<7I", prefix, 4)
+    device_count, section_count = struct.unpack_from("<HH", prefix, 36)
+    if (version != 1 or reserved or header != 56 or strings != header
+            or not strings < devices <= first < end <= size
+            or first != devices + device_count * 8 or not 1 <= section_count <= 64
+            or end != first + section_count * 64):
+        raise ValueError("Invalid sectioned firmware header")
+    source.seek(strings)
+    names = source.read(devices - strings)
+    previous, roots = end, []
+    for position in range(first, end, 64):
+        source.seek(position)
+        record = source.read(64)
+        if len(record) != 64:
+            raise ValueError("Truncated firmware section table")
+        kind, flags, offset, length, name, targets = struct.unpack_from("<4sIQQII", record)
+        if (kind not in (b"BOOT", b"PARR", b"PART") or flags not in (1, 0x80000000)
+                or offset < previous or not length or offset > size or length > size - offset
+                or name >= len(names) or b"\0" not in names[name:]
+                or (kind == b"BOOT" and (not targets or targets >> device_count))):
+            raise ValueError("Invalid firmware section bounds")
+        source.seek(offset)
+        digest = hashlib.sha256()
+        left = length
+        while left:
+            data = source.read(min(left, 1024 * 1024))
+            if not data:
+                raise ValueError("Firmware section is truncated")
+            digest.update(data)
+            left -= len(data)
+        if digest.digest() != record[32:]:
+            raise ValueError("Firmware section checksum differs")
+        if kind == b"PART" and names[name:].split(b"\0", 1)[0] == b"rootfs":
+            roots.append((offset, length))
+        previous = offset + length
+    if len(roots) != 1:
+        raise ValueError("Expected exactly one firmware root filesystem section")
+    return roots[0]
 
 
 def extract_rootfs(image, destination):
@@ -32,11 +83,10 @@ def extract_rootfs(image, destination):
             if not stat.S_ISREG(before.st_mode) or not 12 <= before.st_size <= MAX_IMAGE_BYTES:
                 raise ValueError("Firmware update image must be a regular file within the size limit")
             prefix = source.read(min(4096, before.st_size))
-            offset = prefix.find(b"\xfd7zXZ\0")
-            if prefix[:4] != b"AZ01" or offset < 0:
-                raise ValueError("Expected an AZ01 image with an XZ root filesystem")
+            offset, compressed_remaining = _rootfs_region(source, prefix, before.st_size)
+            sectioned = prefix[:4] == b"AZ0x"
+            maximum = MAX_GEN2_ROOTFS_BYTES if sectioned else MAX_ROOTFS_BYTES
             source.seek(offset)
-            compressed_remaining = before.st_size - offset
             decoder = lzma.LZMADecompressor(format=lzma.FORMAT_XZ, memlimit=MAX_XZ_MEMORY)
             total, expected = 0, None
             header, padding = bytearray(), bytearray()
@@ -49,7 +99,7 @@ def extract_rootfs(image, destination):
                         raise ValueError("Firmware root filesystem is truncated")
                     data = decoder.decompress(compressed, max_length=1024 * 1024)
                     total += len(data)
-                    if total > MAX_ROOTFS_BYTES:
+                    if total > maximum + (MAX_SECTION_TRAILER_BYTES if sectioned else 0):
                         raise ValueError("Firmware root filesystem size differs")
                     if expected is None:
                         header.extend(data)
@@ -62,15 +112,16 @@ def extract_rootfs(image, destination):
                         if shift > 4:
                             raise ValueError("Unsupported ext filesystem block size")
                         expected = blocks * (1024 << shift)
-                        if not 4096 <= expected <= MAX_ROOTFS_BYTES:
+                        if not 4096 <= expected <= maximum:
                             raise ValueError("Firmware root filesystem exceeds fixture limits")
                         data = bytes(header)
                         header.clear()
-                    if total > expected + 4096:
+                    if total > expected + (MAX_SECTION_TRAILER_BYTES if sectioned else 4096):
                         raise ValueError("Firmware root filesystem size differs")
                     if total > expected:
                         extra = min(len(data), total - expected)
-                        padding.extend(data[-extra:])
+                        if not sectioned:
+                            padding.extend(data[-extra:])
                         data = data[:-extra]
                     output.write(data)
             if expected is None or total < expected or any(padding):
@@ -86,7 +137,10 @@ def extract_rootfs(image, destination):
         if created:
             destination.unlink(missing_ok=True)
         raise
-    return {"xz_offset": offset, "rootfs_bytes": expected, "stream_padding_bytes": len(padding)}
+    result = {"xz_offset": offset, "rootfs_bytes": expected, "stream_padding_bytes": len(padding)}
+    if sectioned:
+        result["section_trailer_bytes"] = total - expected
+    return result
 
 
 @lru_cache(maxsize=1)
@@ -137,7 +191,11 @@ def extract_firmware(image, destination, *, controller_helper=False):
         if controller_helper:
             helper = manager_package()._helper()
             helper.profile_seed(executable)
-            result.update(executable_sha256=helper.FIRMWARE_SHA256, controller_profile="Gen1 OS 3.10")
+            with executable.open("rb") as source:
+                executable_hash = hashlib.file_digest(source, "sha256").hexdigest()
+                source.seek(4)
+                generation = "Gen2" if source.read(1) == b"\x02" else "Gen1"
+            result.update(executable_sha256=executable_hash, controller_profile=generation + " OS 3.10")
         else:
             result.update(validate_executable(executable))
         result["firmware_executable_verified"] = True
@@ -151,7 +209,7 @@ def main():
     parser = argparse.ArgumentParser(description="Extract a local MPC update with a compatible autorun scheme for offline packaging/tests")
     parser.add_argument("update_image", type=Path)
     parser.add_argument("destination", type=Path, help="Nonexisting disposable extracted root under /tmp")
-    parser.add_argument("--controller-helper", action="store_true", help="Validate the tested Gen1 OS 3.10 controller profile instead of legacy autorun")
+    parser.add_argument("--controller-helper", action="store_true", help="Validate a supported OS 3.10 controller profile instead of legacy autorun")
     args = parser.parse_args()
     try:
         extract_firmware(args.update_image, args.destination, controller_helper=args.controller_helper)

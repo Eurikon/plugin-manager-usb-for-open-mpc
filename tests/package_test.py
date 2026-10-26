@@ -31,6 +31,15 @@ def executable(salt=TEST_SALT, offsets=(259,), kind=3):
     return bytes(data)
 
 
+def executable64(salt=TEST_SALT):
+    data = bytearray(512)
+    data[:16] = b"\x7fELF\x02\x01\x01" + bytes(9)
+    struct.pack_into("<HHIQQQIHHHHHH", data, 16, 3, 183, 1, 0x10080, 64, 0, 0, 64, 56, 1, 0, 0, 0)
+    struct.pack_into("<II6Q", data, 64, 1, 5, 0, 0x10000, 0x10000, len(data), len(data), 4096)
+    data[259:296] = bytes(value ^ TEST_KEY[index % 8] for index, value in enumerate(salt.ljust(37, b"\0")))
+    return bytes(data)
+
+
 class PackageTests(unittest.TestCase):
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory()
@@ -51,6 +60,17 @@ class PackageTests(unittest.TestCase):
         self.addCleanup(patch.stopall)
         patch.object(PACKAGE, "PROJECT", self.project).start()
         patch.object(PACKAGE, "EXPECTED_SALT_SHA256", hashlib.sha256(TEST_SALT).hexdigest()).start()
+
+    def test_aarch64_structure_and_salt_are_validated(self):
+        self.firmware.write_bytes(executable64())
+        salt, result = PACKAGE.validate_mpc_executable(self.firmware)
+        self.assertEqual(salt, TEST_SALT)
+        self.assertEqual(result["arch"], "aarch64")
+        for offset, value in ((18, 40), (54, 32)):
+            data = bytearray(executable64())
+            struct.pack_into("<H", data, offset, value)
+            self.firmware.write_bytes(data)
+            with self.assertRaises(ValueError): PACKAGE.validate_mpc_executable(self.firmware)
 
     def test_default_contains_manager_not_firmware_or_plugins(self):
         PACKAGE.build_package(self.firmware, self.output)
@@ -75,6 +95,29 @@ class PackageTests(unittest.TestCase):
         self.assertEqual(set(manifest), files)
         for name, digest in manifest.items():
             self.assertEqual(hashlib.sha256((self.output / name).read_bytes()).hexdigest(), digest)
+
+    def test_dual_architecture_runtime_is_covered_by_both_inventories(self):
+        arm64 = self.root / "ARM64 outputs"
+        arm64.mkdir()
+        for name in ("manager", "shortcut", "shortcut-hook.so"):
+            (arm64 / name).write_bytes(executable64())
+        PACKAGE.build_package(self.firmware, self.output, arm64_build=arm64)
+        autorun = self.output / "autorun"
+        files = json.loads((autorun / "autorun.json").read_text())["value0"]["files"]
+        manifest = json.loads((self.output / "USB-SHA256.json").read_text())
+        for name in ("manager", "shortcut", "shortcut-hook.so"):
+            relative = "runtime/aarch64/" + name
+            self.assertIn(relative, files)
+            self.assertEqual(manifest["autorun/" + relative], hashlib.sha256(executable64()).hexdigest())
+        self.assertEqual((autorun / "runtime/manager").read_text(), "fixture manager")
+
+    def test_wrong_arm64_build_does_not_create_bundle(self):
+        arm64 = self.root / "ARM64 outputs"
+        arm64.mkdir()
+        (arm64 / "manager").write_bytes(executable())
+        with self.assertRaisesRegex(ValueError, "ARM64 build"):
+            PACKAGE.build_package(self.firmware, self.output, arm64_build=arm64)
+        self.assertFalse(self.output.exists())
 
     def test_explicit_external_zip_is_optional(self):
         source = os.environ.get("TEST_PACKAGE_ZIP")

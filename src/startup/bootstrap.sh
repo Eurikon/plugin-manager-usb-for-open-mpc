@@ -21,13 +21,34 @@ FILES='manager font.ttf launch.sh setup.sh shortcut shortcut-hook.so'
 PROJECT_BYTES=48697
 PROJECT_SHA256='b8182372a271cc8b3d5c9e50af8c84012fc142d6894b516abc4f7bdd9f0fa830'
 
+MANIFEST=runtime.sha256
+SOURCE_EXFAT=0
+case "$(uname -m)" in
+    aarch64)
+        SOURCE=$(CDPATH= cd "$(dirname "$0")" && pwd -P)
+        case "$SOURCE" in
+            '/nvme/MPC Documents/Devices/Plugin Manager helper'|'/sdcard/MPC Documents/Devices/Plugin Manager helper'|'/storage/MPC Documents/Devices/Plugin Manager helper'|'/data/UserData/MPC Documents/Devices/Plugin Manager helper') ;;
+            *) printf '%s\n' 'unsupported helper location' >&2; exit 11 ;;
+        esac
+        EXPECTED='b80687ed4f6b5233486a9e20ff043b35e9863bc6460bd573a249421133d77b63'
+        INTERNAL=${SOURCE%'/MPC Documents/Devices/Plugin Manager helper'}
+        MANIFEST=runtime-aarch64.sha256
+        FILES='aarch64/manager font.ttf launch.sh setup.sh aarch64/shortcut aarch64/shortcut-hook.so'
+        ;;
+esac
+
 fail() { printf '%s\n' "$1" >&2; exit "$2"; }
 regular_source() {
     [ -f "$1" ] && [ ! -L "$1" ] || return 1
     [ "$(stat -c %u "$1")" = "$OWNER_UID" ] || return 1
     mode=$(stat -c %a "$1")
     case "$mode" in ''|*[!0-7]*) return 1 ;; esac
-    [ "${#mode}" -le 3 ] && [ "$((0$mode & 0422))" = 256 ]
+    [ "${#mode}" -le 3 ] || return 1
+    [ "$((0$mode & 0422))" = 256 ] && return 0
+    case "$SOURCE_EXFAT:$1" in
+        1:"$SOURCE"/*) [ "$(stat -c %d "$1")" = "$(stat -c %d "$SOURCE")" ] ;;
+        *) return 1 ;;
+    esac
 }
 remove_import_project() {
     project="$SOURCE/PluginManager.xpj"
@@ -79,7 +100,7 @@ storage_config() {
     sd_capable || return 1
     sd_uuid=''
     regular_source "$SOURCE/installed-storage" || return 1
-    [ "$(stat -c %a "$SOURCE/installed-storage")" = 600 ] \
+    { [ "$(stat -c %a "$SOURCE/installed-storage")" = 600 ] || [ "$SOURCE_EXFAT" = 1 ]; } \
         && [ "$(stat -c %h "$SOURCE/installed-storage")" = 1 ] || return 1
     [ "$(wc -c < "$SOURCE/installed-storage")" -le 94 ] || return 1
     {
@@ -104,7 +125,7 @@ storage_config() {
         sd_number=$number
     done < "$MOUNTS"
     [ -n "$sd_number" ] || return 1
-    for internal in / /data "$INTERNAL" /media/az01-internal; do
+    for internal in / /data /nvme /storage "$INTERNAL" /media/az01-internal; do
         [ ! -e "$internal" ] || [ "$(stat -c %d "$internal")" != "$sd_number" ] || return 1
     done
 }
@@ -231,11 +252,13 @@ esac
 [ "$(stat -c %u "$SOURCE")" = "$OWNER_UID" ] || fail 'source owner mismatch' 11
 mode=$(stat -c %a "$SOURCE")
 case "$mode" in ''|*[!0-7]*) fail 'invalid source permissions' 11 ;; esac
-[ "${#mode}" -le 3 ] && [ "$((0$mode & 0722))" = 448 ] || fail 'unsafe source permissions' 11
-regular_source "$SOURCE/bootstrap.sh" && regular_source "$SOURCE/runtime.sha256" || fail 'invalid source file' 11
-[ "$(wc -c < "$SOURCE/runtime.sha256")" -le 512 ] || fail 'manifest exceeds size bound' 11
+if [ "$MANIFEST" = runtime-aarch64.sha256 ] && [ "$(stat -f -c %t "$SOURCE")" = 2011bab0 ] \
+    && [ "$(stat -c %d "$SOURCE")" = "$(stat -c %d "$INTERNAL")" ]; then SOURCE_EXFAT=1; fi
+[ "${#mode}" -le 3 ] && { [ "$((0$mode & 0722))" = 448 ] || [ "$SOURCE_EXFAT" = 1 ]; } || fail 'unsafe source permissions' 11
+regular_source "$SOURCE/bootstrap.sh" && regular_source "$SOURCE/$MANIFEST" || fail 'invalid source file' 11
+[ "$(wc -c < "$SOURCE/$MANIFEST")" -le 512 ] || fail 'manifest exceeds size bound' 11
 bytes=0
-exec 3< "$SOURCE/runtime.sha256"
+exec 3< "$SOURCE/$MANIFEST"
 for name in $FILES; do
     IFS= read -r entry <&3 || fail 'missing manifest entry' 11
     digest=${entry%%  *}
@@ -246,7 +269,7 @@ for name in $FILES; do
 done
 ! IFS= read -r entry <&3 || fail 'extra manifest entry' 11
 exec 3<&-
-[ "$(wc -c < "$SOURCE/runtime.sha256")" = "$bytes" ] || fail 'extra manifest content' 11
+[ "$(wc -c < "$SOURCE/$MANIFEST")" = "$bytes" ] || fail 'extra manifest content' 11
 actual=$(sha256sum "$MPC" 2>/dev/null) || fail 'firmware unavailable' 10
 [ "${actual%% *}" = "$EXPECTED" ] || fail 'unsupported firmware' 10
 idle_session
@@ -300,7 +323,7 @@ runtime="$usb/autorun/runtime"
 for name in $FILES; do
     [ -f "$runtime/$name" ] && [ ! -L "$runtime/$name" ] || fail 'invalid runtime file' 11
 done
-(cd "$runtime" && sha256sum -c "$SOURCE/runtime.sha256" >/dev/null 2>&1) || fail 'runtime checksum mismatch' 11
+(cd "$runtime" && sha256sum -c "$SOURCE/$MANIFEST" >/dev/null 2>&1) || fail 'runtime checksum mismatch' 11
 idle_session
 
 trap cleanup EXIT
@@ -313,8 +336,15 @@ work=$(mktemp -d "$RAM_TEMPLATE") || fail 'RAM staging unavailable' 12
     fail 'unexpected RAM staging path' 12
 }
 chmod 700 "$work"
-for name in $FILES; do cp "$runtime/$name" "$work/$name"; done
-(cd "$work" && sha256sum -c "$SOURCE/runtime.sha256" >/dev/null 2>&1) || fail 'RAM copy checksum mismatch' 12
+for name in $FILES; do
+    case "$name" in */*) mkdir -p "$work/${name%/*}" ;; esac
+    cp "$runtime/$name" "$work/$name"
+done
+(cd "$work" && sha256sum -c "$SOURCE/$MANIFEST" >/dev/null 2>&1) || fail 'RAM copy checksum mismatch' 12
+if [ "$MANIFEST" = runtime-aarch64.sha256 ]; then
+    for name in manager shortcut shortcut-hook.so; do mv "$work/aarch64/$name" "$work/$name"; done
+    rmdir "$work/aarch64"
+fi
 chmod 700 "$work/manager" "$work/shortcut"
 if sd_capable; then
     MPC_MANAGER_SD_HELPER=$SOURCE

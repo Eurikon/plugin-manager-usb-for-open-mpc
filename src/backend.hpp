@@ -1,5 +1,6 @@
 #pragma once
 #include <nlohmann/json.hpp>
+#include "platform.hpp"
 #include <filesystem>
 #include <string>
 #include <vector>
@@ -11,7 +12,8 @@ struct Manager {
     fs::path usb, session, synths, settings;
     std::vector<Json> catalog;
     std::string catalogError;
-    Manager(fs::path u, fs::path s, fs::path target, fs::path set);
+    const std::string arch;
+    Manager(fs::path u, fs::path s, fs::path target, fs::path set, std::string architecture=managerArchitecture());
     void openCatalog();
     Json checkManagerUpdate();
     Json stageManagerUpdate(const Json& checkedRelease, const std::function<void(const std::string&)>& progress = {}, const std::function<void(float)>& amount = {});

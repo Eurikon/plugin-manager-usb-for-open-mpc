@@ -2,6 +2,8 @@
 #define _GNU_SOURCE
 #endif
 #include "native_ui.h"
+#include "platform.hpp"
+#include "storage.h"
 #include "panel_input.h"
 #include <algorithm>
 #include <atomic>
@@ -11,6 +13,8 @@
 #include <cstdlib>
 #include <cstring>
 #include <dirent.h>
+#include <dlfcn.h>
+#include <limits.h>
 #include <fcntl.h>
 #include <fstream>
 #include <link.h>
@@ -34,7 +38,24 @@
 extern "C" int pmu_prepare_manager(const char *, const char *, const char *);
 
 namespace {
-constexpr const char *source = "/sdcard/MPC Documents/Devices/Plugin Manager helper";
+#if defined(__aarch64__)
+char source[PATH_MAX] = PMU_HELPER_DIRECTORY;
+extern "C" int pmu_set_helper_directory(const char *);
+bool selectSource() {
+    Dl_info module{};
+    char path[PATH_MAX];
+    if (!dladdr(reinterpret_cast<void *>(&selectSource), &module) || !module.dli_fname
+        || !realpath(module.dli_fname, path) || strcmp(path, module.dli_fname) != 0) return false;
+    char *leaf = strrchr(path, '/');
+    if (!leaf || strcmp(leaf, "/manager-entry-aarch64.so") != 0) return false;
+    *leaf = 0;
+    if (!pmu_helper_directory_valid(path) || !pmu_set_helper_directory(path)) return false;
+    strcpy(source, path);
+    return true;
+}
+#else
+constexpr const char *source = PMU_HELPER_DIRECTORY;
+#endif
 constexpr const char *statePath = "/run/mpc-usb-manager-session";
 constexpr const char marker[] = "mpc-usb-manager-v1\n";
 constexpr const char enabled[] = "open-mpc-manager-reusable-v1\n";
@@ -92,7 +113,7 @@ bool firmwareMatches() {
     close(pipes[0]);
     if (!finished) { kill(child, SIGKILL); while (waitpid(child, nullptr, 0) < 0 && errno == EINTR) {} }
     return finished && WIFEXITED(status) && WEXITSTATUS(status) == 0
-        && output == "753f838ca362d42c8cc3f5c9c3fcc604ba076b5919212e0301923a3c11c93494  /usr/bin/MPC\n";
+        && output == PMU_FIRMWARE_SHA256 "  /usr/bin/MPC\n";
 }
 
 struct Mount {
@@ -213,7 +234,7 @@ bool exactFile(const std::string &path, const char *bytes, size_t length, bool o
     char buffer[64];
     const bool valid = length < sizeof buffer && fstat(fd, &st) == 0 && S_ISREG(st.st_mode)
         && st.st_size == static_cast<off_t>(length)
-        && (!owned || (st.st_uid == 0 && !(st.st_mode & 0022) && st.st_nlink == 1))
+        && (!owned || (st.st_uid == 0 && (!(st.st_mode & 0022) || pmu_helper_exfat(fd)) && st.st_nlink == 1))
         && read(fd, buffer, length + 1) == static_cast<ssize_t>(length)
         && memcmp(bytes, buffer, length) == 0;
     close(fd);
@@ -222,9 +243,12 @@ bool exactFile(const std::string &path, const char *bytes, size_t length, bool o
 
 bool enabledSource() {
     struct stat st{};
-    return lstat(source, &st) == 0 && S_ISDIR(st.st_mode) && st.st_uid == 0
-        && (st.st_mode & 0722) == 0700
-        && exactFile(std::string(source) + "/manager-enabled", enabled, sizeof enabled - 1, true);
+    int fd = open(source, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+    if (fd < 0) return false;
+    const bool valid = fstat(fd, &st) == 0 && S_ISDIR(st.st_mode) && st.st_uid == 0
+        && ((st.st_mode & 0722) == 0700 || pmu_helper_exfat(fd));
+    close(fd);
+    return valid && exactFile(std::string(source) + "/manager-enabled", enabled, sizeof enabled - 1, true);
 }
 
 bool unescape(const std::string &text, std::string &out) {
@@ -265,7 +289,7 @@ bool configuredDevice(dev_t &device) {
         || uuid.find_first_not_of("0123456789abcdefABCDEF-") != std::string::npos) return false;
     struct stat block{}, internal{};
     if (stat(("/dev/disk/by-uuid/" + uuid).c_str(), &block) != 0 || !S_ISBLK(block.st_mode)) return false;
-    for (const char *path : {"/", "/data", "/sdcard", "/media/az01-internal"})
+    for (const char *path : {"/", "/data", "/sdcard", "/nvme", "/storage", "/media/az01-internal"})
         if (stat(path, &internal) == 0 && block.st_rdev == internal.st_dev) return false;
     device = block.st_rdev;
     return true;
@@ -538,8 +562,8 @@ bool ownedText(const std::string &path, std::string &text) {
     struct stat st{};
     char bytes[256];
     const bool safe = fstat(fd, &st) == 0 && S_ISREG(st.st_mode) && st.st_uid == 0
-        && (st.st_mode & 07777) == 0600 && st.st_nlink == 1
-        && st.st_size > 0 && st.st_size < static_cast<off_t>(sizeof bytes);
+        && ((st.st_mode & 07777) == 0600 || (path.compare(0, strlen(source) + 1, std::string(source) + "/") == 0 && pmu_helper_exfat(fd)))
+        && st.st_nlink == 1 && st.st_size > 0 && st.st_size < static_cast<off_t>(sizeof bytes);
     const ssize_t count = safe ? read(fd, bytes, sizeof bytes) : -1;
     close(fd);
     if (count <= 0 || count != st.st_size) return false;
@@ -1056,7 +1080,11 @@ int mainImage(dl_phdr_info *info, size_t, void *result) {
 
 extern "C" int pmu_start_manager(void *lua) {
     try {
-        if (session || geteuid() != 0 || !enabledSource()) return 0;
+        if (session || geteuid() != 0) return 0;
+#if defined(__aarch64__)
+        if (!selectSource()) return 0;
+#endif
+        if (!enabledSource()) return 0;
         char executable[64]{};
         if (readlink("/proc/self/exe", executable, sizeof executable - 1) != 12
             || strcmp(executable, "/usr/bin/MPC") != 0) return 0;

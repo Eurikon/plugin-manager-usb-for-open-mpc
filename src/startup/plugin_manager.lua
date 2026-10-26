@@ -1,9 +1,12 @@
 local ENABLED = false
-local MODULE = "/sdcard/MPC Documents/Devices/Plugin Manager helper/manager-entry.so"
+local info = debug and debug.getinfo and debug.getinfo(1, "S")
+local directory = info and info.source and info.source:match("^@(.*/)")
+local wide = string.packsize and string.packsize("T") == 8
+local MODULE = directory and directory .. (wide and "manager-entry-aarch64.so" or "manager-entry.so")
 local stop
 
 local function start()
-    if not ENABLED or not mpc or not mpc.ui or not mpc.ui.popups
+    if not ENABLED or not MODULE or not mpc or not mpc.ui or not mpc.ui.popups
         or not debug or type(debug.getupvalue) ~= "function" then
         return "unavailable"
     end

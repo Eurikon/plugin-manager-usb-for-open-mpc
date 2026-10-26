@@ -86,7 +86,50 @@ std::string sha256(const fs::path& file) {
     require(WIFEXITED(status)&&WEXITSTATUS(status)==0&&output.size()>=64,"Checksum failed");
     return output.substr(0,64);
 }
-Manager::Manager(fs::path u,fs::path s,fs::path target,fs::path set):usb(std::move(u)),session(std::move(s)),synths(std::move(target)),settings(std::move(set)) {
+static std::string xmlText(std::string text);
+static std::string mountPath(const std::string& encoded) {
+    std::string result;
+    for(size_t i=0;i<encoded.size();++i) {
+        if(encoded[i]=='\\') {
+            require(i+3<encoded.size(),"Invalid mount path");
+            const auto code=encoded.substr(i+1,3);
+            require(code=="040"||code=="134","Unsupported mount path");
+            result+=code=="040"?' ':'\\';i+=3;
+        }else result+=encoded[i];
+    }
+    return result;
+}
+static bool executableContent(const fs::path& target,const std::string& mounts) {
+    const std::string path=target.lexically_normal().string();
+    bool allowed=false;
+    for(const char* root:{"/nvme/","/sdcard/","/storage/","/data/UserData/","/media/"})
+        if(path.rfind(root,0)==0)allowed=true;
+    if(!allowed||!fs::is_directory(target))return false;
+    std::istringstream input(mounts);std::string line;size_t longest=0;bool writable=false;
+    while(std::getline(input,line)) {
+        std::istringstream row(line);std::string device,point,type,options;
+        if(!(row>>device>>point>>type>>options))continue;
+        point=mountPath(point);
+        if(point=="/"||!(path==point||path.rfind(point+"/",0)==0)||point.size()<longest)continue;
+        longest=point.size();options=","+options+",";
+        writable=options.find(",rw,")!=std::string::npos&&options.find(",noexec,")==std::string::npos&&options.find(",ro,")==std::string::npos;
+    }
+    return longest!=0&&writable;
+}
+static fs::path registeredContent(const fs::path& settings) {
+    const auto xml=read(settings),mounts=read("/proc/mounts");
+    const std::regex location("<Location>([^<]+)</Location>");
+    std::vector<fs::path> candidates;
+    for(std::sregex_iterator it(xml.begin(),xml.end(),location),end;it!=end;++it) {
+        const fs::path path=xmlText((*it)[1]);
+        if(path.is_absolute()&&path.lexically_normal()==path&&executableContent(path,mounts))candidates.push_back(path);
+    }
+    for(const auto& path:candidates)if(path=="/nvme/Synths")return path;
+    return candidates.empty()?fs::path("/nvme/Synths"):candidates.front();
+}
+Manager::Manager(fs::path u,fs::path s,fs::path target,fs::path set,std::string architecture):usb(std::move(u)),session(std::move(s)),synths(std::move(target)),settings(std::move(set)),arch(std::move(architecture)) {
+    require(arch=="armv7"||arch=="aarch64","Unsupported device architecture");
+    if(synths=="auto"){require(arch=="aarch64","Automatic plugin storage requires Gen 2");synths=registeredContent(settings);}
     fs::create_directories(session);
     require(setenv("MPC_SETTINGS",settings.c_str(),1)==0,"Cannot set settings path");
 }
@@ -96,6 +139,7 @@ static std::vector<int> libcVersion(const std::string& text) {
     require(!result.empty(),"Missing libc version");while(result.size()<3)result.push_back(0);return result;
 }
 static std::string catalogBlock(const Json& item) {
+    if(!item.value("available_for_arch",true))return "No package is available for this device generation";
     const auto compatibility=item.value("os_compat",Json::array());
     if(!compatibility.is_array()||std::find(compatibility.begin(),compatibility.end(),"3.x")==compatibility.end())return "Catalog does not confirm MPC OS 3 support";
     try {if(libcVersion(item.value("max_glibc",""))>libcVersion(gnu_get_libc_version()))return "Requires newer firmware libraries";}catch(const std::exception&){return "Catalog library compatibility is unknown";}
@@ -115,10 +159,14 @@ void Manager::openCatalog() {
         std::vector<std::string> c;std::stringstream row(line);std::string field;
         while(std::getline(row,field,'\t')) c.push_back(field);
         if(c.size()<14||c[0]!="plugin"||c[3]!="1"||c[4]=="addin") continue;
-        if(!std::regex_match(c[1],std::regex("[a-z0-9][a-z0-9_-]*"))||!std::regex_match(c[10],std::regex("[0-9a-f]{64}"))||c[11].rfind("https://",0)!=0) continue;
+        if(!std::regex_match(c[1],std::regex("[a-z0-9][a-z0-9_-]*"))) continue;
+        const size_t asset=arch=="aarch64"?16:9;
+        const bool available=c.size()>asset+2&&std::regex_match(c[asset],std::regex("[1-9][0-9]*"))
+            &&std::regex_match(c[asset+1],std::regex("[0-9a-f]{64}"))&&c[asset+2].rfind("https://",0)==0;
+        if(!available&&c[10]!="-"&&!std::regex_match(c[10],std::regex("[0-9a-f]{64}")))continue;
         Json compatibility=Json::array();
         if(c.size()>14){std::stringstream generations(c[14]);std::string generation;while(std::getline(generations,generation,','))if(generation!="-")compatibility.push_back(generation);}
-        catalog.push_back({{"id",c[1]},{"version",c[2]},{"kind",c[4]},{"name",c[5]},{"skin",c[6]},{"uid",c[7]},{"size",c[9]},{"sha",c[10]},{"url",c[11]},{"origin","catalog"},{"os_compat",compatibility},{"max_glibc",c.size()>15?c[15]:""},{"defer",c[13]=="1"}});
+        catalog.push_back({{"id",c[1]},{"version",c[2]},{"kind",c[4]},{"name",c[5]},{"skin",c[6]},{"uid",c[7]},{"size",available?c[asset]:"0"},{"sha",available?c[asset+1]:""},{"url",available?c[asset+2]:""},{"available_for_arch",available},{"arch",arch},{"origin","catalog"},{"os_compat",compatibility},{"max_glibc",c.size()>15?c[15]:""},{"defer",c[13]=="1"}});
         catalog.back()["blocked_reason"]=catalogBlock(catalog.back());
     }
     const auto details=session/"catalog.json";
@@ -131,7 +179,14 @@ void Manager::openCatalog() {
                 for(auto& item:catalog) {
                     if(plugin.value("id","")!=item.at("id"))continue;
                     for(const auto& version:plugin.at("versions")) {
-                        if(!version.is_object()||version.value("version","")!=item.at("version")||version.value("sha256","")!=item.at("sha"))continue;
+                        if(!version.is_object()||version.value("version","")!=item.at("version"))continue;
+                        const Json* asset=&version;
+                        if(arch=="aarch64") {
+                            if(!version.contains("assets")||!version.at("assets").is_object()
+                                ||!version.at("assets").contains(arch)||!version.at("assets").at(arch).is_object())continue;
+                            asset=&version.at("assets").at(arch);
+                        }
+                        if(asset->value("sha256","")!=item.at("sha"))continue;
                         for(const char* field:{"author","summary","license"})if(plugin.contains(field)&&plugin.at(field).is_string())item[field]=plugin.at(field);
                     }
                 }
@@ -198,7 +253,7 @@ Json Manager::checkManagerUpdate() {
 }
 static bool managerBundleFile(const std::string& name) {
     static const std::set<std::string> files={".mpc-manager-id","USB-SHA256.json","Plugin Manager helper.xpa","autorun/autorun.check","autorun/autorun.json","autorun/open.sh","autorun/runtime/manager","autorun/runtime/font.ttf","autorun/runtime/launch.sh","autorun/runtime/setup.sh","autorun/runtime/shortcut","autorun/runtime/shortcut-hook.so"};
-    return files.count(name)||std::regex_match(name,std::regex("autorun/runtime/licenses/[A-Za-z0-9][A-Za-z0-9_.-]*"));
+    return files.count(name)||std::regex_match(name,std::regex("autorun/runtime/aarch64/(manager|shortcut|shortcut-hook\\.so)"))||std::regex_match(name,std::regex("autorun/runtime/licenses/[A-Za-z0-9][A-Za-z0-9_.-]*"));
 }
 static Json unpackManagerBundle(const fs::path& zip,const fs::path& destination) {
     require(!fs::exists(destination),"Manager staging folder already exists");fs::create_directory(destination);
@@ -207,7 +262,7 @@ static Json unpackManagerBundle(const fs::path& zip,const fs::path& destination)
     try {
         require(archive_read_open_filename(archive,zip.c_str(),65536)==ARCHIVE_OK,"Cannot open manager ZIP");
         archive_entry* entry=nullptr;std::set<std::string> names,files;uint64_t total=0;int status;
-        const std::set<std::string> directories={"autorun","autorun/runtime","autorun/runtime/licenses","local-plugins"};
+        const std::set<std::string> directories={"autorun","autorun/runtime","autorun/runtime/aarch64","autorun/runtime/licenses","local-plugins"};
         while((status=archive_read_next_header(archive,&entry))==ARCHIVE_OK) {
             const char* raw=archive_entry_pathname(entry);require(raw!=nullptr,"Missing manager ZIP path");
             std::string name(raw);const auto type=archive_entry_filetype(entry);
@@ -238,10 +293,16 @@ static Json unpackManagerBundle(const fs::path& zip,const fs::path& destination)
         const auto& value=autorun.at("value0");require(value.contains("files")&&value.at("files").is_array()&&value.contains("scripts")&&value.at("scripts").is_array()&&value.at("scripts").size()==1&&value.at("scripts")[0].is_object()&&value.at("scripts")[0].contains("path")&&value.at("scripts")[0].at("path")=="open.sh","Invalid manager autorun entries");
         std::set<std::string> declared,expected;for(const auto& file:files)if(file.rfind("autorun/runtime/",0)==0)expected.insert(file.substr(8));
         for(const auto& file:value.at("files")){require(file.is_string()&&declared.insert(file.get<std::string>()).second,"Invalid manager autorun file inventory");}require(declared==expected,"Manager autorun inventory differs from its runtime");
-        for(const char* name:{"manager","shortcut","shortcut-hook.so"}) {
-            std::array<unsigned char,52> header{};std::ifstream binary(destination/"autorun/runtime"/name,std::ios::binary);binary.read(reinterpret_cast<char*>(header.data()),header.size());
-            auto word=[&](size_t offset){return unsigned(header[offset])|(unsigned(header[offset+1])<<8);};
-            require(binary.gcount()==static_cast<std::streamsize>(header.size())&&header[0]==0x7f&&header[1]=='E'&&header[2]=='L'&&header[3]=='F'&&header[4]==1&&header[5]==1&&header[6]==1&&(word(16)==2||word(16)==3)&&word(18)==40&&word(40)==52,"Manager runtime is not a supported ARM ELF");
+        for(const auto& architecture:std::vector<std::string>{"armv7","aarch64"}) {
+            const auto directory=destination/"autorun/runtime"/(architecture=="armv7"?"":"aarch64");
+            if(architecture=="aarch64"&&!fs::exists(directory))continue;
+            for(const char* name:{"manager","shortcut","shortcut-hook.so"}) {
+                std::array<unsigned char,64> header{};std::ifstream binary(directory/name,std::ios::binary);
+                binary.read(reinterpret_cast<char*>(header.data()),header.size());
+                auto word=[&](size_t offset){return unsigned(header[offset])|(unsigned(header[offset+1])<<8);};
+                const bool is64=architecture=="aarch64";
+                require(binary.gcount()>=static_cast<std::streamsize>(is64?64:52)&&header[0]==0x7f&&header[1]=='E'&&header[2]=='L'&&header[3]=='F'&&header[4]==(is64?2:1)&&header[5]==1&&header[6]==1&&(word(16)==2||word(16)==3)&&word(18)==(is64?183:40)&&word(is64?52:40)==(is64?64:52),"Manager runtime is not a supported ARM ELF");
+            }
         }
         fs::create_directories(destination/"local-plugins");return manifest;
     }catch(...){if(archive)archive_read_free(archive);std::error_code error;fs::remove_all(destination,error);throw;}
@@ -263,7 +324,9 @@ Json Manager::stageManagerUpdate(const Json& checkedRelease,const std::function<
         require(status==0,"Manager download failed; check your connection and retry");
         require(fs::is_regular_file(zip)&&fs::file_size(zip)==size&&sha256(zip)==asset.at("sha256"),"Manager download size or checksum mismatch");
         if(progress)progress("Verifying the manager bundle...");
-        const auto files=unpackManagerBundle(zip,bundle);fs::remove(zip);if(amount)amount(1);
+        const auto files=unpackManagerBundle(zip,bundle);
+        require(arch!="aarch64"||fs::is_regular_file(bundle/"autorun/runtime/aarch64/manager"),"Manager update has no Gen 2 runtime");
+        fs::remove(zip);if(amount)amount(1);
         return {{"bundle_root",bundle.string()},{"release",release},{"files",files}};
     }catch(...){std::error_code error;fs::remove_all(stage,error);throw;}
 }
@@ -290,7 +353,8 @@ void Manager::verifyLatestPlugin(const std::string& id,const std::string& repo) 
         for(const auto& entry:assets) {
             require(entry.is_object(),"Invalid latest release asset");
             const auto name=entry.value("name","");
-            if(name.size()<14||name.compare(name.size()-14,14,"-mpc-armv7.zip")!=0)continue;
+            const auto suffix="-mpc-"+arch+".zip";
+            if(name.size()<suffix.size()||name.compare(name.size()-suffix.size(),suffix.size(),suffix)!=0)continue;
             require(asset==nullptr,"Latest release has multiple ARMv7 packages");asset=&entry;
         }
         require(asset!=nullptr&&asset->value("state","")=="uploaded","Latest release has no ready ARMv7 package");
@@ -341,7 +405,7 @@ fs::path Manager::unpack(const fs::path& zip,const fs::path& destination) {
 }
 Json Manager::manifest(const fs::path& package, const Json* catalogItem) {
     Json value=Json::parse(read(package/"mpc-plugin.json"));
-    require(value.value("schema",0)==1&&value.value("arch","")=="armv7","Unsupported package manifest");
+    require(value.value("schema",0)==1&&value.value("arch","")==arch,"Unsupported package manifest");
     require(std::regex_match(value.at("id").get<std::string>(),std::regex("[a-z0-9][a-z0-9_-]*")),"Invalid plugin ID");
     require(value.value("kind","")!="addin","System addins are not supported by this manager");
     if(!value.contains("os_compat")&&catalogItem){require(catalogBlock(*catalogItem).empty(),"Catalog does not confirm MPC OS 3 support");value["os_compat"]=catalogItem->at("os_compat");}
@@ -417,6 +481,7 @@ std::vector<Json> Manager::installedPlugins() {
     };
     auto metadata=[&](const fs::path& file){
         try{auto item=Json::parse(read(file));const auto id=item.at("id").get<std::string>(),skin=item.at("skin").get<std::string>(),so=item.at("so").get<std::string>();
+            if(item.value("arch",arch)!=arch)return;
             require(std::regex_match(id,std::regex("[a-z0-9][a-z0-9_-]*"))&&safeRelative(skin)&&fs::path(skin).filename()==skin&&safeRelative(so),"Invalid installed metadata");
             require(item.at("name").is_string()&&item.at("version").is_string(),"Invalid installed identity");if(item.value("kind","")=="addin")return;
             item["release_version_known"]=true;append(item,synths/skin/so,synths);
@@ -426,7 +491,7 @@ std::vector<Json> Manager::installedPlugins() {
     const auto registry=synths/".mpc-usb-manager";
     if(fs::is_directory(registry))for(const auto& folder:fs::directory_iterator(registry))if(fs::is_directory(folder)&&fs::is_regular_file(folder.path()/"mpc-plugin.json"))metadata(folder.path()/"mpc-plugin.json");
     if(fs::is_regular_file(settings)){
-        const auto xml=read(settings);const auto value=xml.find("<VALUE name=\"pluginList-arm\"");
+        const auto xml=read(settings);const auto value=xml.find("<VALUE name=\"pluginList-"+std::string(arch=="aarch64"?"arm-64bit":"arm")+"\"");
         const auto begin=value==std::string::npos?std::string::npos:xml.find('>',value);const auto finish=begin==std::string::npos?std::string::npos:xml.find("</VALUE>",begin);
         if(finish!=std::string::npos){
             const std::string list=xml.substr(begin+1,finish-begin-1);const std::regex tag("<PLUGIN\\s+([^>]+)>");const std::regex attribute("([A-Za-z][A-Za-z0-9_-]*)\\s*=\\s*\"([^\"]*)\"");
@@ -450,7 +515,7 @@ Json Manager::installationOffer(const Json& item) {
         for(const char* field:{"id","skin","uid"}){const auto value=item.value(field,"");if(!value.empty()&&installed.value(field,"")==value)matches=true;}
         if(!matches)continue;
         found=true;
-        if(installed.value("device_target","")!=synths.string())return offer("Installed",false,"Already installed outside the managed SD folder");
+        if(installed.value("device_target","")!=synths.string())return offer("Installed",false,"Already installed outside the managed content folder");
         if(!installed.value("release_version_known",false))return offer("Installed",false,"Already installed; its release version is unknown");
         auto version=[](std::string value){if(!value.empty()&&value.front()=='v')value.erase(0,1);return libcVersion(value);};
         try {if(version(installed.value("version",""))>=version(item.value("version","")))return offer("Installed",false,"The current or a newer version is already installed");}
@@ -503,11 +568,11 @@ std::vector<Json> Manager::list(const std::string& view) {
     std::sort(result.begin(),result.end(),[](const Json&a,const Json&b){return a.at("name").template get<std::string>()<b.at("name").template get<std::string>();});return result;
 }
 void Manager::validateTarget() {
-    require(fs::is_directory(synths)&&fs::is_regular_file(settings),"SD content folder or settings missing");
-    const auto mounts=read("/proc/mounts");std::istringstream lines(mounts);std::string line;bool valid=false;
-    while(std::getline(lines,line)) {std::istringstream row(line);std::string device,path,type,opts;row>>device>>path>>type>>opts;if(path=="/sdcard") {const auto options=","+opts+",";valid=options.find(",rw,")!=std::string::npos&&options.find(",noexec,")==std::string::npos&&options.find(",ro,")==std::string::npos;}}
-    require(valid,"SD card must be mounted writable and executable");
-    require(read(settings).find("<Location>/sdcard/Expansions</Location>")!=std::string::npos,"SD content location is not registered");
+    require(fs::is_directory(synths)&&fs::is_regular_file(settings),"Plugin content folder or settings missing");
+    const auto mounts=read("/proc/mounts");std::istringstream lines(mounts);std::string line;bool valid=arch=="aarch64"&&executableContent(synths,mounts);
+    while(std::getline(lines,line)) {std::istringstream row(line);std::string device,path,type,opts;row>>device>>path>>type>>opts;if(arch=="armv7"&&path=="/sdcard") {const auto options=","+opts+",";valid=options.find(",rw,")!=std::string::npos&&options.find(",noexec,")==std::string::npos&&options.find(",ro,")==std::string::npos;}}
+    require(valid,"Plugin storage must be mounted writable and executable");
+    require(read(settings).find("<Location>"+synths.string()+"</Location>")!=std::string::npos,"Plugin content location is not registered");
 }
 void Manager::install(const Json& item, const std::function<void(const std::string&)>& progress, const std::function<void(float)>& amount) {
     installPackage(item,progress,amount,false);

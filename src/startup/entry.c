@@ -1,5 +1,7 @@
 #define _GNU_SOURCE
 #include <errno.h>
+#include "platform.hpp"
+#include "storage.h"
 #include <fcntl.h>
 #include <limits.h>
 #include <signal.h>
@@ -18,7 +20,20 @@
 #define PMU_CONFIRMED 0
 #endif
 
-static const char directory_path[] = "/sdcard/MPC Documents/Devices/Plugin Manager helper";
+#if defined(__aarch64__)
+static char directory_path[PATH_MAX] = PMU_HELPER_DIRECTORY;
+static char bootstrap_path[PATH_MAX] = PMU_HELPER_DIRECTORY "/bootstrap.sh";
+__attribute__((visibility("hidden"))) int pmu_set_helper_directory(const char *path) {
+    if (!path || !pmu_helper_directory_valid(path) || strlen(path) + sizeof("/bootstrap.sh") > sizeof bootstrap_path) return 0;
+    strcpy(directory_path, path);
+    strcpy(bootstrap_path, path);
+    strcat(bootstrap_path, "/bootstrap.sh");
+    return 1;
+}
+#else
+static const char directory_path[] = PMU_HELPER_DIRECTORY;
+static char bootstrap_path[] = PMU_HELPER_DIRECTORY "/bootstrap.sh";
+#endif
 #if PMU_REUSABLE
 static const char request_name[] = "manager-enabled";
 static const char request_token[] = "open-mpc-manager-reusable-v1\n";
@@ -39,7 +54,7 @@ static char *launch_arguments[] = {
     "-pStandardOutput=null",
     "-pStandardError=null",
     "/bin/sh",
-    "/sdcard/MPC Documents/Devices/Plugin Manager helper/bootstrap.sh",
+    bootstrap_path,
 #if PMU_CONFIRMED
     "--confirmed", NULL, NULL, NULL,
 #endif
@@ -160,10 +175,10 @@ int pmu_start_manager(void *state) {
     if (directory < 0)
         return 0;
     if (fstat(directory, &status) != 0 || !S_ISDIR(status.st_mode)
-        || status.st_uid != 0 || (status.st_mode & 0722) != 0700
+        || status.st_uid != 0 || ((status.st_mode & 0722) != 0700 && !pmu_helper_exfat(directory))
         || fstatat(directory, "bootstrap.sh", &status, AT_SYMLINK_NOFOLLOW) != 0
         || !S_ISREG(status.st_mode) || status.st_uid != 0
-        || (status.st_mode & 0022) != 0 || status.st_size <= 0 || status.st_size > 64 * 1024) {
+        || ((status.st_mode & 0022) != 0 && !pmu_helper_exfat(directory)) || status.st_size <= 0 || status.st_size > 64 * 1024) {
         close(directory);
         return 0;
     }
@@ -174,7 +189,7 @@ int pmu_start_manager(void *state) {
     }
     char bytes[sizeof(request_token)];
     int valid = fstat(file, &status) == 0 && S_ISREG(status.st_mode)
-        && status.st_uid == 0 && (status.st_mode & 0022) == 0
+        && status.st_uid == 0 && ((status.st_mode & 0022) == 0 || pmu_helper_exfat(file))
         && status.st_size == (off_t)(sizeof(request_token) - 1);
     ssize_t count = valid ? read(file, bytes, sizeof(bytes)) : -1;
     int closed = close(file);

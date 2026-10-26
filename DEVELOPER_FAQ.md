@@ -29,9 +29,12 @@ offline tests run in Linux Docker containers. Windows and native Linux
 development hosts remain unverified. Offline passes do not establish support
 for another MPC model or firmware.
 
+The Gen 2 testing build adds ARM64 compilation, sectioned-firmware extraction, architecture-specific catalog/registry checks, SD/update fixtures and native OS 3.10 dialog/queue tests against an extracted filesystem.
+Gen 2 hardware testing is pending; the stable Gen 1 hardware record above does not cover it.
+
 ### How do I build the manager?
 
-Install Python 3.9 or newer, GNU Make and Docker with `linux/arm/v7` execution
+Install Python 3.10 or newer, GNU Make and Docker with `linux/arm/v7` execution
 support. From this checkout, run:
 
 ```sh
@@ -43,6 +46,12 @@ make arm
 `arm` builds the manager, its supporting ARM executables and the 3.10 controller helper.
 `make arm-helper` rebuilds only `build/startup/manager-entry.so` using the existing image.
 
+For Gen 2, also run `make arm64`; Docker must support `linux/arm64`.
+The same Dockerfile uses GCC 12/Bookworm for this variant and writes to `build/aarch64/`.
+The manager's static SDL build, source and dependency set are shared; the native binaries remain architecture-specific.
+Run `make test-arm64` for architecture, SD install/removal, manager-update rollback and shortcut/addin-chain checks in that container.
+These use temporary manager fixtures and do not require or install a plugin package.
+
 For a universal bundle, supply the extracted official OS 3.9.1 and Gen1 OS 3.10 executables and a blank standalone project saved on your MPC.
 Use `package.py` with both `--mpc-310` and `--setup-project`; the complete image-extraction recipe is in [the README](README.md#building-a-usb-bundle-without-redistributing-firmware).
 The project must contain no samples or saved sequences.
@@ -53,6 +62,20 @@ Only its unchanged setup copy is eligible for automatic cleanup.
 `tools/helper_package.py` reads the profile checksum initialization from the exact supported executable without executing firmware code.
 Unknown executable hashes or decoded values are rejected.
 This strict 3.10 build match is necessary for the native UI and panel bindings; it is separate from the automatic legacy autorun salt scanner.
+
+For both generations on one stick, add `--arm64-build build/aarch64 --mpc-310-arm64 /path/to/Gen2-MPC310` to the packaging command.
+Both options are required together for a universal helper.
+The helper verifies the Gen 2 executable independently before enabling its native bindings.
+The legacy Gen 1 and Gen 2 OS 3.9.1 executables decode the same autorun salt; differing candidates still stop packaging.
+
+On Gen 2, the helper resolves its own module inside the approved internal MPC Documents locations rather than assuming `/sdcard` exists.
+An exFAT permission exception applies only to that internal helper source; RAM locks and approval files retain their stricter mode checks.
+The manager uses `pluginList-arm-64bit`, ARM64 catalog assets and registered executable plugin storage.
+No 32-bit compatibility libraries are required on the device.
+
+The Gen 2 testing release requires copying a complete bundle and reimporting its helper.
+The older stable updater refuses the changed helper/layout rather than partially applying it.
+Testing releases are excluded from the normal stable-update lookup.
 
 
 [Dockerfile](Dockerfile) uses GCC 11/Bullseye and SDL2 2.30.12, plus FreeType,
@@ -143,7 +166,8 @@ Its persistent files live in the user's MPC Documents content area, with no root
 
 The universal bundle carries both routes; OS 3.9.1 does not need the controller profile.
 On 3.10, import `Plugin Manager helper.xpa` into internal MPC Documents once and restart the MPC application.
-The expected directory is `/sdcard/MPC Documents/Devices/Plugin Manager helper`.
+On Gen 1 the directory is `/sdcard/MPC Documents/Devices/Plugin Manager helper`.
+Gen 2 resolves the corresponding internal Documents location, including `/nvme/MPC Documents` on NVMe-equipped devices.
 Extraction beside the XPA on removable media does not activate it.
 The unchanged blank `PluginManager.xpj` used for import is removed only after successful setup, with size, hash, ownership and file-identity checks.
 Modified projects and failed setup files are preserved.
@@ -283,10 +307,10 @@ an unchecked package.
 ### How are MPC.settings changes and failures handled?
 
 `launch.sh` stops MPC before the GUI permits installation. The backend requires
-an existing settings file, a writable/executable `/sdcard` target and a
-registered `/sdcard/Expansions` content location. It exports `MPC_SETTINGS` and
-invokes the package's installer or uninstaller with
-`-y -n -t /sdcard/Expansions`.
+an existing settings file and a registered writable/executable plugin content location.
+Gen 1 uses `/sdcard/Expansions`; Gen 2 selects its registered location and prefers `/nvme/Synths` when available.
+It exports `MPC_SETTINGS` and invokes the package's installer or uninstaller with
+`-y -n -t` followed by that validated location.
 
 Those external scripts perform the payload and settings edits. Standard
 community scripts back up settings, but the GUI does not provide a universal
@@ -301,7 +325,8 @@ bundle**. Do not attribute its guarantees to ordinary GUI installations.
 
 ### Where are plugins installed, and what does uninstall remove?
 
-The managed target is `/sdcard/Expansions`. Registry folders under
+The managed target is `/sdcard/Expansions` on Gen 1 and the selected registered executable content folder on Gen 2.
+Registry folders under
 `.mpc-usb-manager/<id>/` retain the manifest, uninstaller and settings-edit helper.
 Removal runs the retained uninstaller and updates the USB inventory. User-data
 preservation and payload cleanup depend on that script. Content outside the
@@ -374,7 +399,7 @@ Choosing **Install** or **Update** authorizes the operation without another prom
 `Manager::installLatestPlugin()` rechecks this guard before the live release
 lookup, before downloading and immediately before installer execution.
 `Manager::verifyLatestPlugin()` checks the pinned repository's latest stable release.
-Its ARMv7 asset must match the session catalog's version, download URL, size
+Its asset for the current architecture must match the session catalog's version, download URL, size
 and SHA-256 digest; unavailable, stale or conflicting metadata blocks the offer.
 The package then passes the existing ZIP checksum, compatibility, identity
 and payload checks before its installer runs.

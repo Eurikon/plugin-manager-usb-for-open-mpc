@@ -130,6 +130,24 @@ class StartupPackageTests(unittest.TestCase):
         self.assertIn(hashlib.sha256(files["plugin_manager.lua"] + b"controller checksum fixture").hexdigest().encode(),
                       files["controller.ini"])
 
+    def test_universal_helper_binds_both_runtime_generations(self):
+        runtime64 = self.root / "build/aarch64"
+        (runtime64 / "startup").mkdir(parents=True)
+        module = bytearray(64)
+        module[:7] = b"\x7fELF\x02\x01\x01"
+        struct.pack_into("<H", module, 18, 183)
+        (runtime64 / "startup/manager-entry.so").write_bytes(module)
+        for name in ("manager", "shortcut", "shortcut-hook.so"):
+            (runtime64 / name).write_bytes(("ARM64 " + name).encode())
+        data = HELPER.build_archive(self.root / "external-MPC", self.project, self.root / "external-Gen2-MPC")
+        selected = HELPER.runtime_files("aarch64")
+        files = HELPER.validate_archive(data, self.runtime, selected)
+        self.assertEqual(files["runtime-aarch64.sha256"], HELPER.runtime_manifest(selected, "aarch64"))
+        self.assertIn(b"  aarch64/manager\n", files["runtime-aarch64.sha256"])
+        self.assertEqual(files["manager-entry-aarch64.so"], module)
+        with self.assertRaises(ValueError): HELPER.validate_archive(data, self.runtime)
+        with self.assertRaises(ValueError): HELPER.validate_archive(data, self.runtime, dict(selected, manager=b"wrong"))
+
     def test_changed_runtime_is_rejected(self):
         changed = dict(self.runtime, shortcut=b"different")
         with self.assertRaises(ValueError):

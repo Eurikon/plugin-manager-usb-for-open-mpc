@@ -198,10 +198,10 @@ static void latestReleaseChecks(Manager& manager,const Json& primary,const Json&
 int main(){try{
     const auto fixture=Json::parse(std::ifstream("/tmp/manager-fixtures/fixture.json"));
     const auto primary=fixture.at("primary");const auto id=primary.at("id").get<std::string>();
-    Manager manager("/tmp/manager-usb","/tmp/manager-session","/sdcard/Expansions","/tmp/manager-settings.xml");
+    Manager manager("/tmp/manager-usb","/tmp/manager-session","/sdcard/Expansions","/tmp/manager-settings.xml","armv7");
     const auto registry=manager.synths/".mpc-usb-manager"/id;
     check(!manager.darkTheme(),"light theme is default without saved preferences");manager.setDarkTheme(true);
-    Manager reopened(manager.usb,manager.session,manager.synths,manager.settings);check(reopened.darkTheme(),"dark theme persists across manager instances");manager.setDarkTheme(false);check(!reopened.darkTheme(),"light theme toggle persists");
+    Manager reopened(manager.usb,manager.session,manager.synths,manager.settings,"armv7");check(reopened.darkTheme(),"dark theme persists across manager instances");manager.setDarkTheme(false);check(!reopened.darkTheme(),"light theme toggle persists");
     {std::ofstream prefs(manager.usb/"manager-preferences.json");prefs<<"{\"schema\":1,\"dark_theme\":false}";}
     check(!manager.hideWelcome(),"welcome shown by default with legacy theme preferences");manager.setHideWelcome(true);
     check(reopened.hideWelcome(),"hidden welcome persists across instances");manager.setDarkTheme(true);check(reopened.hideWelcome(),"theme change preserves hidden welcome");manager.setHideWelcome(false);check(reopened.darkTheme()&&!reopened.hideWelcome(),"welcome preference preserves theme and can be restored");manager.setDarkTheme(false);

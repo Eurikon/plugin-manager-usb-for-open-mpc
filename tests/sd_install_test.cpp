@@ -38,6 +38,25 @@ int main(){
             check(fs::exists(t.data.target/"manager-preferences.json")&&fs::exists(t.data.target/"plugin-history.json")&&fs::exists(t.data.target/"local-plugins/user.zip")&&fs::exists(t.data.target/"user.txt"),"removal preserves settings history local packages and unrelated files");
             t.installer.install("1234-ABCD");check(t.installer.inspect()["installed"].get<bool>(),"removed SD installation can be reinstalled");
         }
+        {
+            Test t(base/"aarch64");t.data.paths.arch="aarch64";
+            std::string manifest;
+            for(const char* name:{"manager","font.ttf","launch.sh","setup.sh","shortcut","shortcut-hook.so"}){
+                const auto relative=managerRuntimePath(name,"aarch64");
+                if(relative!=name)sd_fixture::save(t.data.source/"autorun/runtime"/relative,std::string("ARM64 runtime ")+name+'\n');
+                manifest+=sha256(t.data.source/"autorun/runtime"/relative)+"  "+relative+'\n';
+            }
+            sd_fixture::save(t.data.paths.helper/"runtime-aarch64.sha256",manifest);
+            SdInstaller installer(t.data.source,t.data.session,t.data.paths);
+            installer.install("1234-ABCD");
+            check(installer.inspect()["installed"]==true,"ARM64 SD installation is detected using its selected runtime");
+            check(fs::is_regular_file(t.data.target/"autorun/runtime/aarch64/manager")&&!fs::exists(t.data.target/"autorun/runtime/manager"),"ARM64 SD copy contains the native executable without the Gen1 executable");
+            const auto owner=Json::parse(sd_fixture::text(t.data.target/".manager-install.json"));
+            check(owner["files"]["autorun/runtime/aarch64/manager"]==sha256(t.data.source/"autorun/runtime/aarch64/manager"),"ARM64 ownership inventory records the selected executable checksum");
+            sd_fixture::save(t.data.target/"local-plugins/user.zip","user package");
+            installer.remove();
+            check(!fs::exists(t.data.target/"autorun/runtime")&&fs::exists(t.data.target/"local-plugins/user.zip"),"ARM64 removal cleans native runtime while preserving user packages");
+        }
         {Test t(base/"capability");fs::remove(t.data.paths.helper/"sd-install-capability");check(!t.installer.available(),"missing helper capability hides SD feature");rejects([&]{t.installer.install("1234-ABCD");},"missing capability prevents writes");}
         {Test t(base/"firmware");sd_fixture::save(t.data.paths.firmware,"different firmware");rejects([&]{t.installer.install("1234-ABCD");},"different firmware cannot install manager to SD");check(!fs::exists(t.data.target),"firmware refusal does not create SD folder");}
         {Test t(base/"helper-link");fs::rename(t.data.paths.helper/"sd-install-capability",t.data.paths.helper/"real-capability");fs::create_symlink("real-capability",t.data.paths.helper/"sd-install-capability");check(!t.installer.available(),"linked capability cannot enable installer");}

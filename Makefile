@@ -1,11 +1,12 @@
 PYTHON ?= python3
 ARM_IMAGE ?= mpc-usb-plugin-installer-build-tools
+ARM64_IMAGE ?= mpc-usb-plugin-installer-build-tools:aarch64
 
 OFFLINE_ARGS ?=
 .DEFAULT_GOAL := arm
 -include private/offline-tests.mk
 
-.PHONY: arm arm-helper arm-image test test-local test-runner test-offline syntax site
+.PHONY: arm64 arm64-image arm arm-helper arm-image test test-arm64 test-local test-runner test-offline syntax site
 
 arm: arm-image
 	docker run --rm --platform linux/arm/v7 --network none -v "$(CURDIR):/work" -w /work $(ARM_IMAGE) sh build.sh
@@ -13,12 +14,21 @@ arm: arm-image
 arm-image:
 	docker build --platform linux/arm/v7 -t $(ARM_IMAGE) .
 
+arm64: arm64-image
+	docker run --rm --platform linux/arm64 --network none -v "$(CURDIR):/work" -w /work $(ARM64_IMAGE) env BUILD_DIR=build/aarch64 sh build.sh
+
+arm64-image:
+	docker build --platform linux/arm64 --build-arg BUILD_BASE=gcc:12 -t $(ARM64_IMAGE) .
+
 arm-helper:
 	docker run --rm --pull never --platform linux/arm/v7 --network none -v "$(CURDIR):/work" -w /work $(ARM_IMAGE) sh build_helper.sh
 
 test: arm
 	docker run --rm --platform linux/arm/v7 --network none -v "$(CURDIR):/work" -w /work $(ARM_IMAGE) sh -c 'build/shortcut-state-test && MPC_PANEL_PORT=hw:1,0,1 MPC_SHORTCUT_SOCKET=/tmp/manager-hook-test.sock LD_LIBRARY_PATH=/work/build LD_PRELOAD=/work/build/shortcut-hook.so build/shortcut-hook-test'
 	docker run --rm --platform linux/arm/v7 --network none -v "$(CURDIR):/work" -w /work $(ARM_IMAGE) sh -c 'MPC_PANEL_PORT=hw:1,0,1 MPC_SHORTCUT_SOCKET=/tmp/manager-hook-test.sock LD_LIBRARY_PATH=/work/build LD_PRELOAD="/work/build/shortcut-addin-first.so /work/build/shortcut-addin-second.so /work/build/shortcut-hook.so" build/shortcut-hook-test --chained'
+
+test-arm64: arm64
+	docker run --rm --pull never --platform linux/arm64 --network none -v "$(CURDIR):/work" -w /work $(ARM64_IMAGE) sh -ec 'for check in architecture-test sd-install-test manager-update-test shortcut-state-test; do build/aarch64/$$check; done; MPC_PANEL_PORT=hw:1,0,1 MPC_SHORTCUT_SOCKET=/tmp/manager-hook-test.sock LD_LIBRARY_PATH=/work/build/aarch64 LD_PRELOAD=/work/build/aarch64/shortcut-hook.so build/aarch64/shortcut-hook-test; MPC_PANEL_PORT=hw:1,0,1 MPC_SHORTCUT_SOCKET=/tmp/manager-hook-test.sock LD_LIBRARY_PATH=/work/build/aarch64 LD_PRELOAD="/work/build/aarch64/shortcut-addin-first.so /work/build/aarch64/shortcut-addin-second.so /work/build/aarch64/shortcut-hook.so" build/aarch64/shortcut-hook-test --chained'
 
 test-runner:
 	TEST_PACKAGE_ZIP="$(TEST_PACKAGE_ZIP)" LEGACY_PACKAGE_ZIP="$(LEGACY_PACKAGE_ZIP)" $(PYTHON) tests/offline_runner_test.py
@@ -29,6 +39,7 @@ test-local:
 	$(PYTHON) -m unittest discover -s tests -p firmware_test.py
 	$(PYTHON) -m unittest discover -s tests -p saltscan_test.py
 	$(PYTHON) -m unittest discover -s tests -p setup_test.py
+	$(PYTHON) -m unittest discover -s tests -p launch_test.py
 	$(PYTHON) -m unittest discover -s tests -p startup_package_test.py
 
 site:

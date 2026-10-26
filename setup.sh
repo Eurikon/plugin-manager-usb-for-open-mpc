@@ -20,7 +20,7 @@ set -- "$work/shortcut" "$usb" "$work" "$service" "$port"
 [ -z "$arm" ] || set -- "$@" "$arm"
 case "${MPC_MANAGER_SD_HELPER-}" in
     '') ;;
-    '/sdcard/MPC Documents/Devices/Plugin Manager helper')
+    '/sdcard/MPC Documents/Devices/Plugin Manager helper'|'/nvme/MPC Documents/Devices/Plugin Manager helper'|'/storage/MPC Documents/Devices/Plugin Manager helper'|'/data/UserData/MPC Documents/Devices/Plugin Manager helper')
         set -- "--setenv=MPC_MANAGER_SD_HELPER=$MPC_MANAGER_SD_HELPER" "$@" ;;
     *) echo 'Unsupported SD installation helper'; exit 1 ;;
 esac

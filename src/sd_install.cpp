@@ -1,4 +1,5 @@
 #include "sd_install.hpp"
+#include "startup/storage.h"
 #include <algorithm>
 #include <array>
 #include <cerrno>
@@ -44,13 +45,14 @@ struct OperationLock {
     }
     ~OperationLock(){if(fd>=0)close(fd);}
 };
+bool helperExfat(const fs::path& path);
 std::string readFile(const fs::path& path,size_t limit,bool owned=false,uid_t owner=0) {
     plainPath(path.parent_path());
     int fd=open(path.c_str(),O_RDONLY|O_CLOEXEC|O_NOFOLLOW|O_NONBLOCK);
     need(fd>=0,"Cannot read "+path.filename().string());
     struct stat st{};
     if(fstat(fd,&st)||!S_ISREG(st.st_mode)||st.st_size<0||static_cast<uint64_t>(st.st_size)>limit
-       ||(owned&&(st.st_uid!=owner||(st.st_mode&0022)||st.st_nlink!=1))){close(fd);throw std::runtime_error("Unsafe or oversized "+path.filename().string());}
+       ||(owned&&(st.st_uid!=owner||((st.st_mode&0022)&&!helperExfat(path))||st.st_nlink!=1))){close(fd);throw std::runtime_error("Unsafe or oversized "+path.filename().string());}
     std::string text(static_cast<size_t>(st.st_size),'\0');size_t position=0;
     while(position<text.size()){const auto count=::read(fd,text.data()+position,text.size()-position);if(count<0&&errno==EINTR)continue;if(count<=0){close(fd);throw std::runtime_error("Storage file changed while reading");}position+=static_cast<size_t>(count);}
     char extra;const auto end=::read(fd,&extra,1);close(fd);need(end==0,"Storage file changed while reading");return text;
@@ -78,7 +80,7 @@ bool uuidValid(const std::string& uuid) { return !uuid.empty()&&uuid.size()<=64&
 bool digestValid(const std::string& value){return value.size()==64&&value.find_first_not_of("0123456789abcdef")==std::string::npos;}
 bool helperReady(const SdInstallPaths& paths) {
     plainPath(paths.helper);struct stat st{};
-    need(lstat(paths.helper.c_str(),&st)==0&&S_ISDIR(st.st_mode)&&st.st_uid==paths.owner&&!(st.st_mode&0022),"Unsafe startup helper");
+    need(lstat(paths.helper.c_str(),&st)==0&&S_ISDIR(st.st_mode)&&st.st_uid==paths.owner&&(!(st.st_mode&0022)||helperExfat(paths.helper)),"Unsafe startup helper");
     return readFile(paths.helper/"sd-install-capability",64,true,paths.owner)==capability;
 }
 void validatePlatform(const SdInstallPaths& paths) {
@@ -88,7 +90,7 @@ void validatePlatform(const SdInstallPaths& paths) {
 }
 std::string configuredUuid(const SdInstallPaths& paths,const char* name="installed-storage") {
     const auto path=paths.helper/name;if(!present(path))return {};
-    struct stat st{};need(lstat(path.c_str(),&st)==0&&(st.st_mode&07777)==0600,"Unsafe saved SD selection");
+    struct stat st{};need(lstat(path.c_str(),&st)==0&&((st.st_mode&07777)==0600||helperExfat(path)),"Unsafe saved SD selection");
     const auto content=readFile(path,160,true,paths.owner);const auto prefix=std::string(configuration);
     need(content.compare(0,prefix.size(),prefix)==0&&content.size()>prefix.size()&&content.back()=='\n',"Invalid saved SD selection");
     const auto uuid=content.substr(prefix.size(),content.size()-prefix.size()-1);need(uuidValid(uuid),"Invalid saved SD identity");return uuid;
@@ -182,9 +184,17 @@ void unchanged(const SdInstallPaths& paths,const fs::path& source,const Volume& 
     const auto current=selectVolume(paths,source,volume.uuid,true,requireSd);
     need(current.root==volume.root&&current.device==volume.device&&current.mountId==volume.mountId,"SD card changed during installation");
 }
+bool helperExfat(const fs::path& path) {
+    auto parent=path;
+    while(parent!=parent.root_path()&&!pmu_helper_directory_valid(parent.c_str()))parent=parent.parent_path();
+    if(!pmu_helper_directory_valid(parent.c_str()))return false;
+    int fd=open(path.c_str(),O_RDONLY|O_CLOEXEC|O_NOFOLLOW|O_NONBLOCK);
+    if(fd<0)return false;
+    const bool valid=pmu_helper_exfat(fd);close(fd);return valid;
+}
 bool ownedName(const std::string& name) {
     if(name==".mpc-manager-id")return true;
-    for(const auto* file:runtimeFiles)if(name==std::string("autorun/runtime/")+file)return true;
+    for(const auto* file:runtimeFiles)if(name==std::string("autorun/runtime/")+file||name==std::string("autorun/runtime/")+managerRuntimePath(file,"aarch64"))return true;
     const std::string prefix="autorun/runtime/licenses/";if(name.compare(0,prefix.size(),prefix)!=0||name.size()<=prefix.size())return false;
     const fs::path relative(name);if(relative.generic_string()!=name)return false;
     for(const auto& part:relative)if(part==".."||part=="."||part.empty())return false;
@@ -209,8 +219,8 @@ void safeRuntimeTree(const fs::path& target,const Json& owner) {
     }
 }
 std::map<std::string,std::string> runtimeManifest(const SdInstallPaths& paths) {
-    std::istringstream input(readFile(paths.helper/"runtime.sha256",1024,true,paths.owner));std::map<std::string,std::string> result;std::string line;
-    for(const auto* name:runtimeFiles){need(bool(std::getline(input,line))&&line.size()==66+strlen(name)&&line.substr(64)==std::string("  ")+name&&digestValid(line.substr(0,64)),"Invalid startup runtime manifest");result[name]=line.substr(0,64);}
+    std::istringstream input(readFile(paths.helper/managerRuntimeManifest(paths.arch),1024,true,paths.owner));std::map<std::string,std::string> result;std::string line;
+    for(const auto* name:runtimeFiles){need(bool(std::getline(input,line))&&line.size()==66+managerRuntimePath(name,paths.arch).size()&&line.substr(64)==std::string("  ")+managerRuntimePath(name,paths.arch)&&digestValid(line.substr(0,64)),"Invalid startup runtime manifest");result[name]=line.substr(0,64);}
     need(!std::getline(input,line),"Unexpected startup runtime manifest entry");return result;
 }
 void copyVerified(const fs::path& source,const fs::path& target,const std::string& expected) {
@@ -231,6 +241,12 @@ void removeEmptyParents(const fs::path& target,const fs::path& relative) {
 }
 SdInstallPaths defaults() {
     SdInstallPaths paths;
+#if defined(__aarch64__)
+    if(const char* helper=std::getenv("MPC_MANAGER_SD_HELPER");helper&&pmu_helper_directory_valid(helper)) {
+        paths.helper=helper;
+        paths.internal=paths.helper.parent_path().parent_path().parent_path();
+    }
+#endif
     paths.fileDevice=[](const fs::path& path){struct stat st{};need(stat(path.c_str(),&st)==0,"Storage device is unavailable");return st.st_dev;};
     paths.blockDevice=[](const fs::path& path){struct stat st{};need(stat(path.c_str(),&st)==0&&S_ISBLK(st.st_mode),"Filesystem identity is not a block device");return st.st_rdev;};
     paths.availableBytes=[](const fs::path& path){return fs::space(path).available;};
@@ -264,7 +280,7 @@ Json SdInstaller::inspect() {
     for(const auto& volume:volumes(paths,source,true,false))if(volume.uuid==uuid){
         const auto target=volume.root/installedFolder;const auto owned=receipt(target,uuid);
         value["label"]=volume.label;value["path"]=target.string();value["current"]=source==target;value["can_remove"]=true;
-        value["installed"]=owned["installed"].get<bool>()&&present(target/".mpc-manager-id")&&present(target/"autorun/runtime/manager");
+        value["installed"]=owned["installed"].get<bool>()&&present(target/".mpc-manager-id")&&present(target/"autorun/runtime"/managerRuntimePath("manager",paths.arch));
         if(!pending.empty()){value["installed"]=false;value["reason"]="SD removal was interrupted. Select Remove to finish.";}
         else if(!value["installed"].get<bool>())value["reason"]="SD installation is incomplete. Reinstall or remove it.";
         return value;
@@ -281,7 +297,7 @@ void SdInstaller::install(const std::string& uuid,const std::function<void(const
     const auto expected=runtimeManifest(paths);const auto runtime=source/"autorun/runtime";plainPath(runtime);
     need(readFile(source/".mpc-manager-id",64)==marker,"Invalid manager source");
     std::map<std::string,std::string> files;uint64_t bytes=0;
-    for(const auto* name:runtimeFiles){plainPath(runtime/name);need(fs::is_regular_file(runtime/name)&&fs::file_size(runtime/name)<=64*1024*1024,"Runtime source is not a supported file");need(sha256(runtime/name)==expected.at(name),"Installation source differs from the verified manager runtime");files[std::string("autorun/runtime/")+name]=expected.at(name);bytes+=fs::file_size(runtime/name);}
+    for(const auto* name:runtimeFiles){const auto relative=managerRuntimePath(name,paths.arch);plainPath(runtime/relative);need(fs::is_regular_file(runtime/relative)&&fs::file_size(runtime/relative)<=64*1024*1024,"Runtime source is not a supported file");need(sha256(runtime/relative)==expected.at(name),"Installation source differs from the verified manager runtime");files[std::string("autorun/runtime/")+relative]=expected.at(name);bytes+=fs::file_size(runtime/relative);}
     const auto licenses=runtime/"licenses";
     if(present(licenses)){plainPath(licenses);for(const auto& entry:fs::recursive_directory_iterator(licenses)){
         need(!entry.is_symlink(),"License source contains a link");if(entry.is_directory())continue;

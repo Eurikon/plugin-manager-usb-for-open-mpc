@@ -26,7 +26,7 @@ struct Fixture {
         paths.media=root/"media";paths.mountinfo=root/"mountinfo";paths.uuids=root/"by-uuid";
         paths.sys=root/"sys";paths.udev=root/"udev";
         paths.internal=root/"internal";paths.helper=root/"helper";paths.firmware=root/"MPC";paths.owner=geteuid();
-        paths.protectedRoots={paths.internal};
+        paths.protectedRoots={paths.internal};paths.arch="armv7";
         card=paths.media/"MPC SD";target=card/"Plugin Manager USB";
         for(const auto& directory:{paths.media,paths.uuids,paths.internal,paths.helper,card})fs::create_directories(directory);
         chmod(paths.helper.c_str(),0700);

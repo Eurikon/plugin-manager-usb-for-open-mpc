@@ -1,4 +1,5 @@
 #include "manager_update.hpp"
+#include "startup/storage.h"
 #include <archive.h>
 #include <archive_entry.h>
 #include <algorithm>
@@ -21,7 +22,7 @@ namespace {
         "manager","font.ttf","launch.sh","setup.sh","shortcut","shortcut-hook.so"
     };
     const std::set<std::string> helperNames={
-        ".owner","PluginManager.xpj","bootstrap.sh","controller.ini","manager-enabled","manager-entry.so","plugin_manager.lua","runtime.sha256","sd-install-capability"
+        ".owner","PluginManager.xpj","bootstrap.sh","controller.ini","manager-enabled","manager-entry.so","plugin_manager.lua","runtime.sha256","sd-install-capability","manager-entry-aarch64.so","runtime-aarch64.sha256"
     };
     constexpr const char* marker="mpc-usb-manager-v1\n";
     void need(bool value,const std::string& message){
@@ -65,11 +66,19 @@ namespace {
         const auto after=identity(path,directory);
         need(before.device==after.device&&before.inode==after.inode&&before.mode==after.mode&&(directory||before.size==after.size),"Manager update storage or file identity changed");
     }
+    bool helperExfat(const fs::path& path){
+        auto parent=path;
+        while(parent!=parent.root_path()&&!pmu_helper_directory_valid(parent.c_str()))parent=parent.parent_path();
+        if(!pmu_helper_directory_valid(parent.c_str()))return false;
+        int fd=open(path.c_str(),O_RDONLY|O_CLOEXEC|O_NOFOLLOW|O_NONBLOCK);
+        if(fd<0)return false;
+        const bool valid=pmu_helper_exfat(fd);close(fd);return valid;
+    }
     void owned(const fs::path& path,uid_t owner,bool directory=false){
         identity(path,directory);
         struct stat st{
         };
-        need(lstat(path.c_str(),&st)==0&&st.st_uid==owner&&!(st.st_mode&0022),"Unsafe manager update ownership");
+        need(lstat(path.c_str(),&st)==0&&st.st_uid==owner&&(!(st.st_mode&0022)||helperExfat(path)),"Unsafe manager update ownership");
     }
     std::string read(const fs::path& path,size_t limit=128*1024){
         const auto before=identity(path);
@@ -222,6 +231,10 @@ namespace {
     }
     bool runtimeName(const std::string& name){
         for(const auto* file:runtime)if(name==std::string("autorun/runtime/")+file)return true;
+        return std::regex_match(name,std::regex("autorun/runtime/aarch64/(manager|shortcut|shortcut-hook\\.so)"))||std::regex_match(name,std::regex("autorun/runtime/licenses/[A-Za-z0-9][A-Za-z0-9_.-]*"));
+    }
+    bool runtimeForArch(const std::string& name,const std::string& arch){
+        for(const auto* file:runtime)if(name=="autorun/runtime/"+managerRuntimePath(file,arch))return true;
         return std::regex_match(name,std::regex("autorun/runtime/licenses/[A-Za-z0-9][A-Za-z0-9_.-]*"));
     }
     bool bundleName(const std::string& name){
@@ -246,12 +259,13 @@ namespace {
         }
         for(const auto& item:files.items())if(beneath(subtree,fs::path(item.key())))need(found.count(item.key()),"Manager runtime is incomplete");
     }
-    std::string runtimeManifest(const Json& files){
+    std::string runtimeManifest(const Json& files,const std::string& arch){
         std::string value;
         for(const auto* name:runtime){
-            const std::string key=std::string("autorun/runtime/")+name;
+            const auto relative=managerRuntimePath(name,arch);
+            const std::string key="autorun/runtime/"+relative;
             need(files.contains(key),"Manager update is missing runtime files");
-            value+=files.at(key).get<std::string>()+"  "+name+'\n';
+            value+=files.at(key).get<std::string>()+"  "+relative+'\n';
         }
         return value;
     }
@@ -287,7 +301,9 @@ namespace {
                 need(archive_read_data(ar,&extra,1)==0,"Manager helper size mismatch");
                 result.emplace(name,std::move(data));
             }
-            need(status==ARCHIVE_EOF&&result.size()==helperNames.size(),"Incomplete manager helper");
+            need(status==ARCHIVE_EOF&&(result.size()==9||result.size()==11),"Incomplete manager helper");
+            for(const auto* name:{".owner","PluginManager.xpj","bootstrap.sh","controller.ini","manager-enabled","manager-entry.so","plugin_manager.lua","runtime.sha256","sd-install-capability"})need(result.count(name),"Incomplete manager helper");
+            need(bool(result.count("manager-entry-aarch64.so"))==bool(result.count("runtime-aarch64.sha256")),"Incomplete ARM64 manager helper");
             archive_read_free(ar);
             return result;
         }
@@ -370,6 +386,12 @@ namespace {
         bool published=false,existed=true;
     };
     ManagerUpdatePaths defaults(ManagerUpdatePaths paths){
+#if defined(__aarch64__)
+        if(paths.helper==PMU_HELPER_DIRECTORY){
+            const char* helper=std::getenv("MPC_MANAGER_SD_HELPER");
+            if(helper&&pmu_helper_directory_valid(helper))paths.helper=helper;
+        }
+#endif
         if(!paths.fileDevice)paths.fileDevice=[](const fs::path& path){
             struct stat st{
             };
@@ -429,36 +451,37 @@ Json applyManagerUpdate(const fs::path& source,const fs::path& session,const Jso
     need(read(bundle/".mpc-manager-id",64)==marker,"Invalid manager update marker");
     const auto helper=files.contains("Plugin Manager helper.xpa")?helperArchive(bundle/"Plugin Manager helper.xpa"):std::map<std::string,std::string>{
     };
-    const auto nextManifest=runtimeManifest(files);
+    const auto manifestName=managerRuntimeManifest(paths.arch);
+    const auto nextManifest=runtimeManifest(files,paths.arch);
     if(!helper.empty()){
         need(helper.at("manager-enabled")=="open-mpc-manager-reusable-v1\n"&&helper.at("sd-install-capability")=="open-mpc-manager-sd-v1\n","Unsupported manager helper capability");
-        need(helper.at("runtime.sha256")==nextManifest,"Manager helper and update runtime differ");
+        need(helper.count(manifestName)&&helper.at(manifestName)==nextManifest,"Manager helper and update runtime differ");
     }
-    for(const auto& item:helper)if(hasHelper&&item.first!="runtime.sha256"&&item.first!="PluginManager.xpj"){
+    for(const auto& item:helper)if(hasHelper&&item.first!="runtime.sha256"&&item.first!="runtime-aarch64.sha256"&&item.first!="PluginManager.xpj"){
         owned(paths.helper/item.first,paths.owner);
         need(read(paths.helper/item.first,1024*1024)==item.second,"Unsupported update: changed native helper requires a manual update");
     }
-    if(hasHelper)owned(paths.helper/"runtime.sha256",paths.owner);
-    const auto oldManifest=hasHelper?read(paths.helper/"runtime.sha256",512):runtimeManifest(manifest(source/"USB-SHA256.json"));
+    if(hasHelper)owned(paths.helper/manifestName,paths.owner);
+    const auto oldManifest=hasHelper?read(paths.helper/manifestName,512):runtimeManifest(manifest(source/"USB-SHA256.json"),paths.arch);
     std::map<std::string,std::string> oldRuntime;
     std::istringstream manifestInput(oldManifest);
     for(const auto* name:runtime){
         std::string line;
-        need(bool(std::getline(manifestInput,line))&&line.size()==66+std::string(name).size()&&line.substr(64)==std::string("  ")+name&&digest(line.substr(0,64)),"Invalid installed helper runtime manifest");
+        need(bool(std::getline(manifestInput,line))&&line.size()==66+managerRuntimePath(name,paths.arch).size()&&line.substr(64)==std::string("  ")+managerRuntimePath(name,paths.arch)&&digest(line.substr(0,64)),"Invalid installed helper runtime manifest");
         oldRuntime[name]=line.substr(0,64);
     }
     need(!std::getline(manifestInput,extra),"Unexpected helper runtime manifest entry");
     for(const auto* name:runtime){
         owned(base/name,paths.owner);
         need(sha256(base/name)==oldRuntime.at(name),"Cached manager runtime differs from its helper");
-        if(std::string(name)!="manager"&&std::string(name)!="font.ttf")need(files.at(std::string("autorun/runtime/")+name)==oldRuntime.at(name),"Unsupported update: changed launcher or supervisor requires a manual update");
+        if(std::string(name)!="manager"&&std::string(name)!="font.ttf")need(files.at(std::string("autorun/runtime/")+managerRuntimePath(name,paths.arch))==oldRuntime.at(name),"Unsupported update: changed launcher or supervisor requires a manual update");
     }
     std::string configuration,uuid;
     const auto configPath=paths.helper/"installed-storage";
     need(!hasHelper||!present(paths.helper/"installed-storage.removing"),"Finish the interrupted SD removal before updating");
     if(hasHelper&&present(configPath)){
         owned(configPath,paths.owner);
-        need((identity(configPath).mode&07777)==0600,"Unsafe configured SD selection");
+        need((identity(configPath).mode&07777)==0600||helperExfat(configPath),"Unsafe configured SD selection");
         configuration=read(configPath,160);
         const std::string prefix="open-mpc-manager-storage-v1\n";
         need(configuration.compare(0,prefix.size(),prefix)==0&&configuration.back()=='\n',"Invalid configured SD selection");
@@ -502,7 +525,7 @@ Json applyManagerUpdate(const fs::path& source,const fs::path& session,const Jso
             Json expected=files;
             if(target.sd){
                 expected=Json::object();
-                for(const auto& item:files.items())if(runtimeName(item.key())||item.key()==".mpc-manager-id")expected[item.key()]=item.value();
+                for(const auto& item:files.items())if(runtimeForArch(item.key(),paths.arch)||item.key()==".mpc-manager-id")expected[item.key()]=item.value();
             }
             need(target.oldFiles.size()==expected.size()||(!target.sd&&files.contains("Plugin Manager helper.xpa")&&!target.oldFiles.contains("Plugin Manager helper.xpa")&&target.oldFiles.size()+1==expected.size()),"Unsupported update: managed file layout changed");
             for(const auto& item:expected.items()){
@@ -514,7 +537,7 @@ Json applyManagerUpdate(const fs::path& source,const fs::path& session,const Jso
                 identity(target.root/item.key());
                 need(sha256(target.root/item.key())==target.oldFiles.at(item.key()),"Existing manager files were modified; manual update required");
             }
-            for(const auto* name:runtime)need(target.oldFiles.at(std::string("autorun/runtime/")+name)==oldRuntime.at(name),"Another installed manager uses a different runtime; manual update required");
+            for(const auto* name:runtime)need(target.oldFiles.at(std::string("autorun/runtime/")+managerRuntimePath(name,paths.arch))==oldRuntime.at(name),"Another installed manager uses a different runtime; manual update required");
             inventory(target.root,target.oldFiles,target.sd?"autorun/runtime":"autorun");
             if(target.root==source)current=true;
             targets.push_back(std::move(target));
@@ -656,7 +679,7 @@ Json applyManagerUpdate(const fs::path& source,const fs::path& session,const Jso
             Json after=files;
             if(target.sd){
                 after=Json::object();
-                for(const auto& item:files.items())if(runtimeName(item.key())||item.key()==".mpc-manager-id")after[item.key()]=item.value();
+                for(const auto& item:files.items())if(runtimeForArch(item.key(),paths.arch)||item.key()==".mpc-manager-id")after[item.key()]=item.value();
             }
             for(const auto& item:after.items()){
                 add(target.root,item.key(),read(bundle/item.key(),64*1024*1024),files.at(item.key()));
@@ -669,8 +692,13 @@ Json applyManagerUpdate(const fs::path& source,const fs::path& session,const Jso
             else add(target.root,"USB-SHA256.json",files.dump(2)+'\n');
             updated.push_back(target.root.string());
         }
-        if(hasHelper)add(paths.helper,"runtime.sha256",nextManifest);
-        add(base,"manager",read(bundle/"autorun/runtime/manager",64*1024*1024),files.at("autorun/runtime/manager"));
+        if(hasHelper){
+            add(paths.helper,manifestName,nextManifest);
+            const std::string other=paths.arch=="aarch64"?"armv7":"aarch64";
+            const auto otherName=managerRuntimeManifest(other);
+            if(helper.count(otherName))add(paths.helper,otherName,runtimeManifest(files,other));
+        }
+        add(base,"manager",read(bundle/"autorun/runtime"/managerRuntimePath("manager",paths.arch),64*1024*1024),files.at("autorun/runtime/"+managerRuntimePath("manager",paths.arch)));
         add(base,"font.ttf",read(bundle/"autorun/runtime/font.ttf",64*1024*1024),files.at("autorun/runtime/font.ttf"));
         for(const auto& item:cachedLicenses.items())add(base,item.key(),read(bundle/"autorun/runtime"/item.key(),1024*1024),files.at("autorun/runtime/"+item.key()));
         recheck();

@@ -1,6 +1,7 @@
 #include "backend.hpp"
 #include "sd_install.hpp"
 #include "manager_update.hpp"
+#include "display.hpp"
 #ifdef MPC_MANAGER_SD_FIXTURE
 #include "../tests/sd_install_fixture.hpp"
 #include "../tests/manager_update_fixture.hpp"
@@ -30,15 +31,18 @@ static_assert(std::atomic<sig_atomic_t>::is_always_lock_free);
 static void stop(int) {quitting=1;}
 enum class Icon { None, Grid, Folder, Check, History, Return, Download, Trash, Left, Right, Moon, Sun, Disk, Cog };
 struct Screen {
+    DisplayGeometry geometry{true};
     SDL_Window* window=nullptr;SDL_Renderer* renderer=nullptr;SDL_Texture* texture=nullptr;
     FT_Library library=nullptr;FT_Face face=nullptr;std::vector<uint32_t> pixels;
     Screen(const std::string& font):pixels(1280*800,0xff181c22) {
         SDL_SetHint(SDL_HINT_TOUCH_MOUSE_EVENTS,"0");
         if(SDL_Init(SDL_INIT_VIDEO|SDL_INIT_TIMER)!=0) throw std::runtime_error(SDL_GetError());
-        window=SDL_CreateWindow("MPC PLUGIN INSTALLER",SDL_WINDOWPOS_UNDEFINED,SDL_WINDOWPOS_UNDEFINED,800,1280,SDL_WINDOW_FULLSCREEN_DESKTOP);
+        SDL_DisplayMode mode{};
+        if(SDL_GetCurrentDisplayMode(0,&mode)==0&&mode.w>0&&mode.h>0)geometry.portrait=mode.h>mode.w;
+        window=SDL_CreateWindow("MPC PLUGIN INSTALLER",SDL_WINDOWPOS_UNDEFINED,SDL_WINDOWPOS_UNDEFINED,geometry.width(),geometry.height(),SDL_WINDOW_FULLSCREEN_DESKTOP);
         if(!window)throw std::runtime_error(SDL_GetError());
         renderer=SDL_CreateRenderer(window,-1,0);if(!renderer)throw std::runtime_error(SDL_GetError());
-        SDL_RenderSetLogicalSize(renderer,800,1280);
+        SDL_RenderSetLogicalSize(renderer,geometry.width(),geometry.height());
         texture=SDL_CreateTexture(renderer,SDL_PIXELFORMAT_ARGB8888,SDL_TEXTUREACCESS_STREAMING,1280,800);
         if(!texture||FT_Init_FreeType(&library)||FT_New_Face(library,font.c_str(),0,&face))throw std::runtime_error("Display or font initialization failed");
         FT_Set_Pixel_Sizes(face,0,25);
@@ -106,7 +110,7 @@ struct Screen {
         }
         if(row<lines)text(x,y+row*(size+7),line,color,size,width);
     }
-    void present(){SDL_UpdateTexture(texture,nullptr,pixels.data(),1280*4);SDL_RenderClear(renderer);SDL_Rect destination{-240,240,1280,800};SDL_RenderCopyEx(renderer,texture,nullptr,&destination,270,nullptr,SDL_FLIP_NONE);SDL_RenderPresent(renderer);}
+    void present(){SDL_UpdateTexture(texture,nullptr,pixels.data(),1280*4);SDL_RenderClear(renderer);if(geometry.portrait){SDL_Rect destination{-240,240,1280,800};SDL_RenderCopyEx(renderer,texture,nullptr,&destination,270,nullptr,SDL_FLIP_NONE);}else SDL_RenderCopy(renderer,texture,nullptr,nullptr);SDL_RenderPresent(renderer);}
 };
 static std::string storageSize(uint64_t bytes) {
     std::ostringstream value;const bool gigabytes=bytes>=1024ULL*1024*1024;
@@ -177,7 +181,7 @@ static int app(int argc,char**argv) {
     const bool sdTest=false;
 #endif
     const bool test=testMode!=nullptr, flow=test&&(std::string(testMode)=="flow"||std::string(testMode)=="touch-flow"),responsive=test&&std::string(testMode)=="responsive",direct=test&&std::string(testMode).rfind("welcome-",0)==0;int frames=0,step=0,welcomeStep=0,presents=0,idlePresents=0;std::string updateTestResult;Uint32 probeStarted=0;const bool startingDark=dark;
-    auto click=[&](int x,int y){SDL_Event event{};if(std::string(testMode)=="touch-flow"){event.type=SDL_FINGERUP;int wx,wy,ww,wh;SDL_RenderLogicalToWindow(screen.renderer,float(y),float(1280-x),&wx,&wy);SDL_GetWindowSize(screen.window,&ww,&wh);event.tfinger.x=float(wx)/ww;event.tfinger.y=float(wy)/wh;SDL_PushEvent(&event);return;}event.type=SDL_MOUSEBUTTONUP;event.button.button=SDL_BUTTON_LEFT;event.button.x=y;event.button.y=1280-x;SDL_PushEvent(&event);};
+    auto click=[&](int x,int y){SDL_Event event{};const auto point=screen.geometry.output(x,y);if(std::string(testMode)=="touch-flow"){event.type=SDL_FINGERUP;int wx,wy,ww,wh;SDL_RenderLogicalToWindow(screen.renderer,float(point.first),float(point.second),&wx,&wy);SDL_GetWindowSize(screen.window,&ww,&wh);event.tfinger.x=float(wx)/ww;event.tfinger.y=float(wy)/wh;SDL_PushEvent(&event);return;}event.type=SDL_MOUSEBUTTONUP;event.button.button=SDL_BUTTON_LEFT;event.button.x=point.first;event.button.y=point.second;SDL_PushEvent(&event);};
     auto capture=[&](const char* name){SDL_Surface* surface=SDL_CreateRGBSurfaceWithFormatFrom(screen.pixels.data(),1280,800,32,1280*4,SDL_PIXELFORMAT_ARGB8888);if(!surface)throw std::runtime_error(SDL_GetError());const int result=SDL_SaveBMP(surface,(manager.session/name).c_str());SDL_FreeSurface(surface);if(result!=0)throw std::runtime_error(SDL_GetError());};
     while(!quitting) {
         if(!sdSourceRemoval&&!fs::is_regular_file(manager.usb/".mpc-manager-id")) {status=sourceOnSd?"SD card removed. Returning to MPC.":"USB removed. Returning to MPC.";quitting=1;}
@@ -509,8 +513,8 @@ static int app(int argc,char**argv) {
             if(event.type==SDL_QUIT)quitting=1;
             if(event.type==SDL_FINGERDOWN||event.type==SDL_FINGERMOTION){lastTouch=SDL_GetTicks();continue;}
             int x,y;
-            if(event.type==SDL_FINGERUP){x=std::clamp(int(1280*(1-event.tfinger.y)),0,1279);y=std::clamp(int(800*event.tfinger.x),0,799);}
-            else if(event.type==SDL_MOUSEBUTTONUP&&event.button.which!=SDL_TOUCH_MOUSEID){x=1280-event.button.y;y=event.button.x;}
+            if(event.type==SDL_FINGERUP){const auto point=screen.geometry.input(event.tfinger.x*screen.geometry.width(),event.tfinger.y*screen.geometry.height());x=point.first;y=point.second;}
+            else if(event.type==SDL_MOUSEBUTTONUP&&event.button.which!=SDL_TOUCH_MOUSEID){const auto point=screen.geometry.input(event.button.x,event.button.y);x=point.first;y=point.second;}
             else continue;
             lastTouch=SDL_GetTicks();dirty=true;
             if(returning)continue;
@@ -591,6 +595,7 @@ static int app(int argc,char**argv) {
 #endif
     if(sdTest&&step!=100)throw std::runtime_error("SD UI test did not finish");
     if(direct&&step!=3)throw std::runtime_error("Direct installation test did not finish");
+    if(flow&&step!=30)throw std::runtime_error("Interface navigation test did not finish");
     if(responsive){if(step!=18)throw std::runtime_error("Responsiveness test did not finish");std::fprintf(stderr,"PASS: welcome preferences, delayed ZIP navigation, latest-tab precedence, theme input, idle redraw suspension and safe Return during read\n");}
     return 0;
 }

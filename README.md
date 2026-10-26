@@ -1,6 +1,6 @@
 # Plugin Manager USB for OPEN MPC
 
-[![Download installer](https://img.shields.io/badge/Download-Installer-brightgreen?logo=github)](https://github.com/Eurikon/plugin-manager-usb-for-open-mpc/releases/download/v1.1.0/plugin-manager-usb-v1.1.0.zip)
+[![Download installer](https://img.shields.io/badge/Download-Gen_2_test-orange?logo=github)](https://github.com/Eurikon/plugin-manager-usb-for-open-mpc/releases/download/v1.2.0-beta.1/plugin-manager-usb-v1.2.0-beta.1.zip)
 [![Latest release](https://img.shields.io/github/v/release/Eurikon/plugin-manager-usb-for-open-mpc?logo=github&label=Release)](https://github.com/Eurikon/plugin-manager-usb-for-open-mpc/releases/latest)
 [![Changelog](https://img.shields.io/badge/Changelog-History-blue?logo=github)](CHANGELOG.md)
 [![User guide](https://img.shields.io/badge/Guide-Website-blue?logo=githubpages)](https://eurikon.github.io/plugin-manager-usb-for-open-mpc/guide.html)
@@ -13,6 +13,11 @@ The bundle includes the manager, without plugins or Akai firmware files.
 
 **MPC Live 2 - Gen1 / AKAI MPC OS 3.9.1 and 3.10** (MPC Live II Retro test unit).<br>
 This describes recorded local hardware testing; other firmware versions and devices are unverified.
+
+**Gen 2 testing build:** one stick contains both native runtimes and selects the correct generation automatically.<br>
+Offline checks use stock Gen 2 OS 3.9.1 and 3.10 firmware; Gen 2 hardware testing is pending.<br>
+Use ARM64 plugin packages on Gen 2; ARMv7 packages are rejected before installation.<br>
+For this testing release, copy the complete new bundle onto USB and import its updated helper on OS 3.10; the 1.1.0 updater cannot replace the changed helper.
 
 ![Plugin Manager catalog on the MPC touchscreen](site/assets/manager-catalog.png)
 
@@ -194,12 +199,13 @@ Development tools were tested on an **Apple Silicon Mac** with **macOS 26.6.2**.
 Builds and offline tests use Docker.<br>
 **Windows and Linux development setups haven’t been tested.**
 
-Requirements: Python 3.9 or later, GNU Make and Docker with `linux/arm/v7` support.<br>
+Requirements: Python 3.10 or later, GNU Make and Docker with `linux/arm/v7` and `linux/arm64` support.<br>
 Run from this checkout:
 
 ```sh
 make syntax
 make arm
+make arm64
 ```
 
 `make syntax` checks Python and shell scripts.<br>
@@ -209,6 +215,9 @@ Outputs stay in ignored `build/`.<br>
 No sibling project is needed.<br>
 The build includes `build/startup/manager-entry.so`, compiled from `src/startup/`.<br>
 Use `make arm-helper` to rebuild only that helper with the existing build image.
+
+`make arm64` uses the same Dockerfile with `gcc:12` and writes the Gen 2 runtime and helper to `build/aarch64/`.<br>
+Its image is `mpc-usb-plugin-installer-build-tools:aarch64`; the ARMv7 outputs remain separate in `build/`.
 
 ## Building a USB Bundle Without Redistributing Firmware
 
@@ -251,9 +260,27 @@ python3 package.py /path/to/MPC39 build/universal-usb \
 
 Omit both options to build only the legacy USB route.<br>
 The legacy checksum uses bounded automatic salt scanning.<br>
-The controller helper requires the verified stock Gen1 OS 3.10 executable because its native UI bindings are specific to that build.<br>
+The controller helper requires each generation's verified stock OS 3.10 executable because its native UI bindings are specific to that build.<br>
 Unknown or mismatched inputs stop packaging.<br>
 Firmware executables are not copied into the bundle; plugin packages are omitted by default.
+
+### Add Gen 2 to the same bundle
+
+Build both architectures, then extract the Gen 2 OS 3.9.1 executable with `tools/extract_firmware.py` and its OS 3.10 executable with the same tool's `--controller-helper` option.<br>
+The extractor checks the section table, embedded section checksums and compressed filesystem integrity.<br>
+Compare the two generations' OS 3.9.1 autorun data with `package.validate_mpc_executable()`; the supported images decode the same salt.<br>
+Package both runtimes with:
+
+```sh
+python3 package.py /path/to/Gen1-MPC39 build/universal-gen2-usb \
+  --mpc-310 /path/to/Gen1-MPC310 --setup-project /path/to/Blank.xpj \
+  --arm64-build build/aarch64 --mpc-310-arm64 /path/to/Gen2-MPC310
+```
+
+The ARM64 executables live in `autorun/runtime/aarch64/` alongside the shared assets.<br>
+The helper XPA contains both native modules and selects one using Lua's native pointer size.<br>
+Gen 2 reads settings from `/data/Settings/MPC/MPC.settings` and selects a registered, writable, executable plugin content location, preferring `/nvme/Synths` when available.<br>
+Installing the manager itself remains restricted to a removable SD card.
 
 ## Broader Offline Tests
 

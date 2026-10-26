@@ -49,19 +49,24 @@ def validate_mpc_executable(binary: Path) -> tuple[bytes, dict[str, object]]:
         size = before.st_size
         if not stat.S_ISREG(before.st_mode) or not 52 <= size <= MAX_EXECUTABLE_BYTES:
             raise ValueError("MPC executable size or file type is unsupported")
-        header = source.read(52)
-        if len(header) != 52 or header[:7] != b"\x7fELF\x01\x01\x01" or header[7] not in (0, 3):
-            raise ValueError("Expected an ELF32 little-endian ARM MPC executable")
+        header = source.read(64)
+        if len(header) < 52 or header[:4] != b"\x7fELF" or header[5:7] != b"\x01\x01" or header[7] not in (0, 3):
+            raise ValueError("Expected a little-endian ARM MPC executable")
+        is64 = header[4] == 2
+        if header[4] not in (1, 2) or (is64 and len(header) != 64):
+            raise ValueError("Unsupported MPC ELF class")
+        format_ = "<HHIQQQIHHHHHH" if is64 else "<HHIIIIIHHHHHH"
         (kind, machine, version, entry, phoff, shoff, flags, ehsize,
-         phentsize, phnum, shentsize, shnum, shstrndx) = struct.unpack_from("<HHIIIIIHHHHHH", header, 16)
-        if kind not in (2, 3) or machine != 40 or version != 1 or ehsize != 52:
-            raise ValueError("Expected an executable ELF32 ARM MPC binary")
-        if flags & 0xff000000 != 0x05000000 or not flags & 0x400 or flags & 0x200:
-            raise ValueError("MPC executable must use ARM EABI5 hard-float")
-        if phentsize != 32 or not 1 <= phnum <= 1024 or phoff < ehsize or phoff + phnum * phentsize > size:
+         phentsize, phnum, shentsize, shnum, shstrndx) = struct.unpack_from(format_, header, 16)
+        if (kind not in (2, 3) or machine != (183 if is64 else 40) or version != 1
+                or ehsize != (64 if is64 else 52)):
+            raise ValueError("Expected an executable ARM MPC binary")
+        if (is64 and flags != 0) or (not is64 and (flags & 0xff000000 != 0x05000000 or not flags & 0x400 or flags & 0x200)):
+            raise ValueError("MPC executable must use the supported ARM ABI")
+        if phentsize != (56 if is64 else 32) or not 1 <= phnum <= 1024 or phoff < ehsize or phoff + phnum * phentsize > size:
             raise ValueError("MPC executable has invalid program headers")
         if shnum:
-            if shentsize != 40 or shoff < ehsize or shoff + shnum * shentsize > size or shstrndx >= shnum:
+            if shentsize != (64 if is64 else 40) or shoff < ehsize or shoff + shnum * shentsize > size or shstrndx >= shnum:
                 raise ValueError("MPC executable has invalid section headers")
         elif shoff or shstrndx:
             raise ValueError("MPC executable has unsupported extended section headers")
@@ -71,13 +76,16 @@ def validate_mpc_executable(binary: Path) -> tuple[bytes, dict[str, object]]:
             program = source.read(phentsize)
             if len(program) != phentsize:
                 raise ValueError("MPC executable program headers are truncated")
-            ptype, offset, address, _, filesz, memsz, permissions, alignment = struct.unpack("<8I", program)
+            if is64:
+                ptype, permissions, offset, address, _, filesz, memsz, alignment = struct.unpack("<II6Q", program)
+            else:
+                ptype, offset, address, _, filesz, memsz, permissions, alignment = struct.unpack("<8I", program)
             if offset > size or filesz > size - offset:
                 raise ValueError("MPC executable segment exceeds file bounds")
             if ptype != 1:
                 continue
             load_count += 1
-            if filesz > memsz or address + memsz > 1 << 32 or permissions & ~7:
+            if filesz > memsz or address + memsz > 1 << (64 if is64 else 32) or permissions & ~7:
                 raise ValueError("MPC executable has an invalid load segment")
             if alignment > 1 and (alignment & (alignment - 1) or offset % alignment != address % alignment):
                 raise ValueError("MPC executable load alignment is invalid")
@@ -109,6 +117,7 @@ def validate_mpc_executable(binary: Path) -> tuple[bytes, dict[str, object]]:
     checksum = digest.hexdigest()
     return salt, {
         "executable_sha256": checksum,
+        "arch": "aarch64" if is64 else "armv7",
         "executable_bytes": size,
         "elf_type": "ET_EXEC" if kind == 2 else "ET_DYN",
         "autorun_salt_sha256": hashlib.sha256(salt).hexdigest(),
@@ -118,8 +127,10 @@ def validate_mpc_executable(binary: Path) -> tuple[bytes, dict[str, object]]:
 
 
 def build_package(binary: Path, destination: Path, plugin: Path | None = None,
-                  *, helper: bytes | None = None) -> Path:
-    salt, _ = validate_mpc_executable(binary)
+                  *, helper: bytes | None = None, arm64_build: Path | None = None) -> Path:
+    salt, facts = validate_mpc_executable(binary)
+    if facts.get("arch") == "aarch64" and arm64_build is None:
+        raise ValueError("A Gen 2 firmware input requires ARM64 runtime outputs")
     if destination.exists() or destination.is_symlink():
         raise FileExistsError("Destination already exists")
     if plugin is not None and not zipfile.is_zipfile(plugin):
@@ -134,16 +145,31 @@ def build_package(binary: Path, destination: Path, plugin: Path | None = None,
     if not (PROJECT / "licenses").is_dir():
         raise FileNotFoundError("Missing third-party licenses")
 
+    if arm64_build is not None:
+        arm64_build = Path(arm64_build)
+        for name in ("manager", "shortcut", "shortcut-hook.so"):
+            path = arm64_build / name
+            with path.open("rb") as source:
+                header = source.read(64)
+            if (len(header) != 64 or header[:7] != b"\x7fELF\x02\x01\x01"
+                    or struct.unpack_from("<H", header, 18)[0] != 183):
+                raise ValueError("Expected an ARM64 build input: " + name)
     autorun = destination / "autorun"
     runtime = autorun / "runtime"
     runtime.mkdir(parents=True)
     for name in ("manager", "font.ttf", "shortcut", "shortcut-hook.so"):
         shutil.copyfile(PROJECT / "build" / name, runtime / name)
+    if arm64_build is not None:
+        (runtime / "aarch64").mkdir()
+        for name in ("manager", "shortcut", "shortcut-hook.so"):
+            shutil.copyfile(arm64_build / name, runtime / "aarch64" / name)
     for name in ("launch.sh", "setup.sh"):
         shutil.copyfile(PROJECT / name, runtime / name)
     if helper is not None:
         packager = _helper()
-        packager.validate_archive(helper, {name: (runtime / name).read_bytes() for name in packager.RUNTIME})
+        packager.validate_archive(helper, {name: (runtime / name).read_bytes() for name in packager.RUNTIME},
+                                  {name: (runtime / packager.runtime_path(name, "aarch64")).read_bytes()
+                                   for name in packager.RUNTIME} if arm64_build is not None else None)
     shutil.copyfile(PROJECT / "open.sh", autorun / "open.sh")
     licenses = runtime / "licenses"
     shutil.copytree(PROJECT / "licenses", licenses,
@@ -176,15 +202,17 @@ def build_package(binary: Path, destination: Path, plugin: Path | None = None,
 
 
 def build_universal_package(binary: Path, firmware_310: Path, setup_project: Path,
-                            destination: Path, plugin: Path | None = None) -> Path:
+                            destination: Path, plugin: Path | None = None, *, arm64_build: Path | None = None, firmware_310_arm64: Path | None = None) -> Path:
     destination = Path(destination)
     if destination.exists() or destination.is_symlink():
         raise FileExistsError("Destination already exists")
-    helper = _helper().build_archive(firmware_310, setup_project)
+    if (arm64_build is None) != (firmware_310_arm64 is None):
+        raise ValueError("Supply both ARM64 outputs and the Gen 2 OS 3.10 executable")
+    helper = _helper().build_archive(firmware_310, setup_project, firmware_310_arm64) if firmware_310_arm64 is not None else _helper().build_archive(firmware_310, setup_project)
     destination.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix=".manager-package-", dir=destination.parent) as temporary:
         staged = Path(temporary) / "usb"
-        build_package(binary, staged, plugin, helper=helper)
+        build_package(binary, staged, plugin, helper=helper, arm64_build=arm64_build)
         if destination.exists() or destination.is_symlink():
             raise FileExistsError("Destination appeared during packaging")
         staged.rename(destination)
@@ -196,17 +224,21 @@ def main() -> None:
     parser.add_argument("firmware_executable", type=Path)
     parser.add_argument("destination", type=Path)
     parser.add_argument("plugin", type=Path, nargs="?", help="Optional local plugin ZIP; omitted by default")
+    parser.add_argument("--mpc-310-arm64", type=Path, help="Stock Gen 2 OS 3.10 executable for the universal helper")
+    parser.add_argument("--arm64-build", type=Path, help="Additional ARM64 runtime build directory for Gen 2")
     parser.add_argument("--mpc-310", type=Path, help="Stock Gen1 OS 3.10 MPC executable for the controller helper")
     parser.add_argument("--setup-project", type=Path, help="Blank standalone MPC project for the one-time helper import")
     args = parser.parse_args()
+    if args.mpc_310_arm64 is not None and args.mpc_310 is None:
+        parser.error("--mpc-310-arm64 requires --mpc-310 and --setup-project")
     if (args.mpc_310 is None) != (args.setup_project is None):
         parser.error("Supply both --mpc-310 and --setup-project for a universal bundle")
     try:
         if args.mpc_310 is not None:
             build_universal_package(args.firmware_executable, args.mpc_310, args.setup_project,
-                                    args.destination, args.plugin)
+                                    args.destination, args.plugin, arm64_build=args.arm64_build, firmware_310_arm64=args.mpc_310_arm64)
         else:
-            build_package(args.firmware_executable, args.destination, args.plugin)
+            build_package(args.firmware_executable, args.destination, args.plugin, arm64_build=args.arm64_build)
     except (OSError, ValueError, RuntimeError) as error:
         parser.error(str(error))
     print("Plugin Manager USB package generated")

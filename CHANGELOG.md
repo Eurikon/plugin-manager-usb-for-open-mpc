@@ -1,5 +1,18 @@
 # Changelog
 
+## 1.2.0-beta.1 — 26-10-2026
+
+- One USB bundle selects the ARMv7 Gen 1 or ARM64 Gen 2 manager, shortcut and helper automatically.
+- Gen 2 catalog downloads, local-package checks and installed inventory use ARM64 releases and the 64-bit plugin registry.
+- The OS 3.10 helper supports the verified stock Gen 2 build, including native loading dialogs and internal Documents locations.
+- SD installation and manager updates retain the selected generation's runtime and preserve user files during removal or rollback.
+- Display rendering and touch coordinates follow the detected panel orientation.
+- Added bounded extraction and section-checksum verification for Gen 2 update images.
+
+Gen 2 has passed offline checks using official OS 3.9.1 and 3.10 images; device testing remains pending.
+Install this testing bundle by extracting it onto a prepared USB stick and importing its updated helper on OS 3.10.
+The stable 1.1.0 updater cannot install this changed helper automatically.
+
 ## 1.1.0 — 26-10-2026
 
 ### Added
