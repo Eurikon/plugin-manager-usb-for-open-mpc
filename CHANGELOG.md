@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.2.0 — 27-10-2026
+
+- Add automatic Gen1/Gen2 selection in one USB bundle, including ARM64 catalog packages, installed inventory and the Gen2 OS 3.10 helper.
+- Correct Gen2 native UI bindings and prevent recursive shortcut/addin lookup chains.
+- Preserve current service addin settings and their order across repeated manager openings.
+- Retain generation-specific SD installation, update/removal checks and display/touch orientation handling.
+
+Beta 2 hardware approval covers Akai Force on OS 3.9.1 and MPC Live III (Gen2) on OS 3.10 over OS 3.9.1.
+Stock Gen2 OS 3.10 remains offline-tested without a hardware-test claim.
+Updating from 1.1.0 or a 1.2.0 beta requires copying the complete bundle and reimporting the helper on OS 3.10.
+
 ## 1.2.0-beta.2 — 27-10-2026
 
 - Correct two Gen 2 OS 3.10 native UI bindings that prevented the helper from opening the manager.

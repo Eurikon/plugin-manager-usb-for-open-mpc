@@ -1,7 +1,7 @@
 # Developer FAQ
 
 This guide describes the current source and the validation recorded on
-**26-10-2026**.
+**27-10-2026**.
 Start with [README.md](README.md) for USB use, build prerequisites,
 tested platforms and setup. Firmware, plugin packages
 and private device data are external inputs; none belongs in this repository.
@@ -29,9 +29,10 @@ offline tests run in Linux Docker containers. Windows and native Linux
 development hosts remain unverified. Offline passes do not establish support
 for another MPC model or firmware.
 
-The Gen 2 testing build adds ARM64 compilation, sectioned-firmware extraction, architecture-specific catalog/registry checks, SD/update fixtures and native OS 3.10 dialog/queue tests against an extracted filesystem.
-An external [MPC Live III report](https://github.com/Eurikon/plugin-manager-usb-for-open-mpc/pull/1) confirms OS 3.9.1 opening, catalog access, ARM64 installation and shortcut reopening.
-The corrected hook still needs device confirmation; OS 3.10 helper feedback used an application overlay, not a stock Gen 2 OS 3.10 installation.
+Version 1.2.0 adds ARM64 compilation, sectioned-firmware extraction, architecture-specific catalog/registry checks, SD/update fixtures and native OS 3.10 dialog/queue tests against an extracted filesystem.
+The user confirmed Beta 2 hardware approval on **Akai Force / OS 3.9.1** and **MPC Live III (Gen2) / OS 3.10 over OS 3.9.1** on 27-10-2026.
+The earlier [MPC Live III report](https://github.com/Eurikon/plugin-manager-usb-for-open-mpc/pull/1) also records OS 3.9.1 opening, catalog access, ARM64 installation and shortcut reopening.
+Keep the overlay result separate from stock firmware: stock Gen2 OS 3.10 has offline validation, without a hardware-test claim.
 
 ### How do I build the manager?
 
@@ -74,7 +75,7 @@ An exFAT permission exception applies only to that internal helper source; RAM l
 The manager uses `pluginList-arm-64bit`, ARM64 catalog assets and registered executable plugin storage.
 No 32-bit compatibility libraries are required on the device.
 
-The Gen 2 testing release requires copying a complete bundle and reimporting its helper.
+Updating from 1.1.0 or a 1.2.0 beta requires copying the complete 1.2.0 bundle and reimporting its helper on OS 3.10.
 The older stable updater refuses the changed helper/layout rather than partially applying it.
 Testing releases are excluded from the normal stable-update lookup.
 

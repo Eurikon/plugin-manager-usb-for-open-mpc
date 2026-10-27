@@ -1,6 +1,6 @@
 # Plugin Manager USB for OPEN MPC
 
-[![Download installer](https://img.shields.io/badge/Download-Gen_2_test-orange?logo=github)](https://github.com/Eurikon/plugin-manager-usb-for-open-mpc/releases/download/v1.2.0-beta.2/plugin-manager-usb-v1.2.0-beta.2.zip)
+[![Download installer](https://img.shields.io/badge/Download-1.2.0-brightgreen?logo=github)](https://github.com/Eurikon/plugin-manager-usb-for-open-mpc/releases/download/v1.2.0/plugin-manager-usb-v1.2.0.zip)
 [![Latest release](https://img.shields.io/github/v/release/Eurikon/plugin-manager-usb-for-open-mpc?logo=github&label=Release)](https://github.com/Eurikon/plugin-manager-usb-for-open-mpc/releases/latest)
 [![Changelog](https://img.shields.io/badge/Changelog-History-blue?logo=github)](CHANGELOG.md)
 [![User guide](https://img.shields.io/badge/Guide-Website-blue?logo=githubpages)](https://eurikon.github.io/plugin-manager-usb-for-open-mpc/guide.html)
@@ -14,12 +14,20 @@ The bundle includes the manager, without plugins or Akai firmware files.
 **MPC Live 2 - Gen1 / AKAI MPC OS 3.9.1 and 3.10** (MPC Live II Retro test unit).<br>
 This describes recorded local hardware testing; other firmware versions and devices are unverified.
 
-**Gen 2 testing build:** one stick contains both native runtimes and selects the correct generation automatically.<br>
-Offline checks use stock Gen 2 OS 3.9.1 and 3.10 firmware.<br>
-An [MPC Live III hardware report](https://github.com/Eurikon/plugin-manager-usb-for-open-mpc/pull/1) confirms OS 3.9.1 catalog, ARM64 installation and shortcut operation.<br>
-The corrected hook needs a hardware retest; the reported OS 3.10 helper check used an application overlay rather than a stock OS 3.10 installation.<br>
-Use ARM64 plugin packages on Gen 2; ARMv7 packages are rejected before installation.<br>
-For this testing release, copy the complete new bundle onto USB and import its updated helper on OS 3.10; the 1.1.0 updater cannot replace the changed helper.
+**Additional hardware checks:** Akai Force — OS 3.9.1; MPC Live III (Gen2) — OS 3.10 over OS 3.9.1.<br>
+Beta 2 was tested and approved on these configurations.<br>
+Stock Gen2 OS 3.9.1 and 3.10 have also passed offline firmware checks; stock Gen2 OS 3.10 has not been hardware-tested.<br>
+
+One USB bundle selects the Gen1 or Gen2 runtime automatically.<br>
+Use ARM64 plugin packages on Gen2; ARMv7 packages are rejected before installation.
+
+### Updating from 1.1.0 or a 1.2.0 beta
+
+Save your project and safely eject the drive before updating it on your computer.<br>
+Extract the complete 1.2.0 bundle onto the existing USB stick, replacing matching application files.<br>
+Keep `plugin-history.json`, `manager-preferences.json` and your `local-plugins/` files.<br>
+On OS 3.10, reimport `Plugin Manager helper.xpa` into internal MPC Documents and restart the MPC application.<br>
+The older updater cannot replace this changed helper and bundle layout; use this complete-bundle procedure.
 
 ![Plugin Manager catalog on the MPC touchscreen](site/assets/manager-catalog.png)
 

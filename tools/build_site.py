@@ -408,17 +408,19 @@ def landing(readme: str, root: Path, repository: str, revision: str) -> str:
     if not compatibility:
         raise ValueError("README must state tested hardware compatibility")
     hardware, firmware = compatibility[1].split(" / ", 1)
+    additional = re.search(r"\*\*Additional hardware checks:\*\* (.+?)(?:<br>|\n)", readme)
+    additional_hardware = '<span>{}</span>'.format(html.escape(additional[1])) if additional else ""
     cards = ''.join('''<a class="screen-card" href="{link}" data-screen data-group="{group}">
 <div class="screen-image"><img src="assets/manager-{key}.png" alt="{title} screen captured on the MPC" width="1280" height="800" loading="lazy"></div>
 <div class="screen-info"><div class="screen-title"><h3>{title}</h3><span class="screen-tag">{tag}</span></div><p>{description}</p><span class="screen-more">View guide {arrow}</span></div></a>'''.format(key=key,title=title,description=description,group=group,link=link,tag=tag,arrow=site_icon('arrow')) for key,title,description,group,link,tag in SCREEN_PAGES)
     return '''<div class="overview-content">
 <section class="overview-intro"><div><p class="overview-kicker">USB / SD · MPC STANDALONE</p><h1>Plugin Manager USB for OPEN MPC</h1><p>Browse, install, update and remove community plugins on your MPC touchscreen.</p></div><a class="button primary" href="guide.html#using-a-prepared-usb-bundle">Get started {arrow}</a></section>
-<div class="hardware-strip"><span class="hardware-label">Tested hardware</span><span>{hardware}</span><span>{firmware}</span><a href="guide.html#using-a-prepared-usb-bundle">Firmware setup {arrow}</a></div>
+<div class="hardware-strip"><span class="hardware-label">Tested hardware</span><span>{hardware}</span><span>{firmware}</span>{additional_hardware}<a href="guide.html#using-a-prepared-usb-bundle">Firmware setup {arrow}</a></div>
 <section class="library" id="library" aria-labelledby="library-title"><div class="library-heading"><div><h2 id="library-title">Inside the manager</h2><p>The current interface, captured on the MPC.</p></div></div>
 <div class="library-controls"><div class="screen-filters" role="group" aria-label="Filter screens"><button type="button" data-filter="all" aria-pressed="true">All screens <span>6</span></button><button type="button" data-filter="browse" aria-pressed="false">Browsing <span>4</span></button><button type="button" data-filter="setup" aria-pressed="false">Setup &amp; storage <span>2</span></button></div><p id="screen-count" role="status" aria-live="polite">6 screens</p></div>
 <div class="screen-grid">{cards}</div></section>
 <section class="setup-routes" aria-labelledby="start-title"><div><h2 id="start-title">One bundle. Two setup routes.</h2><p>Copy the archive contents to an MPC-formatted USB stick, including the hidden marker.</p></div><div class="route-grid"><a href="guide.html#mpc-os-391"><span class="route-number">01</span><div><h3>MPC OS 3.9.1</h3><p>Insert the stick and choose Open in the script prompt.</p></div>{arrow}</a><a href="guide.html#mpc-os-310-first-use"><span class="route-number">02</span><div><h3>MPC OS 3.10</h3><p>Import the supplied helper once, then use USB or install the manager on SD.</p></div>{arrow}</a></div><p class="session-note">Save your project before opening. The MPC application restarts when you return; allow 30 seconds or longer.</p></section>
-</div>'''.format(cards=cards,arrow=site_icon('arrow'),hardware=html.escape(hardware),firmware=html.escape(firmware))
+</div>'''.format(cards=cards,arrow=site_icon('arrow'),hardware=html.escape(hardware),firmware=html.escape(firmware),additional_hardware=additional_hardware)
 
 
 def build(output: Path, repository: str = "", revision: str = "main", root: Path = ROOT) -> None:
