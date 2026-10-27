@@ -3,6 +3,7 @@ import binascii
 import hashlib
 import io
 import json
+import re
 from pathlib import Path
 import subprocess
 import struct
@@ -47,7 +48,17 @@ def compact_capture(path):
 
 
 
+def next_version():
+    match = re.search(r'^#define MPC_MANAGER_VERSION "(\d+)\.(\d+)\.(\d+)"$',
+                      (SOURCE / "src/version.hpp").read_text(), re.MULTILINE)
+    if match is None:
+        raise ValueError("Missing manager release version")
+    major, minor, patch = map(int, match.groups())
+    return f"{major}.{minor}.{patch + 1}"
+
+
 def update_fixture(root):
+    version = next_version()
     header = bytearray(52)
     header[:7] = b"\x7fELF\x01\x01\x01"
     struct.pack_into("<HH", header, 16, 2, 40)
@@ -79,11 +90,11 @@ def update_fixture(root):
     files["USB-SHA256.json"] = json.dumps(manifest).encode()
     package = root / "update.zip"
     package.write_bytes(archive(files))
-    release = {"draft": False, "prerelease": False, "tag_name": "v1.0.4",
-               "html_url": "https://github.com/Eurikon/plugin-manager-usb-for-open-mpc/releases/tag/v1.0.4",
-               "assets": [{"name": "plugin-manager-usb-v1.0.4.zip", "state": "uploaded",
+    release = {"draft": False, "prerelease": False, "tag_name": "v" + version,
+               "html_url": f"https://github.com/Eurikon/plugin-manager-usb-for-open-mpc/releases/tag/v{version}",
+               "assets": [{"name": f"plugin-manager-usb-v{version}.zip", "state": "uploaded",
                            "size": package.stat().st_size, "digest": "sha256:" + digest(package),
-                           "browser_download_url": "https://github.com/Eurikon/plugin-manager-usb-for-open-mpc/releases/download/v1.0.4/plugin-manager-usb-v1.0.4.zip"}]}
+                           "browser_download_url": f"https://github.com/Eurikon/plugin-manager-usb-for-open-mpc/releases/download/v{version}/plugin-manager-usb-v{version}.zip"}]}
     (root / "release.json").write_text(json.dumps(release))
     for name, value in {"manager-preferences.json": json.dumps({"schema": 1, "dark_theme": False, "hide_welcome": False}),
                         "plugin-history.json": json.dumps({"schema": 1, "plugins": {}}), "local-plugins/keep.txt": "User package fixture\n"}.items():
@@ -103,11 +114,12 @@ def main():
         parser.error("Use a fresh output directory inside build/")
     inputs = [SOURCE / name for name in (
         "src/main.cpp", "src/sd_install.cpp", "src/sd_install.hpp", "tests/sd_install_fixture.hpp",
-        "src/backend.cpp", "src/backend.hpp", "src/version.hpp", "src/manager_update.cpp", "src/manager_update.hpp", "tests/manager_update_fixture.hpp",
-        "build/backend.o", "build/sd_install.o", "build/manager_update.o", "build/manager", "build/font.ttf")]
+        "src/backend.cpp", "src/plugin_storage.cpp", "src/plugin_storage.hpp", "src/backend.hpp", "src/version.hpp", "src/manager_update.cpp", "src/manager_update.hpp", "tests/manager_update_fixture.hpp",
+        "build/backend.o", "build/plugin_storage.o", "build/sd_install.o", "build/manager_update.o", "build/manager", "build/font.ttf")]
     hashes = {str(path.relative_to(SOURCE)): digest(path) for path in inputs}
     output.mkdir(parents=True, exist_ok=False)
     preserved = {}
+    version = next_version()
     for mode in (*MODES, "sd-install-dark", "legacy-smoke"):
         root = output / mode
         for folder in ("source", "session", "Expansions", "bin"):
@@ -136,7 +148,7 @@ case "$url" in
   https://api.github.com/repos/Eurikon/plugin-manager-usb-for-open-mpc/releases/latest)
     printf 'check\\n' >> "$root/session/manager-checks.log"
     cp "$root/release.json" "$out";;
-  https://github.com/Eurikon/plugin-manager-usb-for-open-mpc/releases/download/v1.0.4/plugin-manager-usb-v1.0.4.zip)
+  https://github.com/Eurikon/plugin-manager-usb-for-open-mpc/releases/download/v@VERSION@/plugin-manager-usb-v@VERSION@.zip)
     printf 'download\\n' >> "$root/session/manager-downloads.log"
     sleep 1
     cp "$root/update.zip" "$out";;
@@ -158,15 +170,16 @@ done
 printf 'check\\n' >> "${out%/*}/manager-checks.log"
 sleep 1
 """ + ("exit 1\n" if mode == "sd-update-error" else """cat > "$out" <<'JSON'
-{"draft":false,"prerelease":false,"tag_name":"v1.0.4","html_url":"https://github.com/Eurikon/plugin-manager-usb-for-open-mpc/releases/tag/v1.0.4"}
+{"draft":false,"prerelease":false,"tag_name":"v@VERSION@","html_url":"https://github.com/Eurikon/plugin-manager-usb-for-open-mpc/releases/tag/v@VERSION@"}
 JSON
 """))
         else:
             downloader.write_text("#!/bin/sh\nexit 1\n")
+        downloader.write_text(downloader.read_text().replace("@VERSION@", version))
         downloader.chmod(0o755)
     script = """set -eu
 c++ -std=c++17 -O2 -Wall -Wextra -Werror -DMPC_MANAGER_SD_FIXTURE -Isrc -Itests -I/opt/sdl/include/SDL2 $(pkg-config --cflags freetype2) -c src/main.cpp -o /results/main.o
-c++ /results/main.o build/backend.o build/sd_install.o build/manager_update.o -o /results/manager-ui $(/opt/sdl/bin/sdl2-config --static-libs) $(pkg-config --libs freetype2) -larchive
+c++ /results/main.o build/backend.o build/plugin_storage.o build/sd_install.o build/manager_update.o -o /results/manager-ui $(/opt/sdl/bin/sdl2-config --static-libs) $(pkg-config --libs freetype2) -larchive
 for mode in sd-unavailable sd-empty sd-cancel sd-install sd-remove sd-remove-current sd-hidden sd-themes sd-updates sd-update-error sd-self-update sd-self-update-fail sd-install-dark legacy-smoke; do
   root=/results/$mode
   binary=/results/manager-ui
@@ -174,9 +187,10 @@ for mode in sd-unavailable sd-empty sd-cancel sd-install sd-remove sd-remove-cur
   if [ "$mode" = legacy-smoke ]; then binary=/work/build/manager; testmode=smoke; fi
   if [ "$mode" = sd-install-dark ]; then testmode=sd-install; fi
   printf 'MODE %s\\n' "$mode"
-  env -u MPC_MANAGER_SD_HELPER PATH="$root/bin:$PATH" SDL_VIDEODRIVER=dummy MPC_MANAGER_UI_TEST="$testmode" "$binary" "$root/source" "$root/session" "$root/Expansions" "$root/MPC.settings" /work/build/font.ttf
+  env -u MPC_MANAGER_SD_HELPER PATH="$root/bin:$PATH" SDL_VIDEODRIVER=dummy MPC_MANAGER_UI_UPDATE_VERSION="@VERSION@" MPC_MANAGER_UI_TEST="$testmode" "$binary" "$root/source" "$root/session" "$root/Expansions" "$root/MPC.settings" /work/build/font.ttf
 done
 """
+    script = script.replace("@VERSION@", version)
     container = "mpc-manager-sd-ui-" + uuid.uuid4().hex[:12]
     command = ["docker", "run", "--rm", "--pull=never", "--name", container,
                "--platform=linux/arm/v7", "--network=none", "--read-only", "--memory=768m",

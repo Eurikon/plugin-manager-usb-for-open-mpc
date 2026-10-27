@@ -324,8 +324,15 @@ an unchecked package.
 ### How are MPC.settings changes and failures handled?
 
 `launch.sh` stops MPC before the GUI permits installation. The backend requires
-an existing settings file and a registered writable/executable plugin content location.
-Gen 1 uses `/sdcard/Expansions`; Gen 2 selects its registered location and prefers `/nvme/Synths` when available.
+an existing settings file and a writable/executable plugin content location.
+Gen 1 uses `/sdcard/Expansions`.
+Gen 2 automatic selection reads the scalar `Content.Manager.Directory` preference, resolves its filesystem against current mounts and uses that drive's `Synths` child, matching the stock OS 3.10 content downloader.
+It never falls back to a guessed absolute location.
+Manual selection can use an existing folder with another name; the choice lasts for the current session and does not change MPC's content-drive preference.
+The destination's mount identity is checked again before installation, so a removed or replaced drive requires reselection.
+After package validation, missing standard `Synths` folders are created and unregistered content folders are added to `SynthContentLocations`.
+Registration preserves unrelated settings and retains an exact original settings backup beside `MPC.settings` as `MPC.settings.pmu-*`.
+Choosing a location or rejecting a package does not perform those writes.
 It exports `MPC_SETTINGS` and invokes the package's installer or uninstaller with
 `-y -n -t` followed by that validated location.
 
@@ -342,7 +349,7 @@ bundle**. Do not attribute its guarantees to ordinary GUI installations.
 
 ### Where are plugins installed, and what does uninstall remove?
 
-The managed target is `/sdcard/Expansions` on Gen 1 and the selected registered executable content folder on Gen 2.
+The managed target is `/sdcard/Expansions` on Gen 1 and the firmware-selected or manually chosen writable/executable content folder on Gen 2.
 Registry folders under
 `.mpc-usb-manager/<id>/` retain the manifest, uninstaller and settings-edit helper.
 Removal runs the retained uninstaller and updates the USB inventory. User-data
@@ -352,7 +359,8 @@ managed target needs its original installer.
 On the tested Live II, `/sdcard` is internal content storage.
 The removable card used for the manager application is mounted separately under `/media/`.
 Do not infer a plugin's physical location from the manager's selected USB/SD source.
-Changing the plugin target means changing and testing the target/registration contract; it is not just a UI preference.
+Gen 2 exposes **Plugin installation location** separately from **Plugin Manager installation** in SETUP.
+Its drive and folder selector is implemented in `src/plugin_storage.cpp`; `tests/plugin_storage_test.cpp` checks destination and settings safeguards, and `tests/plugin_storage_ui_test.py` checks the ARM64 interface without hardware.
 
 ### What is saved on the source drive?
 
@@ -490,7 +498,7 @@ test-mode environment settings against a real device as ordinary installation.
 | `systemctl status acvs` / `inmusic-mpc` | MPC application state; inspect the service present on that device. |
 | Rejected firmware executable | Check the official update, ARM executable structure and scanner error; do not bypass a failed validation. |
 | Private MIDI port missing/ambiguous | Setup needs exactly one input/bidirectional hardware MIDI port ending in `Private`. |
-| Missing settings or SD content | Check the existing settings path, `/sdcard/Expansions`, registration and mount options. |
+| Missing plugin storage | Check MPC settings, the selected content drive and its writable/executable mount. On Gen 2 use SETUP → Plugin location; there is no guessed fallback. |
 | Effective service environment unavailable | MPC must be running; the service MainPID and its process environment must be readable before opening a new session. |
 | Invalid history/preferences | Preserve the original source-drive JSON before repairing its schema or contents. |
 | No first-use USB prompt on 3.10 | Import the helper into internal MPC Documents and restart the MPC application; legacy autorun alone does not provide this route. |

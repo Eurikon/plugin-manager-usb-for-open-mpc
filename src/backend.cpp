@@ -116,22 +116,26 @@ static bool executableContent(const fs::path& target,const std::string& mounts) 
     }
     return longest!=0&&writable;
 }
-static fs::path registeredContent(const fs::path& settings) {
-    const auto xml=read(settings),mounts=read("/proc/mounts");
-    const std::regex location("<Location>([^<]+)</Location>");
-    std::vector<fs::path> candidates;
-    for(std::sregex_iterator it(xml.begin(),xml.end(),location),end;it!=end;++it) {
-        const fs::path path=xmlText((*it)[1]);
-        if(path.is_absolute()&&path.lexically_normal()==path&&executableContent(path,mounts))candidates.push_back(path);
-    }
-    for(const auto& path:candidates)if(path=="/nvme/Synths")return path;
-    return candidates.empty()?fs::path("/nvme/Synths"):candidates.front();
-}
-Manager::Manager(fs::path u,fs::path s,fs::path target,fs::path set,std::string architecture):usb(std::move(u)),session(std::move(s)),synths(std::move(target)),settings(std::move(set)),arch(std::move(architecture)) {
+Manager::Manager(fs::path u,fs::path s,fs::path target,fs::path set,std::string architecture,PluginStoragePaths storagePaths):usb(std::move(u)),session(std::move(s)),synths(std::move(target)),settings(std::move(set)),arch(std::move(architecture)),pluginStorage(settings,std::move(storagePaths)) {
     require(arch=="armv7"||arch=="aarch64","Unsupported device architecture");
-    if(synths=="auto"){require(arch=="aarch64","Automatic plugin storage requires Gen 2");synths=registeredContent(settings);}
+    if(synths=="auto"){
+        require(arch=="aarch64","Automatic plugin storage requires Gen 2");nativePluginStorage=true;synths.clear();
+        try{selectPluginStorage({});}catch(const std::exception& error){pluginStorageError=error.what();}
+    }
     fs::create_directories(session);
     require(setenv("MPC_SETTINGS",settings.c_str(),1)==0,"Cannot set settings path");
+}
+Json Manager::pluginStorageInfo() {
+    Json result={{"available",nativePluginStorage},{"automatic",automaticPluginStorage},{"path",synths.string()},{"reason",pluginStorageError},{"targets",Json::array()}};
+    if(!nativePluginStorage)return result;
+    try{result["native"]=pluginStorage.automatic();}catch(const std::exception& error){result["native_error"]=error.what();}
+    result["targets"]=pluginStorage.targets();return result;
+}
+Json Manager::pluginStorageFolders(const fs::path& directory) {require(nativePluginStorage,"Plugin location selection requires Gen 2 automatic storage");auto result=pluginStorageInfo();result["browser"]=pluginStorage.folders(directory);return result;}
+void Manager::selectPluginStorage(const fs::path& target) {
+    require(nativePluginStorage,"Plugin location selection requires Gen 2 automatic storage");
+    const auto state=target.empty()?pluginStorage.automatic():pluginStorage.inspect(target);
+    synths=state.at("path").get<std::string>();pluginStorageIdentity=state.at("identity").get<std::string>();automaticPluginStorage=target.empty();pluginStorageError.clear();
 }
 static std::vector<int> libcVersion(const std::string& text) {
     std::istringstream parts(text);std::string part;std::vector<int> result;
@@ -476,7 +480,7 @@ std::vector<Json> Manager::installedPlugins() {
     auto append=[&](Json item,const fs::path& file,const fs::path& root){
         if(!file.is_absolute()||!fs::is_regular_file(file)||!files.insert(fs::canonical(file).string()).second)return;
         item["origin"]="installed";item["installed"]=true;item["installed_version"]=item.value("version","");item["device_file"]=file.string();item["device_target"]=fs::exists(root)&&fs::exists(synths)&&fs::equivalent(root,synths)?synths.string():root.string();
-        item["managed"]=fs::is_regular_file(synths/".mpc-usb-manager"/item.at("id").get<std::string>()/"uninstall.sh")&&item.at("device_target")==synths.string();
+        item["managed"]=!synths.empty()&&fs::is_regular_file(synths/".mpc-usb-manager"/item.at("id").get<std::string>()/"uninstall.sh")&&item.at("device_target")==synths.string();
         result.push_back(item);
     };
     auto metadata=[&](const fs::path& file){
@@ -489,7 +493,7 @@ std::vector<Json> Manager::installedPlugins() {
     };
     if(fs::is_directory(synths))for(const auto& folder:fs::directory_iterator(synths))if(fs::is_directory(folder)&&folder.path().filename().string().front()!='.'&&fs::is_regular_file(folder.path()/"mpc-plugin.json"))metadata(folder.path()/"mpc-plugin.json");
     const auto registry=synths/".mpc-usb-manager";
-    if(fs::is_directory(registry))for(const auto& folder:fs::directory_iterator(registry))if(fs::is_directory(folder)&&fs::is_regular_file(folder.path()/"mpc-plugin.json"))metadata(folder.path()/"mpc-plugin.json");
+    if(!synths.empty()&&fs::is_directory(registry))for(const auto& folder:fs::directory_iterator(registry))if(fs::is_directory(folder)&&fs::is_regular_file(folder.path()/"mpc-plugin.json"))metadata(folder.path()/"mpc-plugin.json");
     if(fs::is_regular_file(settings)){
         const auto xml=read(settings);const auto value=xml.find("<VALUE name=\"pluginList-"+std::string(arch=="aarch64"?"arm-64bit":"arm")+"\"");
         const auto begin=value==std::string::npos?std::string::npos:xml.find('>',value);const auto finish=begin==std::string::npos?std::string::npos:xml.find("</VALUE>",begin);
@@ -568,6 +572,11 @@ std::vector<Json> Manager::list(const std::string& view) {
     std::sort(result.begin(),result.end(),[](const Json&a,const Json&b){return a.at("name").template get<std::string>()<b.at("name").template get<std::string>();});return result;
 }
 void Manager::validateTarget() {
+    if(nativePluginStorage){
+        if(automaticPluginStorage){const auto state=pluginStorage.automatic();require(synths==fs::path(state.at("path").get<std::string>())&&pluginStorageIdentity==state.at("identity"),"MPC content drive changed. Select Automatic again in Plugin installation location.");}
+        require(!synths.empty(),pluginStorageError.empty()?"Choose a plugin installation location in SETUP.":pluginStorageError);
+        require(pluginStorage.inspect(synths).at("identity")==pluginStorageIdentity,"Plugin drive was removed or replaced. Choose the location again.");return;
+    }
     require(fs::is_directory(synths)&&fs::is_regular_file(settings),"Plugin content folder or settings missing");
     const auto mounts=read("/proc/mounts");std::istringstream lines(mounts);std::string line;bool valid=arch=="aarch64"&&executableContent(synths,mounts);
     while(std::getline(lines,line)) {std::istringstream row(line);std::string device,path,type,opts;row>>device>>path>>type>>opts;if(arch=="armv7"&&path=="/sdcard") {const auto options=","+opts+",";valid=options.find(",rw,")!=std::string::npos&&options.find(",noexec,")==std::string::npos&&options.find(",ro,")==std::string::npos;}}
@@ -600,7 +609,8 @@ void Manager::installPackage(const Json& item,const std::function<void(const std
     require(value.at("id")==item.at("id")&&value.at("version")==item.at("version")&&value.at("skin")==item.at("skin"),"Package identity differs from selection");
     if(latestOnly){const auto offer=installationOffer(item);require(offer.at("allowed").get<bool>(),offer.at("reason").get<std::string>());}
     const auto registry=synths/".mpc-usb-manager"/value.at("id").get<std::string>();
-    report("Installing plugin onto SD card. Keep USB inserted...");started=true;
+    report("Installing plugin to "+synths.string()+". Keep the manager drive inserted...");started=true;
+    if(nativePluginStorage)pluginStorage.prepare(synths,pluginStorageIdentity);
     require(runProcess({"sh",(root/"install.sh").string(),"-y","-n","-t",synths.string()})==0,"Community package installer failed; see USB log");
     fs::create_directories(registry);
     for(const char* file:{"uninstall.sh","plugin_list.awk","mpc-plugin.json"}) fs::copy_file(root/file,registry/file,fs::copy_options::overwrite_existing);
@@ -610,7 +620,7 @@ void Manager::installPackage(const Json& item,const std::function<void(const std
 }
 void Manager::remove(const Json& selection) {
     const Json item=selection.value("device_item",selection);
-    require(item.value("device_target",synths.string())==synths.string(),"This plugin is installed outside the managed SD folder; its original installer must remove it");
+    require(item.value("device_target",synths.string())==synths.string(),"This plugin is installed outside the selected plugin location; its original installer must remove it");
     history(usb);validateTarget();const std::string id=item.at("id").get<std::string>();
     require(std::regex_match(id,std::regex("[a-z0-9][a-z0-9_-]*")),"Invalid plugin ID");
     const auto registry=synths/".mpc-usb-manager"/id;

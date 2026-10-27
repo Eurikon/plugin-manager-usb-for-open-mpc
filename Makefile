@@ -24,6 +24,7 @@ arm-helper:
 	docker run --rm --pull never --platform linux/arm/v7 --network none -v "$(CURDIR):/work" -w /work $(ARM_IMAGE) sh build_helper.sh
 
 test: arm
+	docker run --rm --pull never --platform linux/arm/v7 --network none -v "$(CURDIR):/work" -w /work $(ARM_IMAGE) build/plugin-storage-test
 	docker run --rm --pull never --platform linux/arm/v7 --network none -v "$(CURDIR):/work" -w /work $(ARM_IMAGE) build/shortcut-environment-test
 	docker run --rm --platform linux/arm/v7 --network none -v "$(CURDIR):/work" -w /work $(ARM_IMAGE) sh -c 'build/shortcut-state-test && MPC_PANEL_PORT=hw:1,0,1 MPC_SHORTCUT_SOCKET=/tmp/manager-hook-test.sock LD_LIBRARY_PATH=/work/build LD_PRELOAD=/work/build/shortcut-hook.so build/shortcut-hook-test'
 	docker run --rm --platform linux/arm/v7 --network none -v "$(CURDIR):/work" -w /work $(ARM_IMAGE) sh -c 'MPC_PANEL_PORT=hw:1,0,1 MPC_SHORTCUT_SOCKET=/tmp/manager-hook-test.sock LD_LIBRARY_PATH=/work/build LD_PRELOAD="/work/build/shortcut-addin-first.so /work/build/shortcut-addin-second.so /work/build/shortcut-hook.so" build/shortcut-hook-test --chained'
@@ -31,7 +32,7 @@ test: arm
 
 test-arm64: arm64
 	docker run --rm --pull never --platform linux/arm64 --network none -v "$(CURDIR):/work" -w /work $(ARM64_IMAGE) build/aarch64/shortcut-environment-test
-	docker run --rm --pull never --platform linux/arm64 --network none -v "$(CURDIR):/work" -w /work $(ARM64_IMAGE) sh -ec 'for check in architecture-test sd-install-test manager-update-test shortcut-state-test; do build/aarch64/$$check; done; MPC_PANEL_PORT=hw:1,0,1 MPC_SHORTCUT_SOCKET=/tmp/manager-hook-test.sock LD_LIBRARY_PATH=/work/build/aarch64 LD_PRELOAD=/work/build/aarch64/shortcut-hook.so build/aarch64/shortcut-hook-test; MPC_PANEL_PORT=hw:1,0,1 MPC_SHORTCUT_SOCKET=/tmp/manager-hook-test.sock LD_LIBRARY_PATH=/work/build/aarch64 LD_PRELOAD="/work/build/aarch64/shortcut-addin-first.so /work/build/aarch64/shortcut-addin-second.so /work/build/aarch64/shortcut-hook.so" build/aarch64/shortcut-hook-test --chained'
+	docker run --rm --pull never --platform linux/arm64 --network none -v "$(CURDIR):/work" -w /work $(ARM64_IMAGE) sh -ec 'for check in plugin-storage-test architecture-test sd-install-test manager-update-test shortcut-state-test; do build/aarch64/$$check; done; MPC_PANEL_PORT=hw:1,0,1 MPC_SHORTCUT_SOCKET=/tmp/manager-hook-test.sock LD_LIBRARY_PATH=/work/build/aarch64 LD_PRELOAD=/work/build/aarch64/shortcut-hook.so build/aarch64/shortcut-hook-test; MPC_PANEL_PORT=hw:1,0,1 MPC_SHORTCUT_SOCKET=/tmp/manager-hook-test.sock LD_LIBRARY_PATH=/work/build/aarch64 LD_PRELOAD="/work/build/aarch64/shortcut-addin-first.so /work/build/aarch64/shortcut-addin-second.so /work/build/aarch64/shortcut-hook.so" build/aarch64/shortcut-hook-test --chained'
 	docker run --rm --pull never --platform linux/arm64 --network none -v "$(CURDIR):/work" -w /work $(ARM64_IMAGE) sh -ec 'MPC_PANEL_PORT=hw:1,0,1 MPC_SHORTCUT_SOCKET=/tmp/manager-hook-test.sock LD_LIBRARY_PATH=/work/build/aarch64 LD_PRELOAD="/work/build/aarch64/shortcut-lookup.so /work/build/aarch64/shortcut-hook.so" build/aarch64/shortcut-hook-test'
 
 test-runner:

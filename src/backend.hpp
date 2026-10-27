@@ -1,6 +1,7 @@
 #pragma once
 #include <nlohmann/json.hpp>
 #include "platform.hpp"
+#include "plugin_storage.hpp"
 #include <filesystem>
 #include <string>
 #include <vector>
@@ -13,7 +14,10 @@ struct Manager {
     std::vector<Json> catalog;
     std::string catalogError;
     const std::string arch;
-    Manager(fs::path u, fs::path s, fs::path target, fs::path set, std::string architecture=managerArchitecture());
+    Manager(fs::path u, fs::path s, fs::path target, fs::path set, std::string architecture=managerArchitecture(), PluginStoragePaths storagePaths={});
+    Json pluginStorageInfo();
+    Json pluginStorageFolders(const fs::path& directory);
+    void selectPluginStorage(const fs::path& target);
     void openCatalog();
     Json checkManagerUpdate();
     Json stageManagerUpdate(const Json& checkedRelease, const std::function<void(const std::string&)>& progress = {}, const std::function<void(float)>& amount = {});
@@ -34,6 +38,9 @@ struct Manager {
     bool darkTheme();
     void setDarkTheme(bool dark);
 private:
+    PluginStorage pluginStorage;
+    bool nativePluginStorage=false,automaticPluginStorage=true;
+    std::string pluginStorageIdentity,pluginStorageError;
     void installPackage(const Json& item, const std::function<void(const std::string&)>& progress, const std::function<void(float)>& amount, bool latestOnly);
 };
 int runProcess(const std::vector<std::string>& args, const std::function<void()>& tick = {}, uint64_t maxFileBytes = 512ULL*1024*1024);

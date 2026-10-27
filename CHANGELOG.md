@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.2.1 — 28-10-2026
+
+- Follow the Gen2 MPC content-download drive preference for automatic plugin installation, using the mounted drive’s `Synths` folder instead of a guessed `/nvme/Synths` fallback.
+- Add a separate **Plugin installation location** selector in SETUP, with automatic selection and browsing for existing custom folders.
+- Create missing standard content folders and register chosen locations only after confirmed installation and package validation, preserving an original settings backup.
+- Stop clearly for missing, replaced, read-only or non-executable drives, and retain Gen1’s existing internal plugin destination.
+- Distinguish plugin storage from the **Plugin Manager installation** on removable SD.
+
 ## 1.2.0 — 27-10-2026
 
 - Add automatic Gen1/Gen2 selection in one USB bundle, including ARM64 catalog packages, installed inventory and the Gen2 OS 3.10 helper.

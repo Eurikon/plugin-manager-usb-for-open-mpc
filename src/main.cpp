@@ -2,6 +2,9 @@
 #include "sd_install.hpp"
 #include "manager_update.hpp"
 #include "display.hpp"
+#ifdef MPC_MANAGER_PLUGIN_STORAGE_FIXTURE
+#include "../tests/plugin_storage_fixture.hpp"
+#endif
 #ifdef MPC_MANAGER_SD_FIXTURE
 #include "../tests/sd_install_fixture.hpp"
 #include "../tests/manager_update_fixture.hpp"
@@ -118,7 +121,11 @@ static std::string storageSize(uint64_t bytes) {
 }
 static int app(int argc,char**argv) {
     if(argc!=6)throw std::runtime_error("Usage: manager USB SESSION SYNTHS SETTINGS FONT");
-    Manager manager(argv[1],argv[2],argv[3],argv[4]);bool dark=false;try{dark=manager.darkTheme();}catch(const std::exception& e){std::fprintf(stderr,"Theme preference: %s\n",e.what());}Theme::set(dark);Screen screen(argv[5]);
+    PluginStoragePaths storagePaths;
+#ifdef MPC_MANAGER_PLUGIN_STORAGE_FIXTURE
+    storagePaths=pluginStorageFixture(argv[2],argv[4],std::getenv("MPC_MANAGER_UI_TEST")&&std::string(std::getenv("MPC_MANAGER_UI_TEST"))=="plugin-location-blocked");
+#endif
+    Manager manager(argv[1],argv[2],argv[3],argv[4],managerArchitecture(),storagePaths);bool dark=false;try{dark=manager.darkTheme();}catch(const std::exception& e){std::fprintf(stderr,"Theme preference: %s\n",e.what());}Theme::set(dark);Screen screen(argv[5]);
     auto labelWidth=[&](const std::string& label,int size){int width=0;FT_Set_Pixel_Sizes(screen.face,0,size);for(unsigned char letter:label)if(!FT_Load_Char(screen.face,letter,FT_LOAD_DEFAULT))width+=screen.face->glyph->advance.x>>6;return width;};
     const int setupWidth=12+24+12+labelWidth("SETUP",23)+12,setupX=1252-setupWidth;
     const int themeWidth=16+24+12+std::max(labelWidth("Light",25),labelWidth("Dark",25))+12,themeX=995-themeWidth;
@@ -131,14 +138,15 @@ static int app(int argc,char**argv) {
     const bool sdAvailable=sdInstaller.available();
     bool sdView=false,sdFromWelcome=false,sdReady=false,sdPending=false,sdConfirm=false,sdPicker=false,sdSourceRemoval=false,sourceOnSd=false;
     bool sdSavedFailed=false,sdSavedCompleted=false;int sdPage=0;
+    bool pluginLocationView=false,pluginLocationPending=false,pluginBrowsePending=false;std::string pluginBrowsePath;int pluginLocationPage=0;std::string pluginLocationChoice;Json pluginLocationState=Json::object();
     std::string sdSelected,sdOperation,sdSavedStatus;Json sdState=Json::object();std::vector<Json> sdCards;
     bool welcome=true,hideNext=false;try{hideNext=manager.hideWelcome();welcome=!hideNext;}catch(const std::exception& e){std::fprintf(stderr,"Welcome preference: %s\n",e.what());}
     signal(SIGTERM,stop);signal(SIGINT,stop);
     std::mutex progressMutex;std::string progressText;float progressValue=-1;
     auto amount=[&](float value){std::lock_guard<std::mutex> lock(progressMutex);progressValue=value;};
     auto progress=[&](const std::string& text){std::lock_guard<std::mutex> lock(progressMutex);progressText=text;};
-    struct Result {std::vector<Json> items;std::string status,catalogError;Json offer=Json::object();Json storage=Json::object();std::vector<Json> cards={};Json managerUpdate=Json::object();};
-    enum class Work {Open,List,Offer,Preferences,Mutation,SdRead,SdInstall,SdRemove,ManagerCheck,ManagerUpdate};
+    struct Result {std::vector<Json> items;std::string status,catalogError;Json offer=Json::object();Json storage=Json::object();std::vector<Json> cards={};Json managerUpdate=Json::object();Json pluginLocation=Json::object();};
+    enum class Work {Open,List,Offer,Preferences,Mutation,SdRead,SdInstall,SdRemove,ManagerCheck,ManagerUpdate,PluginLocationRead,PluginLocationSelect,PluginLocationBrowse};
     std::string view="catalog",status="Loading catalog once for this session...",catalogError;std::vector<Json> items;
     std::map<std::string,int> pages;int selected=-1,page=0;bool confirming=false,busy=true,initial=true,completed=false,failed=false,mutating=false,listReady=false,listPending=false,returning=false,dirty=true,finishFade=false;std::string operation;
     bool managerCheckPending=false,managerCheckFailed=false,managerUpdateConfirm=false,managerUpdated=false;std::string managerUpdateStatus="Not checked";Json managerUpdate=Json::object();
@@ -147,7 +155,7 @@ static int app(int argc,char**argv) {
     Json welcomeOffer={{"label","Install"},{"allowed",false},{"reason","Loading catalog..."}};
     auto currentOffer=[&]() -> Json {for(const auto& item:manager.catalog)if(item.value("id","")=="plugin-manager")return manager.installationOffer(item);return {{"label","Unavailable"},{"allowed",false},{"reason","Plugin Manager is unavailable in the current catalog."}};};
     Work work=Work::Open;
-    std::future<Result> job=std::async(std::launch::async,[&]{manager.openCatalog();manager.recordInstalled();Result result{{},manager.catalogError.empty()?"Catalog ready. Choose a package.":manager.catalogError,manager.catalogError,currentOffer()};if(sdAvailable){try{result.storage=sdInstaller.inspect();}catch(const std::exception& e){result.storage={{"reason",e.what()}};}}return result;});
+    std::future<Result> job=std::async(std::launch::async,[&]{manager.openCatalog();manager.recordInstalled();Result result{{},manager.catalogError.empty()?"Catalog ready. Choose a package.":manager.catalogError,manager.catalogError,currentOffer()};if(manager.arch=="aarch64")result.pluginLocation=manager.pluginStorageInfo();if(sdAvailable){try{result.storage=sdInstaller.inspect();}catch(const std::exception& e){result.storage={{"reason",e.what()}};}}return result;});
     const char* renderView=std::getenv("MPC_MANAGER_RENDER_VIEW");if(renderView)view=renderView;
     auto reload=[&]{++request;listPending=true;listReady=false;items.clear();selected=-1;page=pages[view];confirming=false;dirty=true;};
     Uint32 lastTouch=SDL_GetTicks(),progressEnded=0;bool progressFading=false;
@@ -156,6 +164,12 @@ static int app(int argc,char**argv) {
         if(themePending||hidePending){
             work=Work::Preferences;busy=true;saveTheme=themePending;saveHidden=!saveTheme&&hidePending;activeDark=dark;activeHidden=hideNext;if(saveTheme)themePending=false;if(saveHidden)hidePending=false;
             job=std::async(std::launch::async,[&,theme=saveTheme,hidden=saveHidden,darkValue=activeDark,hideValue=activeHidden]{if(theme)manager.setDarkTheme(darkValue);if(hidden)manager.setHideWelcome(hideValue);return Result{};});
+        }else if(pluginBrowsePending&&!returning){
+            work=Work::PluginLocationBrowse;busy=true;pluginBrowsePending=false;const auto path=pluginBrowsePath;
+            job=std::async(std::launch::async,[&,path]{Result result;result.pluginLocation=manager.pluginStorageFolders(path);return result;});
+        }else if(pluginLocationPending&&!returning){
+            work=Work::PluginLocationRead;busy=true;pluginLocationPending=false;
+            job=std::async(std::launch::async,[&]{Result result;result.pluginLocation=manager.pluginStorageInfo();return result;});
         }else if(sdPending&&!returning){
             work=Work::SdRead;busy=true;sdPending=false;sdReady=false;
             if(sdView)status="Checking SD installation...";
@@ -171,24 +185,29 @@ static int app(int argc,char**argv) {
             job=std::async(std::launch::async,[&,requestedView=activeView]{return Result{manager.list(requestedView),{}, {},currentOffer()};});
         }
     };
-    auto returnToMpc=[&]{returning=true;offerPending=false;sdPending=false;managerCheckPending=false;confirming=false;status="Returning to MPC...";dirty=true;};
+    auto returnToMpc=[&]{returning=true;offerPending=false;sdPending=false;pluginLocationPending=false;pluginBrowsePending=false;managerCheckPending=false;confirming=false;status="Returning to MPC...";dirty=true;};
     auto openSd=[&]{sdFromWelcome=welcome;sdSavedStatus=status;sdSavedFailed=failed;sdSavedCompleted=completed;welcome=false;sdView=true;sdPending=sdAvailable;sdReady=!sdAvailable;sdConfirm=sdPicker=managerUpdateConfirm=false;sdSelected.clear();sdPage=0;offerPending=false;failed=completed=false;progressFading=false;status=sdAvailable?"Checking SD installation...":"Installation and preferences.";dirty=true;};
-    auto closeSd=[&]{if(managerUpdateConfirm){managerUpdateConfirm=false;return;}if(sdConfirm){sdConfirm=false;return;}if(sdPicker){sdPicker=false;return;}sdView=false;welcome=sdFromWelcome;sdPending=false;status=sdSavedStatus;failed=sdSavedFailed;completed=sdSavedCompleted;progressFading=false;dirty=true;};
+    auto closeSd=[&]{if(pluginLocationView){if(pluginLocationState.contains("browser")){pluginLocationState.erase("browser");pluginLocationPage=0;dirty=true;return;}pluginLocationView=false;pluginLocationPending=false;dirty=true;return;}if(managerUpdateConfirm){managerUpdateConfirm=false;return;}if(sdConfirm){sdConfirm=false;return;}if(sdPicker){sdPicker=false;return;}sdView=false;welcome=sdFromWelcome;sdPending=false;status=sdSavedStatus;failed=sdSavedFailed;completed=sdSavedCompleted;progressFading=false;dirty=true;};
     const char* testMode=std::getenv("MPC_MANAGER_UI_TEST");
 #ifdef MPC_MANAGER_SD_FIXTURE
     const bool sdTest=testMode&&std::string(testMode).rfind("sd-",0)==0;
+    const std::string testReleaseVersion=std::getenv("MPC_MANAGER_UI_UPDATE_VERSION")?std::getenv("MPC_MANAGER_UI_UPDATE_VERSION"):"";
 #else
     const bool sdTest=false;
 #endif
+    const bool pluginLocationTest=testMode&&std::string(testMode).rfind("plugin-location",0)==0;
     const bool test=testMode!=nullptr, flow=test&&(std::string(testMode)=="flow"||std::string(testMode)=="touch-flow"),responsive=test&&std::string(testMode)=="responsive",direct=test&&std::string(testMode).rfind("welcome-",0)==0;int frames=0,step=0,welcomeStep=0,presents=0,idlePresents=0;std::string updateTestResult;Uint32 probeStarted=0;const bool startingDark=dark;
     auto click=[&](int x,int y){SDL_Event event{};const auto point=screen.geometry.output(x,y);if(std::string(testMode)=="touch-flow"){event.type=SDL_FINGERUP;int wx,wy,ww,wh;SDL_RenderLogicalToWindow(screen.renderer,float(point.first),float(point.second),&wx,&wy);SDL_GetWindowSize(screen.window,&ww,&wh);event.tfinger.x=float(wx)/ww;event.tfinger.y=float(wy)/wh;SDL_PushEvent(&event);return;}event.type=SDL_MOUSEBUTTONUP;event.button.button=SDL_BUTTON_LEFT;event.button.x=point.first;event.button.y=point.second;SDL_PushEvent(&event);};
+    const auto testStarted=SDL_GetTicks();
     auto capture=[&](const char* name){SDL_Surface* surface=SDL_CreateRGBSurfaceWithFormatFrom(screen.pixels.data(),1280,800,32,1280*4,SDL_PIXELFORMAT_ARGB8888);if(!surface)throw std::runtime_error(SDL_GetError());const int result=SDL_SaveBMP(surface,(manager.session/name).c_str());SDL_FreeSurface(surface);if(result!=0)throw std::runtime_error(SDL_GetError());};
     while(!quitting) {
+        if(pluginLocationTest&&SDL_GetTicks()-testStarted>15000)throw std::runtime_error("Plugin location UI test timed out at step "+std::to_string(step)+": "+status);
         if(!sdSourceRemoval&&!fs::is_regular_file(manager.usb/".mpc-manager-id")) {status=sourceOnSd?"SD card removed. Returning to MPC.":"USB removed. Returning to MPC.";quitting=1;}
         if(busy&&mutating){std::lock_guard<std::mutex> lock(progressMutex);if(!progressText.empty()){status=progressText;progressText.clear();dirty=true;}}
         if(busy&&job.wait_for(std::chrono::milliseconds(0))==std::future_status::ready){
             bool success=true;Result result;
             try{result=job.get();}catch(const std::exception&e){success=false;if(work==Work::ManagerCheck||work==Work::ManagerUpdate){managerUpdateStatus=std::string(work==Work::ManagerCheck?"Check failed: ":"Update failed: ")+e.what();managerCheckFailed=true;if(work==Work::ManagerCheck)managerUpdate=Json::object();else{status=managerUpdateStatus;failed=true;completed=false;}}else if((work!=Work::List||(activeRequest==request&&activeView==view))&&(work!=Work::Offer||(welcome&&!returning))&&(work!=Work::SdRead||sdView)){status=std::string("Failed: ")+e.what();failed=true;completed=false;}}
+            if(success&&!result.pluginLocation.empty())pluginLocationState=std::move(result.pluginLocation);
             if(success&&!result.offer.empty())welcomeOffer=std::move(result.offer);
             if(success&&!result.storage.empty()){sdState=std::move(result.storage);sourceOnSd=sdState.value("current",false);}
             busy=false;dirty=true;lastTouch=SDL_GetTicks();
@@ -196,6 +215,9 @@ static int app(int argc,char**argv) {
             else if(work==Work::Preferences){
                 if(success){if(saveTheme)savedDark=activeDark;if(saveHidden)savedHidden=activeHidden;}
                 else {if(saveTheme&&!themePending){dark=savedDark;Theme::set(dark);}if(saveHidden&&!hidePending)hideNext=savedHidden;}
+            }else if(work==Work::PluginLocationRead||work==Work::PluginLocationSelect||work==Work::PluginLocationBrowse){
+                if(work==Work::PluginLocationSelect)mutating=false;
+                if(success){failed=false;status=work==Work::PluginLocationSelect?"Plugin installation location selected for this session. No plugin files changed.":"Choose Automatic or a plugin location below. The Plugin Manager installation is separate.";if(work==Work::PluginLocationSelect)reload();}
             }else if(work==Work::ManagerCheck){
                 if(success){managerUpdate=std::move(result.managerUpdate);managerUpdateStatus=managerUpdate.at("message").get<std::string>();managerCheckFailed=false;}
             }else if(work==Work::ManagerUpdate){
@@ -228,10 +250,26 @@ static int app(int argc,char**argv) {
             screen.text(28,43,"PLUGIN MANAGER SETUP",Theme::ink,31);
             screen.rect(28,55,1224,1,Theme::line);
             screen.button(28,65,180,"Back",false,!mutating,Icon::Return);
-            if(sdAvailable)screen.button(220,65,180,"Refresh",false,!busy&&!sdConfirm&&!managerUpdateConfirm,Icon::History);
+            if(sdAvailable||pluginLocationView)screen.button(220,65,180,"Refresh",false,!busy&&!sdConfirm&&!managerUpdateConfirm,Icon::History);
+            if(manager.arch=="aarch64"&&!pluginLocationView)screen.button(412,65,300,"Plugin location",false,!busy&&!sdConfirm&&!sdPicker&&!managerUpdateConfirm,Icon::Folder);
             screen.themeButton(themeX,65,themeWidth,dark,!mutating);
             screen.button(1007,65,245,"Return to MPC",false,!mutating,Icon::Return);
-            if(managerUpdateConfirm){
+            if(pluginLocationView){
+                const auto browser=pluginLocationState.value("browser",Json::object());const bool browsing=!browser.empty();
+                screen.text(28,159,"Plugin installation location",Theme::ink,30);
+                screen.box(28,185,1224,124,Theme::panel);
+                screen.text(52,223,browsing?"Choose your plugin folder":pluginLocationState.value("automatic",true)?"Automatic: MPC content download drive":"Manually selected for this session",Theme::ink,26,820);
+                screen.text(52,263,browsing?browser.value("path",""):pluginLocationState.value("path","").empty()?"No usable location selected":pluginLocationState.value("path",""),Theme::muted,23,820);
+                if(browsing)screen.button(918,207,310,"Parent folder",false,!busy&&!browser.value("parent","").empty(),Icon::Left);
+                else screen.button(918,207,310,"Automatic",pluginLocationState.value("automatic",true),!busy&&pluginLocationState.contains("native"),Icon::Check);
+                screen.wrapped(28,342,browsing?"Open a folder, then choose Use this folder. It will be registered when you confirm a plugin installation.":pluginLocationState.value("native_error","").empty()?"Select a plugin location below, or select a drive and choose Browse folders. Selection does not install anything.":pluginLocationState.value("native_error",""),1200,2,Theme::muted,22);
+                const auto targets=browsing?browser.value("folders",Json::array()):pluginLocationState.value("targets",Json::array());
+                for(int row=0;row<3;++row){const int index=pluginLocationPage*3+row;if(index>=int(targets.size()))break;const int y=394+row*64;const auto path=browsing?targets[index].get<std::string>():targets[index].at("path").get<std::string>();const bool chosen=pluginLocationChoice==path;screen.box(28,y,1224,56,Theme::panel,chosen?Theme::red:Theme::line);screen.icon(46,y+16,Icon::Folder,chosen?Theme::red:Theme::muted);screen.text(90,y+36,browsing?fs::path(path).filename().string():path,Theme::ink,25,1110);}
+                if(targets.empty()&&!busy)screen.text(28,427,browsing?"No subfolders here.":"No writable, executable plugin drive is available.",Theme::muted,25);
+                screen.button(28,605,180,"Previous",false,!busy&&pluginLocationPage>0,Icon::Left);screen.button(220,605,180,"Next",false,!busy&&(pluginLocationPage+1)*3<int(targets.size()),Icon::Right);
+                if(!browsing)screen.button(412,605,300,"Browse folders",false,!busy&&!pluginLocationChoice.empty(),Icon::Folder);
+                screen.button(942,605,310,browsing?"Use this folder":"Use selected",true,!busy&&(browsing?browser.value("selectable",false):!pluginLocationChoice.empty()),Icon::Check);
+            }else if(managerUpdateConfirm){
                 screen.text(28,159,"Confirm manager update",Theme::muted,25);
                 screen.box(28,185,1224,390,Theme::panel);
                 screen.text(52,239,"Download and install Plugin Manager v"+managerUpdate.value("latest_version","")+"?",Theme::ink,34,1150);
@@ -246,24 +284,24 @@ static int app(int argc,char**argv) {
                 screen.box(28,185,1224,390,Theme::panel);
                 screen.text(52,239,remove?"Remove this manager from SD?":"Install this manager on "+label+"?",Theme::ink,34,1150);
                 screen.wrapped(52,292,remove?"Your plugins, installation history, preferences and local packages stay on the card.":sourceOnSd?"After updating, return to MPC. Keep the SD card inserted.":"After installation, return to MPC and safely eject the USB. Keep the SD card inserted; hold SHIFT + MENU for two seconds to open the manager.",1150,2,Theme::muted,25);
-                screen.text(52,369,remove?"Install folder: Plugin Manager USB":sourceOnSd?"The current session remains available until you return to MPC.":"This USB session remains available until you return to MPC.",Theme::muted,23,1150);
+                screen.text(52,369,remove?"Plugin Manager folder: Plugin Manager USB":sourceOnSd?"The current session remains available until you return to MPC.":"This USB session remains available until you return to MPC.",Theme::muted,23,1150);
                 screen.button(52,425,310,remove?"Confirm removal":"Confirm install",true,!busy,remove?Icon::Trash:Icon::Download);
                 screen.button(380,425,220,"Cancel",false,!mutating);
             }else if(sdPicker){
                 screen.text(28,159,"Choose the SD card for this manager",Theme::muted,25);
                 if(!sdReady)screen.wrapped(28,230,failed?status:"Checking available SD cards...",1150,3,failed?Theme::amber:Theme::muted,27);
                 else if(sdCards.empty())screen.wrapped(28,230,"No suitable SD card found. Insert your card and choose Refresh.",1150,3,Theme::muted,27);
-                if(sdReady)for(int row=0;row<4;++row){const int index=sdPage*4+row;if(index>=int(sdCards.size()))break;const auto& card=sdCards[index];const int y=185+row*98;const bool chosen=sdSelected==card.value("uuid","");screen.box(28,y,1224,90,Theme::panel,chosen?Theme::red:Theme::line);if(chosen)screen.rect(28,y,4,90,Theme::red);screen.icon(48,y+17,Icon::Disk,chosen?Theme::red:Theme::muted);screen.text(90,y+35,card.value("label",card.value("path","SD card")),Theme::ink,30,850);screen.text(90,y+68,"Install folder: Plugin Manager USB",Theme::muted,22,850);screen.text(960,y+52,storageSize(card.value("free_bytes",uint64_t(0)))+" free",Theme::muted,23,270);}
+                if(sdReady)for(int row=0;row<4;++row){const int index=sdPage*4+row;if(index>=int(sdCards.size()))break;const auto& card=sdCards[index];const int y=185+row*98;const bool chosen=sdSelected==card.value("uuid","");screen.box(28,y,1224,90,Theme::panel,chosen?Theme::red:Theme::line);if(chosen)screen.rect(28,y,4,90,Theme::red);screen.icon(48,y+17,Icon::Disk,chosen?Theme::red:Theme::muted);screen.text(90,y+35,card.value("label",card.value("path","SD card")),Theme::ink,30,850);screen.text(90,y+68,"Plugin Manager folder: Plugin Manager USB",Theme::muted,22,850);screen.text(960,y+52,storageSize(card.value("free_bytes",uint64_t(0)))+" free",Theme::muted,23,270);}
                 screen.button(28,605,180,"Previous",false,!busy&&sdReady&&sdPage>0,Icon::Left);screen.button(220,605,180,"Next",false,!busy&&sdReady&&(sdPage+1)*4<int(sdCards.size()),Icon::Right);
                 screen.button(942,605,310,"Install to SD",true,!busy&&sdReady&&!sdSelected.empty(),Icon::Download);
             }else{
                 const bool installed=sdState.value("configured",false)||sdState.value("can_remove",false);
                 screen.text(28,159,"Installation and preferences",Theme::muted,25);
-                screen.box(28,185,1224,170,Theme::panel);screen.icon(52,209,Icon::Disk,Theme::red);screen.text(96,235,"SD installation",Theme::ink,28,790);
+                screen.box(28,185,1224,170,Theme::panel);screen.icon(52,209,Icon::Disk,Theme::red);screen.text(96,235,"Plugin Manager installation",Theme::ink,28,790);
                 std::string detail=!sdAvailable?"SD installation requires the supported MPC OS 3.10 helper.":!sdReady?(failed?status:"Checking SD installation..."):installed?sdState.value("installed",false)?"Installed on "+sdState.value("label","SD card"):sdState.value("reason","SD installation unavailable."):sdCards.empty()?"No suitable SD card found. Insert your card and choose Refresh.":"Not installed. Choose an SD card to install the manager.";
                 screen.wrapped(96,273,detail,790,2,Theme::muted,23);
                 if(sdAvailable&&sdReady){
-                    screen.text(96,334,"Install folder: Plugin Manager USB",Theme::muted,23,790);
+                    screen.text(96,334,"Plugin Manager folder: Plugin Manager USB",Theme::muted,23,790);
                     screen.button(918,207,310,installed?(sdState.value("installed",false)?"Update manager":"Reinstall manager"):"Install to SD",true,!busy&&(!installed||(sdState.value("can_remove",false)&&!sdState.value("removing",false))),Icon::Download);
                     if(installed)screen.button(918,277,310,"Uninstall manager",false,!busy&&sdState.value("can_remove",false),Icon::Trash);
                 }
@@ -313,7 +351,8 @@ static int app(int argc,char**argv) {
             screen.box(28,185,1224,390,Theme::panel);
             screen.text(52,239,operation+" "+items[selected].value("name","Plugin")+"?",Theme::ink,34,1150);
             screen.text(52,288,"Your other plugins will stay installed.",Theme::muted,25);
-            screen.text(52,333,operation=="Uninstall"?"Remove this plugin from the SD card?":"Download, verify and install onto the SD card?",Theme::ink,25);
+            screen.text(52,333,operation=="Uninstall"?"Remove this plugin from its installation location?":"Verify and install into the plugin installation location?",Theme::ink,25);
+            screen.text(52,371,manager.synths.empty()?"No plugin installation location selected. Open SETUP.":manager.synths.string(),Theme::muted,22,1150);
             screen.button(28,395,300,"Confirm "+operation,true,!busy);screen.button(345,395,220,"Cancel");
         } else {
             for(int row=0;row<6;++row){int index=page*6+row;if(index>=int(items.size()))break;const auto& item=items[index];int x=28+(row%2)*620,y=185+(row/2)*130;
@@ -386,6 +425,17 @@ static int app(int argc,char**argv) {
                 default: throw std::runtime_error("Return to MPC failed");
             }
         }
+        if(pluginLocationTest&&!busy&&!returning){
+            const bool blocked=std::string(testMode)=="plugin-location-blocked",custom=std::string(testMode)=="plugin-location-custom";
+            if(step==0&&listReady){click(1070,475);++step;}
+            else if(step==1&&sdView){click(540,90);++step;}
+            else if(step==2&&pluginLocationView&&!pluginLocationPending){if(!pluginLocationState.value("available",false)||pluginLocationState.value("targets",Json::array()).empty())throw std::runtime_error("Plugin location choices missing");if(blocked&&(!manager.synths.empty()||!pluginLocationState.contains("native_error")))throw std::runtime_error("Blocked native drive silently fell back");capture("plugin-location-automatic.bmp");click(180,420);if(custom){click(550,630);step=6;}else{click(1090,630);++step;}}
+            else if(step==3){if(pluginLocationState.value("automatic",true)||manager.synths.empty()||(!custom&&fs::exists(manager.synths))||(custom&&manager.synths.filename()!="My plugins"))throw std::runtime_error("Manual selection changed storage or did not select");capture("plugin-location-manual.bmp");if(blocked){click(120,90);step=5;}else{click(1090,235);++step;}}
+            else if(step==4){if(!pluginLocationState.value("automatic",false)||manager.synths.filename()!="Synths")throw std::runtime_error("Automatic button failed");click(120,90);++step;}
+            else if(step==6&&pluginLocationState.contains("browser")){capture("plugin-location-folders.bmp");click(180,420);step=7;}
+            else if(step==7&&pluginLocationState.contains("browser")){if(fs::path(pluginLocationState.at("browser").at("path").get<std::string>()).filename()!="My plugins")throw std::runtime_error("Folder browser did not enter the selected folder");capture("plugin-location-custom.bmp");click(1090,630);step=3;}
+            else if(step==5&&!pluginLocationView){capture("plugin-manager-setup.bmp");click(1100,90);step=100;std::fprintf(stderr,"PASS: plugin installation location labels, automatic/manual selection and no selection-time writes\n");}
+        }
 #ifdef MPC_MANAGER_SD_FIXTURE
         if(sdTest&&(std::string(testMode)=="sd-updates"||std::string(testMode)=="sd-update-error")&&busy&&work==Work::ManagerCheck){
             if(step==2){probeStarted=SDL_GetTicks();click(120,90);++step;}
@@ -427,7 +477,7 @@ static int app(int argc,char**argv) {
                 else if(step==5&&sdReady){
                     const bool expectedFailure=mode=="sd-update-error";
                     if(managerCheckFailed!=expectedFailure||managerUpdateStatus=="Not checked"||managerUpdateStatus=="Checking GitHub Releases..."||!hideNext||!manager.hideWelcome()||sdConfirm||mutating)throw std::runtime_error("Manager update result or queued preference did not finish safely");
-                    if(!expectedFailure&&(!managerUpdate.value("update_available",false)||managerUpdate.value("latest_version","")!="1.0.4"||managerUpdateStatus.find("v1.0.4")==std::string::npos))throw std::runtime_error("Latest manager release was not displayed");
+                    if(!expectedFailure&&(!managerUpdate.value("update_available",false)||testReleaseVersion.empty()||managerUpdate.value("latest_version","")!=testReleaseVersion||managerUpdateStatus.find("v"+testReleaseVersion)==std::string::npos))throw std::runtime_error("Latest manager release was not displayed");
                     if(expectedFailure&&(managerUpdateStatus.rfind("Check failed: ",0)!=0||!managerUpdate.empty()))throw std::runtime_error("Manager update error retained a success result");
                     updateTestResult=managerUpdateStatus;capture("setup-update-result.bmp");click(120,90);++step;
                 }else if(step==6&&welcome){click(1070,475);++step;}
@@ -520,7 +570,20 @@ static int app(int argc,char**argv) {
             if(returning)continue;
             if(sdView){
                 if(mutating)continue;
-                if(y>=65&&y<123){if(x>=28&&x<208){closeSd();continue;}if(x>=220&&x<400&&sdAvailable&&!busy&&!sdConfirm&&!managerUpdateConfirm){sdPending=true;sdReady=false;sdSelected.clear();failed=completed=false;status="Checking SD installation...";continue;}if(x>=themeX&&x<995){dark=!dark;Theme::set(dark);themePending=true;continue;}if(x>=1007){returnToMpc();break;}}
+                if(y>=65&&y<123){if(x>=28&&x<208){closeSd();continue;}if(x>=220&&x<400&&(sdAvailable||pluginLocationView)&&!busy&&!sdConfirm&&!managerUpdateConfirm){if(pluginLocationView){pluginLocationPending=true;pluginLocationChoice.clear();pluginLocationPage=0;status="Checking plugin installation locations...";}else{sdPending=true;sdReady=false;sdSelected.clear();status="Checking SD installation...";}failed=completed=false;continue;}if(x>=412&&x<712&&manager.arch=="aarch64"&&!pluginLocationView&&!busy&&!sdPicker&&!sdConfirm&&!managerUpdateConfirm){pluginLocationView=true;pluginLocationPending=true;pluginLocationChoice.clear();pluginLocationPage=0;status="Checking plugin installation locations...";continue;}if(x>=themeX&&x<995){dark=!dark;Theme::set(dark);themePending=true;continue;}if(x>=1007){returnToMpc();break;}}
+                if(pluginLocationView){
+                    if(busy)continue;
+                    const auto browser=pluginLocationState.value("browser",Json::object());const bool browsing=!browser.empty();
+                    const auto targets=browsing?browser.value("folders",Json::array()):pluginLocationState.value("targets",Json::array());
+                    bool selectAutomatic=!browsing&&y>=207&&y<265&&x>=918&&x<1228&&pluginLocationState.contains("native");
+                    auto browse=[&](const std::string& path){pluginBrowsePath=path;pluginBrowsePending=true;pluginLocationPage=0;pluginLocationChoice.clear();};
+                    if(browsing&&y>=207&&y<265&&x>=918&&x<1228&&!browser.value("parent","").empty()){browse(browser.at("parent"));continue;}
+                    if(y>=394&&y<586&&x>=28&&x<1252&&(y-394)%64<56){const int index=pluginLocationPage*3+(y-394)/64;if(index<int(targets.size())){if(browsing){browse(targets[index]);continue;}pluginLocationChoice=targets[index].at("path").get<std::string>();}}
+                    bool selectManual=false;
+                    if(y>=605&&y<663){if(x>=28&&x<208&&pluginLocationPage>0){--pluginLocationPage;pluginLocationChoice.clear();}else if(x>=220&&x<400&&(pluginLocationPage+1)*3<int(targets.size())){++pluginLocationPage;pluginLocationChoice.clear();}else if(!browsing&&x>=412&&x<712&&!pluginLocationChoice.empty()){for(const auto& target:targets)if(target.at("path")==pluginLocationChoice){browse(target.at("drive"));break;}continue;}else if(x>=942&&x<1252&&(browsing?browser.value("selectable",false):!pluginLocationChoice.empty()))selectManual=true;}
+                    if(selectAutomatic||selectManual){const std::string target=selectAutomatic?"":browsing?browser.at("path").get<std::string>():pluginLocationChoice;busy=mutating=true;work=Work::PluginLocationSelect;status="Checking plugin installation location...";job=std::async(std::launch::async,[&,target]{manager.selectPluginStorage(target);Result result;result.pluginLocation=manager.pluginStorageInfo();result.offer=currentOffer();return result;});}
+                    continue;
+                }
                 if(managerUpdateConfirm){
                     if(y>=455&&y<513&&x>=410&&x<630){managerUpdateConfirm=false;continue;}
                     if(y>=455&&y<513&&x>=52&&x<392&&!busy&&!managerUpdated){
@@ -585,7 +648,7 @@ static int app(int argc,char**argv) {
                 else if(!installed&&x>=830){operation="Install";confirming=true;}
             }}
         }
-        if(test&&((!flow&&!responsive&&!direct&&!sdTest&&!busy&&++frames==30)||((flow||direct||sdTest)&&quitting))){capture("screen.bmp");quitting=1;}
+        if(test&&((!flow&&!responsive&&!direct&&!sdTest&&!pluginLocationTest&&!busy&&++frames==30)||((flow||direct||sdTest||pluginLocationTest)&&quitting))){capture("screen.bmp");quitting=1;}
         startNext();
         SDL_Delay(30);
     }
@@ -593,6 +656,7 @@ static int app(int argc,char**argv) {
 #ifdef MPC_MANAGER_SD_FIXTURE
     if(sdTest&&std::string(testMode)=="sd-remove-current"){if(step!=99||failed||!returning||!sdSourceRemoval||status!="Returning to MPC...")throw std::runtime_error("Current SD removal was mistaken for USB removal");std::fprintf(stderr,"PASS: current SD source removal returns to MPC without a USB removal error\n");step=100;}
 #endif
+    if(pluginLocationTest&&step!=100)throw std::runtime_error("Plugin location UI test did not finish");
     if(sdTest&&step!=100)throw std::runtime_error("SD UI test did not finish");
     if(direct&&step!=3)throw std::runtime_error("Direct installation test did not finish");
     if(flow&&step!=30)throw std::runtime_error("Interface navigation test did not finish");

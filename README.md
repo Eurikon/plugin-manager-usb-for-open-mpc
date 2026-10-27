@@ -1,6 +1,6 @@
 # Plugin Manager USB for OPEN MPC
 
-[![Download installer](https://img.shields.io/badge/Download-1.2.0-brightgreen?logo=github)](https://github.com/Eurikon/plugin-manager-usb-for-open-mpc/releases/download/v1.2.0/plugin-manager-usb-v1.2.0.zip)
+[![Download installer](https://img.shields.io/badge/Download-1.2.1-brightgreen?logo=github)](https://github.com/Eurikon/plugin-manager-usb-for-open-mpc/releases/download/v1.2.1/plugin-manager-usb-v1.2.1.zip)
 [![Latest release](https://img.shields.io/github/v/release/Eurikon/plugin-manager-usb-for-open-mpc?logo=github&label=Release)](https://github.com/Eurikon/plugin-manager-usb-for-open-mpc/releases/latest)
 [![Changelog](https://img.shields.io/badge/Changelog-History-blue?logo=github)](CHANGELOG.md)
 [![User guide](https://img.shields.io/badge/Guide-Website-blue?logo=githubpages)](https://eurikon.github.io/plugin-manager-usb-for-open-mpc/guide.html)
@@ -20,10 +20,16 @@ Stock Gen2 OS 3.9.1 and 3.10 have also passed offline firmware checks; stock Gen
 One USB bundle selects the Gen1 or Gen2 runtime automatically.<br>
 Use ARM64 plugin packages on Gen2; ARMv7 packages are rejected before installation.
 
+### Updating from 1.2.0
+
+Use **SETUP → Check for updates**, then confirm **Install update**.<br>
+Alternatively, replace the application files on your stick with the complete new bundle, preserving preferences, history and local packages.<br>
+For manual replacement on OS 3.10, reimport `Plugin Manager helper.xpa` and restart the MPC application so its runtime checks match the new bundle.
+
 ### Updating from 1.1.0 or a 1.2.0 beta
 
 Save your project and safely eject the drive before updating it on your computer.<br>
-Extract the complete 1.2.0 bundle onto the existing USB stick, replacing matching application files.<br>
+Extract the complete 1.2.1 bundle onto the existing USB stick, replacing matching application files.<br>
 Keep `plugin-history.json`, `manager-preferences.json` and your `local-plugins/` files.<br>
 On OS 3.10, reimport `Plugin Manager helper.xpa` into internal MPC Documents and restart the MPC application.<br>
 The older updater cannot replace this changed helper and bundle layout; use this complete-bundle procedure.
@@ -97,7 +103,7 @@ Wait for MPC to finish reopening; **do not turn off your device during this tran
 | **Sun / moon** | Switches between light and dark themes. The label names the theme you will switch to. |
 
 The welcome screen also offers **poloq Plugin Manager**, which runs on an MPC track.<br>
-Its button offers **Install** when absent, or **Update** when an older, known release is installed on the managed SD card.<br>
+Its button offers **Install** when absent, or **Update** when an older, known release is installed in the selected plugin location.<br>
 **Installed** is disabled for equal, newer or unknown versions and installations outside that location.<br>
 The regular catalog still allows deliberate reinstallation.<br>
 Choosing **Install** or **Update** authorizes the operation directly.<br>
@@ -127,7 +133,7 @@ The same interface is used for both sources; each source keeps its own preferenc
 
 ![Plugin Manager SETUP page on the MPC](site/assets/manager-setup.png)
 
-- **SD installation:** install, update/reinstall or uninstall the SD copy. **Update manager** copies the current session's manager onto SD; it is separate from downloading a new release.
+- **Plugin Manager installation:** install, update/reinstall or uninstall the SD copy. **Update manager** copies the current session's manager onto SD; it is separate from downloading a new release.
 - **Welcome message:** enable **Show on opening** to restore the welcome screen for this source.
 - **Plugin Manager updates:** choose **Check for updates** to check GitHub Releases. If a supported newer release is available, **Install update** opens a confirmation before downloading and installing it.
 
@@ -190,6 +196,21 @@ After five idle minutes, the manager returns to MPC.<br>
 An unexpected exit triggers an immediate application restart.<br>
 USB removal during installation can interrupt the operation.<br>
 Follow the MPC's own drive-removal instructions.
+
+### Plugin Installation Location
+
+The plugin destination is separate from the USB or SD location of the Plugin Manager application.<br>
+Gen 1 keeps its existing `/sdcard/Expansions` destination on internal storage; a removable SD card is not required for those plugins.<br>
+On Gen 2, **SETUP → Plugin location** opens **Plugin installation location**.
+
+- **Automatic** follows MPC's **Content Download Drive** selection and uses that drive's `Synths` folder.
+- Select another listed location and choose **Use selected**, or choose **Browse folders**, open an existing folder and choose **Use this folder**. A custom folder does not have to be named `Synths`.
+- Manual selection applies to the current manager session. **Automatic** restores MPC's selected content drive.
+
+Selecting a location does not install anything or change MPC's content-drive preference.<br>
+After you confirm a plugin installation and its package passes validation, the manager creates the standard `Synths` folder if needed and registers the chosen content folder, preserving a backup of MPC settings.<br>
+A missing, disconnected, read-only or non-executable drive stops installation with an explanation; the manager does not silently switch drives.<br>
+Plugins installed on removable storage require that storage to remain available when MPC loads them.
 
 ## Opening and Recovery
 
