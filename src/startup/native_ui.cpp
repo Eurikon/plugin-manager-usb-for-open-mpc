@@ -213,7 +213,7 @@ extern "C" PmuUi *pmu_ui_init(void *lua_state, uintptr_t base) {
     argument = (argument + sizeof(void *) - 1) & ~uintptr_t(sizeof(void *) - 1);
     uintptr_t function[4]{}, closure[5]{}, member[3]{}, queues = 0, questions = 0;
     if (!read_memory(function, argument, sizeof(function))
-        || function[2] != base + (arm64 ? 0x18f7720 : 0x134ee30) || function[3] != base + (arm64 ? 0x190e6a0 : 0x134e7c8)
+        || function[2] != base + (arm64 ? 0x1926ce0 : 0x134ee30) || function[3] != base + (arm64 ? 0x1926740 : 0x134e7c8)
         || !read_memory(closure, function[0], sizeof(closure))
         || closure[3] != base + (arm64 ? 0x1922860 : 0x13494a0) || closure[4] != base + (arm64 ? 0x1922420 : 0x13490b4)
         || !read_memory(member, closure[1], sizeof(member))
