@@ -77,6 +77,7 @@ No 32-bit compatibility libraries are required on the device.
 
 Updating from 1.1.0 or a 1.2.0 beta requires copying the complete 1.2.0 bundle and reimporting its helper on OS 3.10.
 The older stable updater refuses the changed helper/layout rather than partially applying it.
+The beta builds already report internal version 1.2.0, so their newer-version check does not offer stable 1.2.0 as an upgrade.
 Testing releases are excluded from the normal stable-update lookup.
 
 

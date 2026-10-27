@@ -12,7 +12,6 @@ Run the manager from USB, or install the manager itself onto SD on supported OS 
 The bundle includes the manager, without plugins or Akai firmware files.
 
 **MPC Live 2 - Gen1 / AKAI MPC OS 3.9.1 and 3.10** (MPC Live II Retro test unit).<br>
-This describes recorded local hardware testing; other firmware versions and devices are unverified.
 
 **Additional hardware checks:** Akai Force — OS 3.9.1; MPC Live III (Gen2) — OS 3.10 over OS 3.9.1.<br>
 Beta 2 was tested and approved on these configurations.<br>
