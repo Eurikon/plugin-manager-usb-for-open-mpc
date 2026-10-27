@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.2.0-beta.2 — 27-10-2026
+
+- Correct two Gen 2 OS 3.10 native UI bindings that prevented the helper from opening the manager.
+- Resolve shortcut forwarding through libc's versioned lookup so an addin's custom `dlsym` cannot create a recursive wrapper chain; retain the Gen 1 symbol-version fallback.
+- Read current service environment settings and ordered environment files before restarting MPC, preserving addins configured after the current process started.
+
+Gen 2 OS 3.9.1 hardware operation was reported on MPC Live III.
+The corrected hook still requires a hardware retest; the reported OS 3.10 helper test used an application overlay rather than a stock OS 3.10 installation.
+
 ## 1.2.0-beta.1 — 26-10-2026
 
 - One USB bundle selects the ARMv7 Gen 1 or ARM64 Gen 2 manager, shortcut and helper automatically.

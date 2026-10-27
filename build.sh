@@ -32,8 +32,10 @@ c++ -std=c++17 -O2 -Wall -Wextra -Werror -shared -fPIC src/shortcut_hook.cpp -ld
 c++ -std=c++17 -O2 -Wall -Wextra -Werror src/shortcut.cpp -o "$output"/shortcut
 c++ -std=c++17 -O2 -Wall -Wextra -Werror tests/shortcut_state_test.cpp -o "$output"/shortcut-state-test
 cc -std=c11 -O2 -Wall -Wextra -Werror -shared -fPIC tests/shortcut_fake.c -o "$output"/shortcut-fake.so
+cc -std=c11 -O2 -Wall -Wextra -Werror -shared -fPIC tests/shortcut_lookup.c -o "$output"/shortcut-lookup.so
 cc -std=c11 -O2 -Wall -Wextra -Werror -shared -fPIC -DADDIN_CALLS=shortcut_addin_first_reads -DADDIN_NEXT='"shortcut-addin-second.so"' tests/shortcut_addin.c -ldl -o "$output"/shortcut-addin-first.so
 cc -std=c11 -O2 -Wall -Wextra -Werror -shared -fPIC -DADDIN_CALLS=shortcut_addin_second_reads -DADDIN_NEXT='"shortcut-hook.so"' tests/shortcut_addin.c -ldl -o "$output"/shortcut-addin-second.so
 cc -std=c11 -O2 -Wall -Wextra -Werror tests/shortcut_hook_test.c -L"$output" -l:shortcut-fake.so -Wl,-rpath,/tmp/shortcut-test -ldl -o "$output"/shortcut-hook-test
 c++ -std=c++17 -O2 -Wall -Wextra -Werror tests/shortcut_integration.cpp -o "$output"/shortcut-integration
+c++ -std=c++17 -O2 -Wall -Wextra -Werror tests/shortcut_environment_test.cpp -o "$output"/shortcut-environment-test
 if [ "${BUILD_HELPER:-1}" = 1 ]; then BUILD_DIR="$output" sh build_helper.sh; fi

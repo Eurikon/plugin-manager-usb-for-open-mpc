@@ -9,6 +9,7 @@
 #include <thread>
 #include <iterator>
 #include <sys/stat.h>
+#include <sys/prctl.h>
 #include <sys/socket.h>
 #include <sys/un.h>
 #include <sys/wait.h>
@@ -17,7 +18,7 @@ namespace fs=std::filesystem;
 static const fs::path root="/tmp/shortcut-test",base="/tmp/mpc-usb-session.test";
 static fs::path usb=root/"usb";
 static const fs::path dropin="/run/systemd/system/acvs.service.d/99-mpc-usb-shortcut.conf",foreignDropin=dropin.parent_path()/"20-addins.conf",foreignEnvironment=root/"existing.env",processEnvironment="/proc/4242/environ";
-static const std::string foreignDropinText="[Service]\nEnvironment=\"LD_PRELOAD=/unit-setting.so\"\nEnvironmentFile=/tmp/shortcut-test/existing.env\n",foreignEnvironmentText="LD_PRELOAD=\"/file-setting.so\"\nOTHER=value\n";
+static const std::string foreignDropinText="[Service]\nEnvironment=OTHER=unit\nEnvironmentFile=/tmp/shortcut-test/existing.env\n",foreignEnvironmentText="OTHER=value\n";
 static std::string contents(const fs::path& path){std::ifstream file(path,std::ios::binary);return {std::istreambuf_iterator<char>(file),std::istreambuf_iterator<char>()};}
 static void write(const fs::path& path,const std::string& value){std::ofstream file(path,std::ios::binary);file.write(value.data(),value.size());assert(bool(file));}
 static void environment(const std::string& value){fs::create_directories(processEnvironment.parent_path());fs::remove(processEnvironment);write(processEnvironment,value);}
@@ -37,12 +38,12 @@ static int launches(){std::ifstream file(root/"launches");std::string line;int r
 template<class Predicate> static void until(Predicate predicate){for(int i=0;i<400;++i){if(predicate())return;std::this_thread::sleep_for(std::chrono::milliseconds(25));}throw std::runtime_error("Timed out waiting for supervisor");}
 static void send(const unsigned char* bytes,size_t size){int fd=socket(AF_UNIX,SOCK_DGRAM,0);assert(fd>=0);sockaddr_un address{};address.sun_family=AF_UNIX;strcpy(address.sun_path,(base/"shortcut.sock").c_str());assert(sendto(fd,bytes,size,0,reinterpret_cast<sockaddr*>(&address),sizeof address)==ssize_t(size));close(fd);}
 static void button(unsigned char note,bool down){const unsigned char bytes[]={'B',note,(unsigned char)down};send(bytes,sizeof bytes);}
-static pid_t start(bool armOnly=false){pid_t pid=fork();assert(pid>=0);if(!pid){execl((root/"shortcut").c_str(),"shortcut",usb.c_str(),base.c_str(),"acvs","hw:1,0,1",armOnly?"--arm-only":nullptr,nullptr);_exit(127);}return pid;}
+static pid_t start(bool armOnly=false){const pid_t parent=getpid();pid_t pid=fork();assert(pid>=0);if(!pid){if(prctl(PR_SET_PDEATHSIG,SIGTERM)!=0||getppid()!=parent)_exit(127);execl((root/"shortcut").c_str(),"shortcut",usb.c_str(),base.c_str(),"acvs","hw:1,0,1",armOnly?"--arm-only":nullptr,nullptr);_exit(127);}return pid;}
 static pid_t cancel(const fs::path& path=base){pid_t pid=fork();assert(pid>=0);if(!pid){execl((root/"shortcut").c_str(),"shortcut","--cancel-prepared",path.c_str(),nullptr);_exit(127);}return pid;}
 static pid_t handoff(){pid_t pid=fork();assert(pid>=0);if(!pid){execl((root/"shortcut").c_str(),"shortcut","--handoff",(base/"shortcut.sock").c_str(),nullptr);_exit(127);}return pid;}
 static void returned(pid_t pid,int expected=0){int status=0;until([&]{return waitpid(pid,&status,WNOHANG)==pid;});assert(WIFEXITED(status)&&WEXITSTATUS(status)==expected);}
 static void exited(pid_t pid,int expected=0){returned(pid,expected);assert(!fs::exists(base)&&!fs::exists("/run/mpc-usb-manager-session")&&!fs::exists(dropin));preserved();}
-static void prepared(const std::string& original=""){fs::create_directories(usb);std::ofstream(usb/".mpc-manager-id")<<"test\n";fs::create_directories(base);for(const char* name:{"shortcut","shortcut-hook.so","manager","font.ttf","launch.sh"})fs::copy_file(root/name,base/name,fs::copy_options::overwrite_existing);fs::permissions(base/"manager",fs::perms::owner_all);fs::permissions(base/"shortcut",fs::perms::owner_all);fs::permissions(base/"font.ttf",fs::perms::owner_read|fs::perms::owner_write|fs::perms::group_read|fs::perms::others_read);environment(preload(original));write(root/"main-pid","4242\n");write(root/"service-active","1\n");for(const char* name:{"pid-race","pid-queried","fail-reload","fail-show","late-envfile","unset-variable","hold-pid-query","pid-query-entered","hold-environment-check","environment-check-entered","fail-restore-start"})fs::remove(root/name);}
+static void prepared(const std::string& original=""){fs::create_directories(usb);std::ofstream(usb/".mpc-manager-id")<<"test\n";fs::create_directories(base);for(const char* name:{"shortcut","shortcut-hook.so","manager","font.ttf","launch.sh"})fs::copy_file(root/name,base/name,fs::copy_options::overwrite_existing);fs::permissions(base/"manager",fs::perms::owner_all);fs::permissions(base/"shortcut",fs::perms::owner_all);fs::permissions(base/"font.ttf",fs::perms::owner_read|fs::perms::owner_write|fs::perms::group_read|fs::perms::others_read);environment(preload(original));write(root/"main-pid","4242\n");write(root/"service-active","1\n");for(const char* name:{"pid-race","pid-queried","fail-reload","fail-show","late-envfile","unset-variable","hold-pid-query","pid-query-entered","hold-environment-check","environment-check-entered","fail-restore-start","unit-environment","source-envfiles"})fs::remove(root/name);}
 static void armed(){until([]{return contents(base/"ready")=="READY\n";});struct stat mode{};assert(lstat((base/"ready").c_str(),&mode)==0&&S_ISREG(mode.st_mode)&&(mode.st_mode&0777)==0600&&mode.st_uid==0&&mode.st_nlink==1);}
 int main(){try{
     fs::create_directories(dropin.parent_path());write(foreignDropin,foreignDropinText);write(foreignEnvironment,foreignEnvironmentText);
@@ -88,6 +89,14 @@ int main(){try{
     std::cout<<"PASS: stale PMU hook removed without reordering foreign addins or appending twice\n";
     prepared();const char noPreload[]="HOME=/root\0OTHER=value\0";environment(std::string(noPreload,sizeof noPreload-1));pid=start(true);armed();configured(hook);kill(pid,SIGTERM);exited(pid);
     std::cout<<"PASS: absent LD_PRELOAD retains stock startup\n";
+    prepared();write(root/"unit-environment","OTHER=value \"LD_PRELOAD="+addins+"\"\n");pid=start(true);armed();configured(addins+" "+hook);kill(pid,SIGTERM);exited(pid);
+    std::cout<<"PASS: a late service drop-in supplies addins absent from the running MPC environment\n";
+    prepared(addins);write(root/"unit-environment","LD_PRELOAD=\n");pid=start(true);armed();configured(hook);kill(pid,SIGTERM);exited(pid);
+    std::cout<<"PASS: explicit service reset does not resurrect obsolete process preloads\n";
+    const std::string reversed=(root/"shortcut-addin-second.so").string()+":"+(root/"shortcut-addin-first.so").string();
+    prepared(addins);write(root/"unit-environment","LD_PRELOAD=/unit.so\n");write(root/"late addins.env","LD_PRELOAD='"+reversed+"'\n");write(root/"source-envfiles",(root/"late addins.env").string()+" (ignore_errors=no)");pid=start(true);armed();configured(reversed+" "+hook);kill(pid,SIGTERM);exited(pid);
+    assert(contents(root/"late addins.env")=="LD_PRELOAD='"+reversed+"'\n");
+    std::cout<<"PASS: current environment files override process/unit values in exact order without edits\n";
     prepared(addins);write(root/"unset-variable","LD_PRELOAD=/different.so MPC_PANEL_PORT=hw:9,9,9\n");pid=start(true);armed();configured(addins+" "+hook);kill(pid,SIGTERM);exited(pid);
     std::cout<<"PASS: unrelated and nonmatching value-specific environment removals retained\n";
     for(const std::string failure:{"zero-pid","malformed-pid","query-failure","missing-environ","symlink-environ","truncated-environ","oversized-environ","duplicate-preload","newline-preload","changed-pid","reload","unset-variable","unset-preload-assignment","unset-port","unset-socket","late-envfile"}){
@@ -126,6 +135,18 @@ int main(){try{
            &&contents(usb/"plugin-history.json")=="retained\n");
     fs::remove(root/"hold-manager");fs::remove(root/"fail-restore-start");
     std::cout<<"PASS: SD uninstall recovers MPC when the return launcher fails to restart it\n";
+    prepared();pid=start(true);armed();
+    write(root/"unit-environment","\"LD_PRELOAD="+addins+"\"\n");
+    send(&open,1);until([]{return launches()==11;});configured(addins+" "+hook);
+    until([]{return contents(base/"session.log").find("MPC resumed; SHIFT + MENU hold ready")!=std::string::npos;});
+    const size_t firstReturn=contents(base/"session.log").size();
+    write(root/"late-reopen.env","LD_PRELOAD='"+reversed+"'\n");
+    write(root/"source-envfiles",(root/"late-reopen.env").string()+" (ignore_errors=no)");
+    send(&open,1);until([]{return launches()==12;});configured(reversed+" "+hook);
+    until([&]{return contents(base/"session.log").substr(firstReturn).find("MPC resumed; SHIFT + MENU hold ready")!=std::string::npos;});
+    kill(pid,SIGTERM);exited(pid);
+    std::cout<<"PASS: addins configured after shortcut arming are refreshed before the next opening\n";
+    std::cout<<"PASS: changed environment files override the previous snapshot on repeated opening\n";
     fs::remove(foreignDropin);fs::remove(foreignEnvironment);fs::remove_all(processEnvironment.parent_path());
     return 0;
 }catch(const std::exception& error){std::cerr<<"FAIL: "<<error.what()<<'\n';return 1;}}

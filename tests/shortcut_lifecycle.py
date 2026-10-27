@@ -1,21 +1,23 @@
 import shutil
+import subprocess
 from pathlib import Path
 from offline_support import ChrootRunner, lifecycle_arguments
 
-args=lifecycle_arguments()
+args=lifecycle_arguments(build_directory=True)
 root=args.root
 runner=ChrootRunner(root,args.image,args.direct,args.timeout)
 source=Path(__file__).parents[1]
+build=args.build_directory.resolve()
 test=root/'tmp/shortcut-test'
 if test.exists():shutil.rmtree(test)
 test.mkdir();bin_dir=test/'bin';bin_dir.mkdir()
-for name in ['shortcut','shortcut-hook.so','shortcut-state-test','shortcut-fake.so','shortcut-addin-first.so','shortcut-addin-second.so','shortcut-hook-test','shortcut-integration']:
-    shutil.copyfile(source/'build'/name,test/name);(test/name).chmod(0o755)
+for name in ['shortcut','shortcut-hook.so','shortcut-state-test','shortcut-fake.so','shortcut-addin-first.so','shortcut-addin-second.so','shortcut-lookup.so','shortcut-environment-test','shortcut-hook-test','shortcut-integration']:
+    shutil.copyfile(build/name,test/name);(test/name).chmod(0o755)
 shutil.copyfile(source/'launch.sh',test/'launch.sh')
 shutil.copyfile(source/'setup.sh',test/'setup.sh')
-(test/'usb/autorun').mkdir(parents=True)
+(test/'usb/autorun/runtime/aarch64').mkdir(parents=True)
 shutil.copyfile(source/'open.sh',test/'usb/autorun/open.sh')
-shutil.copyfile(source/'build/font.ttf',test/'font.ttf')
+shutil.copyfile(build/'font.ttf',test/'font.ttf')
 (test/'manager').write_text('#!/bin/sh\necho opened >> /tmp/shortcut-test/launches\nwhile [ -e /tmp/shortcut-test/hold-manager ]; do sleep 0.025; done\nsleep 0.5\n')
 (test/'manager').chmod(0o755)
 (bin_dir/'pidof').write_text('#!/bin/sh\nexit 1\n')
@@ -38,12 +40,16 @@ show)
         fi ;;
     'show acvs -p UnsetEnvironment --value')
         if [ -e /tmp/shortcut-test/unset-variable ]; then cat /tmp/shortcut-test/unset-variable; else echo UNRELATED; fi ;;
+    'show acvs -p Environment --value')
+        if [ -e /tmp/shortcut-test/unit-environment ]; then cat /tmp/shortcut-test/unit-environment; fi ;;
     'show acvs -p EnvironmentFiles --value')
-        if [ -e /tmp/shortcut-test/hold-environment-check ]; then
+        if [ -e /tmp/shortcut-test/hold-environment-check ] && [ -e /run/systemd/system/acvs.service.d/99-mpc-usb-shortcut.conf ]; then
             touch /tmp/shortcut-test/environment-check-entered
             while [ -e /tmp/shortcut-test/hold-environment-check ]; do sleep 0.025; done
         fi
-        printf '/tmp/shortcut-test/existing.env (ignore_errors=no) /tmp/mpc-usb-session.test/shortcut.env (ignore_errors=no)'
+        printf '/tmp/shortcut-test/existing.env (ignore_errors=no)'
+        if [ -e /tmp/shortcut-test/source-envfiles ]; then printf ' '; cat /tmp/shortcut-test/source-envfiles; fi
+        if [ -e /run/systemd/system/acvs.service.d/99-mpc-usb-shortcut.conf ]; then printf ' /tmp/mpc-usb-session.test/shortcut.env (ignore_errors=no)'; fi
         if [ -e /tmp/shortcut-test/late-envfile ]; then printf ' /tmp/shortcut-test/existing.env (ignore_errors=no)'; fi
         printf '\\n' ;;
     *) exit 91 ;;
@@ -63,17 +69,25 @@ exit 0
 (bin_dir/'systemd-run').write_text('#!/bin/sh\nprintf "%s\\n" "$@" >> /tmp/shortcut-test/dispatch\nexit 0\n')
 for path in bin_dir.iterdir():path.chmod(0o755)
 settings=root/'media/az01-internal/Settings/MPC/MPC.settings';settings.parent.mkdir(parents=True,exist_ok=True);settings.write_text('<PROPERTIES/>\n')
+settings64=root/'data/Settings/MPC/MPC.settings';settings64.parent.mkdir(parents=True,exist_ok=True);settings64.write_text('<PROPERTIES/>\n')
 (root/'sdcard/Expansions').mkdir(parents=True,exist_ok=True)
 def run(command):
-    return runner.run(command)
+    try:return runner.run(command)
+    except subprocess.TimeoutExpired as error:
+        print(error.stdout or '',end='');print(error.stderr or '',end='')
+        raise
 hook=run('LD_PRELOAD=/tmp/shortcut-test/shortcut-hook.so MPC_PANEL_PORT=hw:1,0,1 MPC_SHORTCUT_SOCKET=/tmp/shortcut-test/hook.sock /tmp/shortcut-test/shortcut-hook-test')
 print(hook.stdout,end='');assert hook.returncode==0,hook.stderr
 chained=run("LD_PRELOAD='/tmp/shortcut-test/shortcut-addin-first.so /tmp/shortcut-test/shortcut-addin-second.so /tmp/shortcut-test/shortcut-hook.so' MPC_PANEL_PORT=hw:1,0,1 MPC_SHORTCUT_SOCKET=/tmp/shortcut-test/hook.sock /tmp/shortcut-test/shortcut-hook-test --chained")
 print(chained.stdout,end='');assert chained.returncode==0,chained.stderr
+lookup=run("LD_PRELOAD='/tmp/shortcut-test/shortcut-lookup.so /tmp/shortcut-test/shortcut-hook.so' MPC_PANEL_PORT=hw:1,0,1 MPC_SHORTCUT_SOCKET=/tmp/shortcut-test/hook.sock /tmp/shortcut-test/shortcut-hook-test")
+print(lookup.stdout,end='');assert lookup.returncode==0,lookup.stderr
+environment=run('/tmp/shortcut-test/shortcut-environment-test')
+print(environment.stdout,end='');assert environment.returncode==0,environment.stderr
 result=run('PATH=/tmp/shortcut-test/bin:$PATH /tmp/shortcut-test/shortcut-state-test && PATH=/tmp/shortcut-test/bin:$PATH /tmp/shortcut-test/shortcut-integration')
 print(result.stdout,end='');assert result.returncode==0,result.stderr
-calls=(test/'services').read_text().splitlines();assert calls.count('stop')==10 and calls.count('start')==11,calls
-assert (test/'service-starts').read_text().splitlines()==['started']*10
+calls=(test/'services').read_text().splitlines();assert calls.count('stop')==12 and calls.count('start')==13,calls
+assert (test/'service-starts').read_text().splitlines()==['started']*12
 assert (test/'recovery-requests').read_text().splitlines()==['recovery']
 assert not list((root/'tmp').glob('mpc-usb-manager.*')),'Manager RAM session left behind'
 print('PASS: one successful MPC start per opening; failed return recovered; all GUI RAM sessions deleted')

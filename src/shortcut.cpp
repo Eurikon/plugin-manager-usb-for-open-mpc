@@ -20,6 +20,7 @@
 #include <poll.h>
 #include <unistd.h>
 #include <fcntl.h>
+#include <glob.h>
 
 namespace fs=std::filesystem;
 static void require(bool condition,const std::string& message){if(!condition)throw std::runtime_error(message+": "+strerror(errno));}
@@ -57,14 +58,111 @@ static bool ownHook(const std::string& value){
     const fs::path path=value;const std::string folder=path.parent_path().filename().string();
     return path.filename()=="shortcut-hook.so"&&path.parent_path().parent_path()=="/tmp"&&folder.rfind("mpc-usb-session.",0)==0&&folder.find_first_not_of("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-")==std::string::npos;
 }
-static std::string existingPreload(const std::string& service){
+static bool horizontalSpace(char value){return value==' '||value=='\t'||value=='\r';}
+static std::string trimEnvironment(const std::string& value){
+    const auto begin=value.find_first_not_of(" \t\r");
+    return begin==std::string::npos?std::string():value.substr(begin,value.find_last_not_of(" \t\r")-begin+1);
+}
+static void applyEnvironmentFile(const std::string& text,std::string& preload){
+    if(text.find('\0')!=std::string::npos)throw std::runtime_error("Invalid MPC environment file");
+    for(size_t position=0;position<text.size();){
+        while(position<text.size()&&(horizontalSpace(text[position])||text[position]=='\n'))++position;
+        if(position==text.size())break;
+        if(text[position]=='#'||text[position]==';'){
+            while(position<text.size()){
+                const char byte=text[position++];
+                if(byte=='\\'&&position<text.size())++position;
+                else if(byte=='\n')break;
+            }
+            continue;
+        }
+        const size_t start=position;
+        while(position<text.size()&&text[position]!='='&&text[position]!='\n')++position;
+        if(position==text.size())break;
+        if(text[position++]=='\n')continue;
+        const std::string key=trimEnvironment(text.substr(start,position-start-1));
+        while(position<text.size()&&horizontalSpace(text[position]))++position;
+        char quote=0;
+        if(position<text.size()&&(text[position]=='\''||text[position]=='"'))quote=text[position++];
+        std::string value;size_t retained=0;
+        while(position<text.size()){
+            const char byte=text[position++];
+            if(quote&&byte==quote){quote=0;continue;}
+            if(!quote&&byte=='\n')break;
+            if(byte=='\\'&&quote!='\''&&position<text.size()){
+                const char next=text[position++];
+                if(next=='\n')continue;
+                if(quote=='"'&&next!='"'&&next!='\\'&&next!='`'&&next!='$')value+='\\';
+                value+=next;retained=value.size();
+            }else{
+                value+=byte;
+                if(quote||!horizontalSpace(byte))retained=value.size();
+            }
+        }
+        if(quote)throw std::runtime_error("Unterminated MPC environment file quote");
+        value.resize(retained);
+        if(key=="LD_PRELOAD")preload=value;
+    }
+}
+static std::string readEnvironmentFile(const std::string& path){
+    const int fd=open(path.c_str(),O_RDONLY|O_NONBLOCK|O_CLOEXEC);
+    require(fd>=0,"Read configured MPC environment file");
+    struct stat before{},after{};std::string text;char buffer[4096];ssize_t size;
+    bool valid=fstat(fd,&before)==0&&S_ISREG(before.st_mode)&&before.st_size<=1024*1024;
+    while(valid&&(size=read(fd,buffer,sizeof buffer))!=0){
+        if(size<0){if(errno==EINTR)continue;valid=false;break;}
+        if(text.size()+size>1024*1024){valid=false;break;}text.append(buffer,size);
+    }
+    valid=valid&&fstat(fd,&after)==0&&before.st_dev==after.st_dev&&before.st_ino==after.st_ino
+        &&before.st_size==after.st_size&&before.st_mtim.tv_sec==after.st_mtim.tv_sec
+        &&before.st_mtim.tv_nsec==after.st_mtim.tv_nsec&&before.st_ctim.tv_sec==after.st_ctim.tv_sec
+        &&before.st_ctim.tv_nsec==after.st_ctim.tv_nsec;
+    close(fd);
+    struct stat named{};
+    valid=valid&&stat(path.c_str(),&named)==0&&named.st_dev==before.st_dev&&named.st_ino==before.st_ino;
+    if(!valid)throw std::runtime_error("Invalid or changed MPC environment file");
+    return text;
+}
+static void applyEnvironmentFiles(const std::string& files,std::string& preload,const fs::path& ignored={}){
+    size_t position=0;
+    while(position<files.size()){
+        const size_t marker=files.find(" (ignore_errors=",position);
+        if(marker==std::string::npos)throw std::runtime_error("Invalid MPC environment file list");
+        std::string path=trimEnvironment(files.substr(position,marker-position));
+        if(!path.empty()&&(path[0]=='"'||path[0]=='\'')){
+            const auto words=propertyWords(path);
+            if(words.size()!=1)throw std::runtime_error("Invalid MPC environment file path");
+            path=words[0];
+        }
+        const size_t end=files.find(')',marker);
+        if(end==std::string::npos)throw std::runtime_error("Invalid MPC environment file list");
+        const std::string optional=files.substr(marker+16,end-marker-16);
+        if((optional!="yes"&&optional!="no")||path.empty()||path[0]!='/'
+            ||path.find_first_of("\r\n")!=std::string::npos||path.find('\0')!=std::string::npos)
+            throw std::runtime_error("Invalid MPC environment file path");
+        glob_t matches{};const int result=glob(path.c_str(),GLOB_ERR,nullptr,&matches);
+        try{
+            if(result==GLOB_NOMATCH&&optional=="yes"){}
+            else if(result||matches.gl_pathc>128)throw std::runtime_error("Cannot expand MPC environment files");
+            else for(size_t i=0;i<matches.gl_pathc;++i)if(fs::path(matches.gl_pathv[i])!=ignored)applyEnvironmentFile(readEnvironmentFile(matches.gl_pathv[i]),preload);
+        }catch(...){globfree(&matches);throw;}
+        globfree(&matches);position=end+1;
+        while(position<files.size()&&horizontalSpace(files[position]))++position;
+    }
+}
+static std::string existingPreload(const std::string& service,const fs::path& ignored={}){
     const std::string pid=mainPid(service);int fd=open(("/proc/"+pid+"/environ").c_str(),O_RDONLY|O_CLOEXEC|O_NOFOLLOW);require(fd>=0,"Read MPC process environment");
     std::string environment;char buffer[4096];bool valid=true;ssize_t size;
     while((size=read(fd,buffer,sizeof buffer))!=0){if(size<0){if(errno==EINTR)continue;valid=false;break;}if(environment.size()+size>1024*1024){valid=false;break;}environment.append(buffer,size);}
     close(fd);if(!valid||(!environment.empty()&&environment.back()!=0))throw std::runtime_error("Invalid or oversized MPC process environment");
-    if(mainPid(service)!=pid)throw std::runtime_error("MPC service changed while reading its environment; retry opening the manager");
     std::string preload;bool found=false;
     for(size_t start=0;start<environment.size();){const size_t end=environment.find('\0',start);const std::string entry=environment.substr(start,end-start);start=end+1;if(entry.rfind("LD_PRELOAD=",0)!=0)continue;if(found)throw std::runtime_error("Duplicate MPC preload environment");found=true;preload=entry.substr(11);}
+    const std::string configured=serviceProperty(service,"Environment"),files=serviceProperty(service,"EnvironmentFiles");
+    for(const auto& assignment:propertyWords(configured))if(assignment.rfind("LD_PRELOAD=",0)==0)preload=assignment.substr(11);
+    // A later drop-in may describe the next start rather than the process still running.
+    applyEnvironmentFiles(files,preload,ignored);
+    if(mainPid(service)!=pid||configured!=serviceProperty(service,"Environment")||files!=serviceProperty(service,"EnvironmentFiles"))
+        throw std::runtime_error("MPC service changed while reading its environment; retry opening the manager");
     if(preload.find_first_of("\r\n")!=std::string::npos)throw std::runtime_error("Unsupported newline in MPC preload environment");
     std::vector<std::string> libraries;bool stale=false;
     for(size_t start=0;start<preload.size();){start=preload.find_first_not_of(" :",start);if(start==std::string::npos)break;size_t end=preload.find_first_of(" :",start);if(end==std::string::npos)end=preload.size();const std::string library=preload.substr(start,end-start);if(ownHook(library))stale=true;else libraries.push_back(library);start=end;}
@@ -125,8 +223,24 @@ struct Session {
         for(int fd:{socketFd,notifyFd,timerFd,signalFd,lockFd})if(fd>=0)close(fd);
     }
     void timer(){itimerspec value{};if(hold.deadline){value.it_value.tv_sec=hold.deadline/1000;value.it_value.tv_nsec=(hold.deadline%1000)*1000000;}require(timerfd_settime(timerFd,TFD_TIMER_ABSTIME,&value,nullptr)==0,"Set hold timer");}
+    void environmentLast(){
+        const std::string files=serviceProperty(service,"EnvironmentFiles"),expected=(base/"shortcut.env").string()+" (ignore_errors=no)";
+        require(files.size()>=expected.size()&&files.compare(files.size()-expected.size(),expected.size(),expected)==0,"Shortcut environment file must be last in the MPC service");
+    }
+    void refreshEnvironment(){
+        if(configured){require(command({"systemctl","daemon-reload"})==0,"Reload MPC service");environmentLast();}
+        std::string preload=existingPreload(service,configured?base/"shortcut.env":fs::path{});
+        if(!preload.empty())preload+=' ';
+        preload+=(base/"shortcut-hook.so").string();
+        const std::vector<std::string> assignments={"LD_PRELOAD="+preload,"MPC_PANEL_PORT="+port,"MPC_SHORTCUT_SOCKET="+(base/"shortcut.sock").string()};
+        for(const auto& unset:propertyWords(serviceProperty(service,"UnsetEnvironment")))for(const auto& assignment:assignments)if(unset==assignment||unset==assignment.substr(0,assignment.find('=')))throw std::runtime_error("MPC service explicitly unsets a required shortcut variable");
+        const fs::path destination=base/"shortcut.env",staged=configured?base/"shortcut.env.next":destination;
+        writeEnvironment(staged,"LD_PRELOAD="+environmentValue(preload)+"\nMPC_PANEL_PORT="+environmentValue(port)+"\nMPC_SHORTCUT_SOCKET="+environmentValue((base/"shortcut.sock").string())+"\n");
+        if(configured&&rename(staged.c_str(),destination.c_str())!=0){fs::remove(staged);throw std::runtime_error("Publish shortcut environment failed");}
+    }
     void launch(){
         if(child||!fs::is_regular_file(usb/".mpc-manager-id"))return;
+        refreshEnvironment();
         hold={};timer();
         std::string templatePath="/tmp/mpc-usb-manager.XXXXXX";std::vector<char> pattern(templatePath.begin(),templatePath.end());pattern.push_back(0);char* made=mkdtemp(pattern.data());require(made!=nullptr,"Create manager session");fs::path work=made;
         try{for(const char* name:{"manager","font.ttf"})fs::copy_file(base/name,work/name);require(chmod((work/"manager").c_str(),0755)==0&&chmod((work/"font.ttf").c_str(),0644)==0,"Set manager file permissions");std::ofstream(work/"session.log");
@@ -138,10 +252,7 @@ struct Session {
         lockFd=open("/run/mpc-usb-manager.lock",O_RDWR|O_CREAT|O_CLOEXEC,0600);require(lockFd>=0&&flock(lockFd,LOCK_EX|LOCK_NB)==0,"Manager session already active");
         ownsBase=true;
         int log=open((base/"session.log").c_str(),O_WRONLY|O_CREAT|O_APPEND|O_CLOEXEC,0600);require(log>=0,"Open shortcut log");dup2(log,STDERR_FILENO);close(log);
-        std::string preload=existingPreload(service);if(!preload.empty())preload+=' ';preload+=(base/"shortcut-hook.so").string();
-        const std::vector<std::string> assignments={"LD_PRELOAD="+preload,"MPC_PANEL_PORT="+port,"MPC_SHORTCUT_SOCKET="+(base/"shortcut.sock").string()};
-        for(const auto& unset:propertyWords(serviceProperty(service,"UnsetEnvironment")))for(const auto& assignment:assignments)if(unset==assignment||unset==assignment.substr(0,assignment.find('=')))throw std::runtime_error("MPC service explicitly unsets a required shortcut variable");
-        writeEnvironment(base/"shortcut.env","LD_PRELOAD="+environmentValue(preload)+"\nMPC_PANEL_PORT="+environmentValue(port)+"\nMPC_SHORTCUT_SOCKET="+environmentValue((base/"shortcut.sock").string())+"\n");
+        refreshEnvironment();
         sigset_t signals;sigemptyset(&signals);for(int signal:{SIGTERM,SIGINT,SIGHUP,SIGCHLD})sigaddset(&signals,signal);require(sigprocmask(SIG_BLOCK,&signals,nullptr)==0,"Block supervisor signals");
         signalFd=signalfd(-1,&signals,SFD_CLOEXEC|SFD_NONBLOCK);require(signalFd>=0,"Create signal descriptor");
         socketFd=socket(AF_UNIX,SOCK_DGRAM|SOCK_NONBLOCK|SOCK_CLOEXEC,0);require(socketFd>=0,"Create input socket");auto socketAddress=address((base/"shortcut.sock").string());require(bind(socketFd,reinterpret_cast<sockaddr*>(&socketAddress),sizeof socketAddress)==0,"Bind input socket");chmod((base/"shortcut.sock").c_str(),0600);
@@ -152,8 +263,7 @@ struct Session {
         dropin=fs::path("/run/systemd/system")/(service+".service.d")/"99-mpc-usb-shortcut.conf";require(!fs::exists(dropin),"Shortcut drop-in already exists");fs::create_directories(dropin.parent_path());configured=true;
         {std::ofstream file(dropin);file<<"[Service]\nEnvironmentFile="<<(base/"shortcut.env").string()<<"\n";require(bool(file),"Write shortcut startup setting");}
         require(command({"systemctl","daemon-reload"})==0,"Reload MPC service");
-        const std::string files=serviceProperty(service,"EnvironmentFiles"),expected=(base/"shortcut.env").string()+" (ignore_errors=no)";
-        require(files.size()>=expected.size()&&files.compare(files.size()-expected.size(),expected.size(),expected)==0,"Shortcut environment file must be last in the MPC service");
+        environmentLast();
         if(armOnly)writeEnvironment(base/"ready","READY\n");
         if(!armOnly)launch();
         pollfd descriptors[]={{socketFd,POLLIN,0},{timerFd,POLLIN,0},{notifyFd,POLLIN,0},{signalFd,POLLIN,0}};

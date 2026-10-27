@@ -30,9 +30,11 @@ def add_runtime_arguments(parser):
     parser.add_argument("--timeout", type=int, default=180, help="Maximum seconds per subprocess")
 
 
-def lifecycle_arguments():
+def lifecycle_arguments(*, build_directory=False):
     parser = argparse.ArgumentParser()
     parser.add_argument("root", type=disposable_root)
+    if build_directory:
+        parser.add_argument("--build-directory", type=Path, default=Path(__file__).resolve().parents[1] / "build")
     add_runtime_arguments(parser)
     return parser.parse_args()
 

@@ -1,6 +1,6 @@
 # Plugin Manager USB for OPEN MPC
 
-[![Download installer](https://img.shields.io/badge/Download-Gen_2_test-orange?logo=github)](https://github.com/Eurikon/plugin-manager-usb-for-open-mpc/releases/download/v1.2.0-beta.1/plugin-manager-usb-v1.2.0-beta.1.zip)
+[![Download installer](https://img.shields.io/badge/Download-Gen_2_test-orange?logo=github)](https://github.com/Eurikon/plugin-manager-usb-for-open-mpc/releases/download/v1.2.0-beta.2/plugin-manager-usb-v1.2.0-beta.2.zip)
 [![Latest release](https://img.shields.io/github/v/release/Eurikon/plugin-manager-usb-for-open-mpc?logo=github&label=Release)](https://github.com/Eurikon/plugin-manager-usb-for-open-mpc/releases/latest)
 [![Changelog](https://img.shields.io/badge/Changelog-History-blue?logo=github)](CHANGELOG.md)
 [![User guide](https://img.shields.io/badge/Guide-Website-blue?logo=githubpages)](https://eurikon.github.io/plugin-manager-usb-for-open-mpc/guide.html)
@@ -15,7 +15,9 @@ The bundle includes the manager, without plugins or Akai firmware files.
 This describes recorded local hardware testing; other firmware versions and devices are unverified.
 
 **Gen 2 testing build:** one stick contains both native runtimes and selects the correct generation automatically.<br>
-Offline checks use stock Gen 2 OS 3.9.1 and 3.10 firmware; Gen 2 hardware testing is pending.<br>
+Offline checks use stock Gen 2 OS 3.9.1 and 3.10 firmware.<br>
+An [MPC Live III hardware report](https://github.com/Eurikon/plugin-manager-usb-for-open-mpc/pull/1) confirms OS 3.9.1 catalog, ARM64 installation and shortcut operation.<br>
+The corrected hook needs a hardware retest; the reported OS 3.10 helper check used an application overlay rather than a stock OS 3.10 installation.<br>
 Use ARM64 plugin packages on Gen 2; ARMv7 packages are rejected before installation.<br>
 For this testing release, copy the complete new bundle onto USB and import its updated helper on OS 3.10; the 1.1.0 updater cannot replace the changed helper.
 

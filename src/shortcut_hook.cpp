@@ -28,7 +28,8 @@ static void* nextSymbol(const char* name) {
     typedef void* (*DlsymFunction)(void*,const char*);
     static DlsymFunction libcDlsym=reinterpret_cast<DlsymFunction>(dlvsym(RTLD_NEXT,"dlsym","GLIBC_2.34"));
     if(!libcDlsym)libcDlsym=reinterpret_cast<DlsymFunction>(dlvsym(RTLD_NEXT,"dlsym","GLIBC_2.17"));
-    return libcDlsym?libcDlsym(RTLD_NEXT,name):dlsym(RTLD_NEXT,name);
+    if(!libcDlsym)libcDlsym=reinterpret_cast<DlsymFunction>(dlvsym(RTLD_NEXT,"dlsym","GLIBC_2.4"));
+    return libcDlsym?libcDlsym(RTLD_NEXT,name):nullptr;
 }
 static void initialize() {
     *reinterpret_cast<void**>(&nextRead)=nextSymbol("snd_rawmidi_read");

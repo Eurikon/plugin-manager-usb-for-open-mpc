@@ -21,7 +21,7 @@ contains neither the upstream plugin collection nor Akai firmware.
 
 ### What has actually been tested?
 
-Hardware testing is limited to **MPC Live 2 — Gen 1 / MPC Live II Retro, running
+Local hardware testing covers **MPC Live 2 — Gen 1 / MPC Live II Retro, running
 AKAI MPC OS 3.9.1 and 3.10**. Development has been validated from an Apple Silicon Mac;
 the exact checked macOS version is recorded in
 [Building the Manager](README.md#building-the-manager). ARM builds and broader
@@ -30,7 +30,8 @@ development hosts remain unverified. Offline passes do not establish support
 for another MPC model or firmware.
 
 The Gen 2 testing build adds ARM64 compilation, sectioned-firmware extraction, architecture-specific catalog/registry checks, SD/update fixtures and native OS 3.10 dialog/queue tests against an extracted filesystem.
-Gen 2 hardware testing is pending; the stable Gen 1 hardware record above does not cover it.
+An external [MPC Live III report](https://github.com/Eurikon/plugin-manager-usb-for-open-mpc/pull/1) confirms OS 3.9.1 opening, catalog access, ARM64 installation and shortcut reopening.
+The corrected hook still needs device confirmation; OS 3.10 helper feedback used an application overlay, not a stock Gen 2 OS 3.10 installation.
 
 ### How do I build the manager?
 
@@ -88,6 +89,12 @@ The base image uses a tag, apt packages are not fully version-pinned, and the
 SDL archive download has no configured digest check. Rebuilding is supported;
 a byte-identical result from a fresh dependency download is not guaranteed.
 No separate formatter, linter or type-checker is configured.
+
+For ARM64 shortcut lifecycle checks, run `tests/shortcut_lifecycle.py` inside
+the ARM64 container with `--direct --build-directory build/aarch64` and a
+disposable firmware root. Use Linux tmpfs for its `tmp`, `run` and mock `proc`
+directories: macOS shared folders do not reliably enforce Unix socket modes.
+Keep the socket permission checks enabled.
 
 ### Which files should I edit?
 
@@ -186,11 +193,16 @@ On the legacy USB route:
    single input/bidirectional MIDI port whose name ends in `Private`, then
    starts a transient `mpc-usb-manager` systemd unit.
    Missing, ambiguous or invalid hardware addresses are rejected.
-3. The supervisor reads the active MPC service's `MainPID` and obtains its
-   effective `LD_PRELOAD` from `/proc/<MainPID>/environ`, including values from
-   `Environment=` and `EnvironmentFile=` settings. It preserves existing preload
+3. At preparation and before each opening, the supervisor reads the active MPC service's `MainPID` and snapshots
+   `/proc/<MainPID>/environ`. Current `systemctl show` environment assignments
+   then override that snapshot, followed by ordered environment files. This
+   includes addin drop-ins installed after the running process started and follows
+   [systemd's environment-file precedence](https://github.com/systemd/systemd/blob/v252/man/systemd.exec.xml).
+   Parsing preserves literal values without shell evaluation; invalid or changed
+   inputs stop preparation before MPC is stopped. It preserves existing preload
    libraries in order, removes stale manager-hook entries and appends the current
-   hook last. A root-only RAM environment file is read after existing environment
+   hook last. Before reopening it reloads current service configuration and excludes
+   its own previous snapshot from input. A root-only RAM environment file is read after existing environment
    files through `/run/systemd/system/<service>.service.d/99-mpc-usb-shortcut.conf`.
 4. The supervisor creates a separate `/tmp/mpc-usb-manager.*` opening.
    `launch.sh` stops the MPC application, waits for its exit and runs the SDL
@@ -207,7 +219,10 @@ Existing service and addin configuration files are not edited.
 No persistent startup service or root filesystem change is installed.
 Preload chaining passed offline checks and an isolated native MPC Live II test
 using generic addin fixtures, without restarting the MPC application.
-Force hardware testing with addins remains pending external review.
+The hook uses libc's versioned symbol lookup rather than an addin's exported
+`dlsym`; ARMv7 retains its `GLIBC_2.4` fallback. Generic interposition tests run
+on both architectures. Confirmation with the affected real addins remains a
+hardware test.
 
 ### How does the shortcut work, and what remains after closing?
 

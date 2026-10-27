@@ -16,7 +16,7 @@ from prepare_fixtures import catalog_item, digest, package_manifest, prepare
 SOURCE = Path(__file__).resolve().parents[1]
 BINARIES = ("manager", "backend-test", "font.ttf", "shortcut", "shortcut-hook.so",
             "shortcut-state-test", "shortcut-fake.so", "shortcut-hook-test", "shortcut-integration",
-            "shortcut-addin-first.so", "shortcut-addin-second.so")
+            "shortcut-addin-first.so", "shortcut-addin-second.so", "shortcut-lookup.so", "shortcut-environment-test")
 
 
 def preflight(root, package, legacy_package=None, *, legacy_os3_confirmed=False):
