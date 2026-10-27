@@ -22,9 +22,17 @@ static void sendEvent(const unsigned char* bytes,size_t size) {
     if(socketFd<0)return;
     if(sendto(socketFd,bytes,size,MSG_DONTWAIT|MSG_NOSIGNAL,reinterpret_cast<sockaddr*>(&destination),sizeof destination)<0&&(errno==ENOENT||errno==ECONNREFUSED)){close(socketFd);socketFd=-1;}
 }
+// Look the next definition up through libc's own dlsym. Another preloaded shim may export its own dlsym (the commander addin
+// does), which breaks dlsym(RTLD_NEXT) for every library after it and makes the chain of snd_rawmidi_read wrappers call itself.
+static void* nextSymbol(const char* name) {
+    typedef void* (*DlsymFunction)(void*,const char*);
+    static DlsymFunction libcDlsym=reinterpret_cast<DlsymFunction>(dlvsym(RTLD_NEXT,"dlsym","GLIBC_2.34"));
+    if(!libcDlsym)libcDlsym=reinterpret_cast<DlsymFunction>(dlvsym(RTLD_NEXT,"dlsym","GLIBC_2.17"));
+    return libcDlsym?libcDlsym(RTLD_NEXT,name):dlsym(RTLD_NEXT,name);
+}
 static void initialize() {
-    *reinterpret_cast<void**>(&nextRead)=dlsym(RTLD_NEXT,"snd_rawmidi_read");
-    *reinterpret_cast<void**>(&portName)=dlsym(RTLD_NEXT,"snd_rawmidi_name");
+    *reinterpret_cast<void**>(&nextRead)=nextSymbol("snd_rawmidi_read");
+    *reinterpret_cast<void**>(&portName)=nextSymbol("snd_rawmidi_name");
     pthread_mutex_lock(&lock);
     expectedPort=getenv("MPC_PANEL_PORT");const char* path=getenv("MPC_SHORTCUT_SOCKET");
     if(expectedPort&&path&&strlen(path)<sizeof destination.sun_path){
