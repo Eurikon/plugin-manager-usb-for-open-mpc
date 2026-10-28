@@ -20,22 +20,18 @@ Stock Gen2 OS 3.9.1 and 3.10 have also passed offline firmware checks; stock Gen
 One USB bundle selects the Gen1 or Gen2 runtime automatically.<br>
 Use ARM64 plugin packages on Gen2; ARMv7 packages are rejected before installation.
 
-### Updating the OS 3.10 Helper for 1.2.2
+### Updating to 1.2.2
 
-The launch diagnostic changes the helper.<br>
-Copy the complete matching bundle onto your stick, preserve preferences/history/local packages, reimport `Plugin Manager helper.xpa`, then restart the MPC application.<br>
-The existing updater refuses changed helper components; this update needs that one-time manual helper import.
+This bundle changes the helper package, so existing versions need a manual update.
 
-### Updating from 1.2.0
-
-Use **SETUP → Check for updates**, then confirm **Install update**.<br>
-Alternatively, replace the application files on your stick with the complete new bundle, preserving preferences, history and local packages.<br>
-For manual replacement on OS 3.10, reimport `Plugin Manager helper.xpa` and restart the MPC application so its runtime checks match the new bundle.
+1. Copy the complete matching bundle onto your stick, preserving preferences, history and local packages.
+2. On OS 3.10, reimport `Plugin Manager helper.xpa`, then restart the MPC application.
+3. If you use the SD copy, open the updated USB manager and choose **SETUP → Update manager** to refresh the SD installation before removing the stick.
 
 ### Updating from 1.1.0 or a 1.2.0 beta
 
 Save your project and safely eject the drive before updating it on your computer.<br>
-Extract the complete 1.2.1 bundle onto the existing USB stick, replacing matching application files.<br>
+Extract the complete matching bundle onto the existing USB stick, replacing matching application files.<br>
 Keep `plugin-history.json`, `manager-preferences.json` and your `local-plugins/` files.<br>
 On OS 3.10, reimport `Plugin Manager helper.xpa` into internal MPC Documents and restart the MPC application.<br>
 The older updater cannot replace this changed helper and bundle layout; use this complete-bundle procedure.

@@ -3,6 +3,7 @@
 ## 1.2.2 — 28-10-2026
 
 - Record OS 3.10 helper launch refusals in a bounded `bootstrap-result.txt` on the confirmed USB stick, preserving the original failure status.
+- This helper-package change requires copying the complete bundle; OS 3.10 users must also reimport the matching helper. Existing updater versions refuse changed helper components.
 
 - Fix a Gen2 startup crash caused by large saved settings. The settings reader now scans tags without recursive regular-expression matching.
 
