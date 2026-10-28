@@ -19,3 +19,5 @@ symbols=$(readelf --dyn-syms -W "$output"/startup/manager-entry.so)
 for name in pmu_start_manager pmu_stop_manager pmu_launch_confirmed pmu_prepare_manager; do
     printf '%s\n' "$symbols" | awk -v name="$name" '$7 != "UND" && $8 == name { found = 1 } END { exit !found }'
 done
+
+cc -std=c11 -O2 -Wall -Wextra -Werror src/startup/bootstrap_note.c -o "$output/startup/bootstrap-note"

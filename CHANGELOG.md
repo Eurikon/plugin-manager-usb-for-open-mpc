@@ -2,8 +2,13 @@
 
 ## 1.2.2 — 28-10-2026
 
+- Validate the running MPC executable on overlay setups, retaining the exact supported-firmware hash check and the stock-file fallback when no owned MPC process is available.
+
+- Record OS 3.10 helper launch refusals in a bounded `bootstrap-result.txt` on the confirmed USB stick, preserving the original failure status.
+- This helper-package change requires copying the complete bundle; OS 3.10 users must also reimport the matching helper. Existing updater versions refuse changed helper components.
+
 - Fix a Gen2 startup crash caused by large saved settings. The settings reader now scans tags without recursive regular-expression matching.
-- Keep that settings scan linear on malformed input: a tag with an unterminated quote and a long run of letters made it quadratic (about 37 s at 200,000 characters).
+- Keep settings scanning linear on malformed tags to prevent startup hangs with damaged settings.
 
 ## 1.2.1 — 28-10-2026
 
