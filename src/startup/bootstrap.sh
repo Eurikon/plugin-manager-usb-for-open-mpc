@@ -13,6 +13,7 @@ UUIDS='/dev/disk/by-uuid'
 INTERNAL='/sdcard'
 SD_SUFFIX='/Plugin Manager USB'
 RUN='/run'
+PROC='/proc'
 RAM_TEMPLATE='/tmp/mpc-usb-session.XXXXXX'
 USB_WAIT=20
 READY_WAIT=15
@@ -38,6 +39,19 @@ case "$(uname -m)" in
 esac
 
 fail() { printf '%s\n' "$1" >&2; exit "$2"; }
+# The helper's native code is bound to the MPC executable that is running, which is not always the file at $MPC: on an
+# overlay (a newer app bind-mounted into the MPC service only) the file on disk is the older firmware. Prefer the running
+# process's own executable, and fall back to $MPC when none can be found (an unchanged stock device).
+running_mpc() {
+    for pid in $(pidof MPC 2>/dev/null); do
+        case "$pid" in ''|*[!0-9]*) continue ;; esac
+        [ -d "$PROC/$pid" ] && [ "$(stat -c %u "$PROC/$pid")" = "$OWNER_UID" ] || continue
+        [ -r "$PROC/$pid/exe" ] || continue
+        printf '%s\n' "$PROC/$pid/exe"
+        return 0
+    done
+    return 1
+}
 regular_source() {
     [ -f "$1" ] && [ ! -L "$1" ] || return 1
     [ "$(stat -c %u "$1")" = "$OWNER_UID" ] || return 1
@@ -270,7 +284,8 @@ done
 ! IFS= read -r entry <&3 || fail 'extra manifest entry' 11
 exec 3<&-
 [ "$(wc -c < "$SOURCE/$MANIFEST")" = "$bytes" ] || fail 'extra manifest content' 11
-actual=$(sha256sum "$MPC" 2>/dev/null) || fail 'firmware unavailable' 10
+firmware=$(running_mpc) || firmware=$MPC
+actual=$(sha256sum "$firmware" 2>/dev/null) || fail 'firmware unavailable' 10
 [ "${actual%% *}" = "$EXPECTED" ] || fail 'unsupported firmware' 10
 idle_session
 [ -r "$MOUNTS" ] || fail 'mount inventory unavailable' 13

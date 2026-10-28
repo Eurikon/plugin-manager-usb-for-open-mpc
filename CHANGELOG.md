@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- The OS 3.10 helper's `bootstrap.sh` hashed `/usr/bin/MPC` for its firmware check. When a newer app is bind-mounted into the MPC service only (a 3.10 app over a 3.9.1 root), that file is the older firmware and the helper refused with "unsupported firmware". It now hashes the executable of the MPC process that is actually running (`/proc/<pid>/exe`, owned by root) and falls back to `/usr/bin/MPC` when none is found, so a stock device behaves as before.
+
 ## 1.2.1 — 28-10-2026
 
 - Follow the Gen2 MPC content-download drive preference for automatic plugin installation, using the mounted drive’s `Synths` folder instead of a guessed `/nvme/Synths` fallback.
