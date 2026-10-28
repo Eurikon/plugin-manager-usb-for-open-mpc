@@ -7,7 +7,7 @@
 #define MPC_PM_ID "plugin-manager-g2"
 #endif
 #ifndef MPC_PM_NAME
-#define MPC_PM_NAME "Plugin Manager G2"
+#define MPC_PM_NAME "OpenMPC Plugin Manager G2"
 #endif
 #ifndef MPC_PM_REPO
 #define MPC_PM_REPO "sd88me/mpc-vst-plugins"
