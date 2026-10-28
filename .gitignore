@@ -31,3 +31,6 @@ manager-preferences.json
 manager-result.txt
 USB-SHA256.json
 .DS_Store
+
+bootstrap-result.txt
+display-rotation.txt

@@ -1,6 +1,6 @@
 # Plugin Manager USB for OPEN MPC
 
-[![Download installer](https://img.shields.io/badge/Download-1.2.1-brightgreen?logo=github)](https://github.com/Eurikon/plugin-manager-usb-for-open-mpc/releases/download/v1.2.1/plugin-manager-usb-v1.2.1.zip)
+[![Download installer](https://img.shields.io/badge/Download-1.2.2-brightgreen?logo=github)](https://github.com/Eurikon/plugin-manager-usb-for-open-mpc/releases/download/v1.2.2/plugin-manager-usb-v1.2.2.zip)
 [![Latest release](https://img.shields.io/github/v/release/Eurikon/plugin-manager-usb-for-open-mpc?logo=github&label=Release)](https://github.com/Eurikon/plugin-manager-usb-for-open-mpc/releases/latest)
 [![Changelog](https://img.shields.io/badge/Changelog-History-blue?logo=github)](CHANGELOG.md)
 [![User guide](https://img.shields.io/badge/Guide-Website-blue?logo=githubpages)](https://eurikon.github.io/plugin-manager-usb-for-open-mpc/guide.html)
