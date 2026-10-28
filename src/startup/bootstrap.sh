@@ -37,7 +37,23 @@ case "$(uname -m)" in
         ;;
 esac
 
-fail() { printf '%s\n' "$1" >&2; exit "$2"; }
+# The journal drops this script's stderr, so a refusal would otherwise leave only an exit status. When the confirmed
+# volume is a plain /media/<name> directory carrying the manager marker, also append the reason to bootstrap-result.txt
+# on it. Nothing here can fail the script or follow a symlink.
+failure_note() {
+    note_usb=$confirmed_usb
+    case "$note_usb" in "$MEDIA"/?*) ;; *) return 0 ;; esac
+    case "${note_usb#"$MEDIA"/}" in */*) return 0 ;; esac
+    [ -d "$note_usb" ] && [ ! -L "$note_usb" ] || return 0
+    [ -f "$note_usb/.mpc-manager-id" ] && [ ! -L "$note_usb/.mpc-manager-id" ] || return 0
+    note_file=$note_usb/bootstrap-result.txt
+    [ ! -L "$note_file" ] || return 0
+    if [ -e "$note_file" ]; then
+        [ -f "$note_file" ] && [ "$(wc -c < "$note_file")" -lt 65536 ] || return 0
+    fi
+    printf '%s helper refused to start (exit %s): %s\n' "$(date '+%d-%m-%Y %H:%M:%S')" "$2" "$1" >> "$note_file"
+}
+fail() { printf '%s\n' "$1" >&2; failure_note "$1" "$2" 2>/dev/null || true; exit "$2"; }
 regular_source() {
     [ -f "$1" ] && [ ! -L "$1" ] || return 1
     [ "$(stat -c %u "$1")" = "$OWNER_UID" ] || return 1
