@@ -1,3 +1,4 @@
+#include <chrono>
 #include "backend.hpp"
 #include <fstream>
 #include <iostream>
@@ -45,6 +46,13 @@ int main(){
         mount();save(settings,config(ssd.string(),"<VALUE name=\"defaultProgramPads\" val=\""+std::string(400000,'x')+"\"/><VALUE name=\"Other\" val=\"1\"/>"));
         check(storage.automatic().at("path")==target.string(),"a settings value hundreds of KB long (a Live III's defaultProgramPads is ~44 KB) neither crashes nor hides the content drive");
         save(settings,keptSettings);
+        {
+            const auto started=std::chrono::steady_clock::now();
+            mount();save(settings,config(ssd.string(),"<VALUE name=\"Broken\" val=\""+std::string(200000,'a')+">"));
+            check(storage.automatic().at("path")==target.string(),"a tag with an unterminated quote does not hide the content drive");
+            check(std::chrono::steady_clock::now()-started<std::chrono::seconds(5),"a tag with an unterminated quote and a long run of letters is scanned in linear time");
+            save(settings,keptSettings);
+        }
         mount("rw,noexec");rejects([&]{storage.automatic();},"noexec","native noexec drive is rejected without substituting another drive");
         Manager blocked(usb,root/"blocked","auto",settings,"aarch64",paths);rejects([&]{blocked.install(item);},"noexec","unusable native destination blocks installation before download");
         check(blocked.synths.empty()&&read(settings)==registered,"failed automatic detection does not invent a destination or edit settings");
