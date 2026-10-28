@@ -1,8 +1,10 @@
 # Changelog
 
-## Unreleased
+## 1.2.2 — 28-10-2026
 
-- When the OS 3.10 helper's `bootstrap.sh` refuses to start, also record the reason and exit code in `bootstrap-result.txt` on the confirmed USB stick (only a plain `/media/<name>` volume carrying the manager marker; never through a symlink; capped at 64 KiB). The journal drops the script's stderr, so a refusal used to leave only an exit status.
+- Record OS 3.10 helper launch refusals in a bounded `bootstrap-result.txt` on the confirmed USB stick, preserving the original failure status.
+
+- Fix a Gen2 startup crash caused by large saved settings. The settings reader now scans tags without recursive regular-expression matching.
 
 ## 1.2.1 — 28-10-2026
 

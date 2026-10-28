@@ -23,9 +23,9 @@ FIRMWARE_SHA256 = "753f838ca362d42c8cc3f5c9c3fcc604ba076b5919212e0301923a3c11c93
 GEN2_FIRMWARE_SHA256 = "b80687ed4f6b5233486a9e20ff043b35e9863bc6460bd573a249421133d77b63"
 PROFILE_SEED_SHA256 = "fc239913b495136422dbbed00f6350f64d65e7e0cd32dbb8e1253164b6131ed3"
 OWNER = ("open-mpc-plugin-manager-test-v1\ncontroller.ini\nplugin_manager.lua\n"
-         "PluginManager.xpj\nmanager-entry.so\nbootstrap.sh\nruntime.sha256\n"
+         "PluginManager.xpj\nmanager-entry.so\nbootstrap-note\nbootstrap.sh\nruntime.sha256\n"
          "manager-enabled\nsd-install-capability\ninstalled-storage\ninstalled-storage.removing\n").encode()
-MEMBERS = {"PluginManager.xpj", "manager-entry.so", "bootstrap.sh", "runtime.sha256",
+MEMBERS = {"PluginManager.xpj", "manager-entry.so", "bootstrap-note", "bootstrap.sh", "runtime.sha256",
            ".owner", "plugin_manager.lua", "controller.ini", "manager-enabled", "sd-install-capability"}
 
 
@@ -105,7 +105,7 @@ def runtime_files(arch: str = "armv7") -> dict[str, bytes]:
 
 
 def validate_archive(data: bytes, runtime: dict[str, bytes], runtime64: dict[str, bytes] | None = None) -> dict[str, bytes]:
-    members = MEMBERS | ({"manager-entry-aarch64.so", "runtime-aarch64.sha256"} if runtime64 is not None else set())
+    members = MEMBERS | ({"manager-entry-aarch64.so", "bootstrap-note-aarch64", "runtime-aarch64.sha256"} if runtime64 is not None else set())
     if not 0 < len(data) <= 2 * 1024 * 1024:
         raise ValueError("Helper archive exceeds its size limit")
     try:
@@ -119,7 +119,7 @@ def validate_archive(data: bytes, runtime: dict[str, bytes], runtime64: dict[str
             files = {name: archive.read(PREFIX + name) for name in members}
     except (zipfile.BadZipFile, RuntimeError) as error:
         raise ValueError("Damaged controller helper archive") from error
-    if (files["runtime.sha256"] != runtime_manifest(runtime) or files[".owner"] != (OWNER + b"manager-entry-aarch64.so\nruntime-aarch64.sha256\n" if runtime64 is not None else OWNER)
+    if (files["runtime.sha256"] != runtime_manifest(runtime) or files[".owner"] != (OWNER + b"manager-entry-aarch64.so\nbootstrap-note-aarch64\nruntime-aarch64.sha256\n" if runtime64 is not None else OWNER)
             or files["manager-enabled"] != b"open-mpc-manager-reusable-v1\n"
             or files["sd-install-capability"] != b"open-mpc-manager-sd-v1\n"):
         raise ValueError("Helper identity, activation or runtime binding mismatch")
@@ -129,10 +129,16 @@ def validate_archive(data: bytes, runtime: dict[str, bytes], runtime64: dict[str
             or re.findall(r"^PROJECT_SHA256='([0-9a-f]{64})'$", bootstrap, re.M) != [digest(project)]):
         raise ValueError("Setup project cleanup binding mismatch")
     module = files["manager-entry.so"]
+    note = files["bootstrap-note"]
+    if len(note) < 52 or note[:7] != b"\x7fELF\x01\x01\x01" or struct.unpack_from("<H", note, 18)[0] != 40:
+        raise ValueError("Expected an ARM32 failure-note writer")
     if len(module) < 52 or module[:7] != b"\x7fELF\x01\x01\x01" or struct.unpack_from("<H", module, 18)[0] != 40:
         raise ValueError("Expected an ARM32 helper module")
     if runtime64 is not None:
         module64 = files["manager-entry-aarch64.so"]
+        note64 = files["bootstrap-note-aarch64"]
+        if len(note64) < 64 or note64[:7] != b"\x7fELF\x02\x01\x01" or struct.unpack_from("<H", note64, 18)[0] != 183:
+            raise ValueError("Expected an ARM64 failure-note writer")
         if (files["runtime-aarch64.sha256"] != runtime_manifest(runtime64, "aarch64")
                 or len(module64) < 64 or module64[:7] != b"\x7fELF\x02\x01\x01"
                 or struct.unpack_from("<H", module64, 18)[0] != 183):
@@ -158,6 +164,7 @@ def build_archive(firmware: Path, project: Path, firmware64: Path | None = None)
     runtime = runtime_files()
     files = {"PluginManager.xpj": project_data,
              "manager-entry.so": read_file(PROJECT / "build/startup/manager-entry.so", 1024 * 1024),
+             "bootstrap-note": read_file(PROJECT / "build/startup/bootstrap-note", 1024 * 1024),
              "bootstrap.sh": bootstrap.encode(), "runtime.sha256": runtime_manifest(runtime),
              ".owner": OWNER, "plugin_manager.lua": lua,
              "controller.ini": ("[info]\ndevice=Plugin Manager helper\nscript=plugin_manager.lua\n"
@@ -166,8 +173,9 @@ def build_archive(firmware: Path, project: Path, firmware64: Path | None = None)
              "sd-install-capability": b"open-mpc-manager-sd-v1\n"}
     runtime64 = runtime_files("aarch64") if firmware64 is not None else None
     if runtime64 is not None:
-        files[".owner"] += b"manager-entry-aarch64.so\nruntime-aarch64.sha256\n"
+        files[".owner"] += b"manager-entry-aarch64.so\nbootstrap-note-aarch64\nruntime-aarch64.sha256\n"
         files["manager-entry-aarch64.so"] = read_file(PROJECT / "build/aarch64/startup/manager-entry.so", 1024 * 1024)
+        files["bootstrap-note-aarch64"] = read_file(PROJECT / "build/aarch64/startup/bootstrap-note", 1024 * 1024)
         files["runtime-aarch64.sha256"] = runtime_manifest(runtime64, "aarch64")
     output = io.BytesIO()
     with zipfile.ZipFile(output, "w") as archive:

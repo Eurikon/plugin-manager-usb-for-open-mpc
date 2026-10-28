@@ -41,6 +41,10 @@ int main(){
         check(read(settings)==registered,"repeated destination preparation does not duplicate registration");
         manager.selectPluginStorage(other/"Synths");check(manager.synths==other/"Synths"&&!manager.pluginStorageInfo().at("automatic").get<bool>(),"manual selection overrides automatic destination for the current session");
         check(read(settings)==registered,"selecting a location alone does not edit MPC settings");manager.selectPluginStorage({});check(manager.synths==target,"Automatic restores the firmware-selected drive");
+        const auto keptSettings=read(settings);
+        mount();save(settings,config(ssd.string(),"<VALUE name=\"defaultProgramPads\" val=\""+std::string(400000,'x')+"\"/><VALUE name=\"Other\" val=\"1\"/>"));
+        check(storage.automatic().at("path")==target.string(),"a settings value hundreds of KB long (a Live III's defaultProgramPads is ~44 KB) neither crashes nor hides the content drive");
+        save(settings,keptSettings);
         mount("rw,noexec");rejects([&]{storage.automatic();},"noexec","native noexec drive is rejected without substituting another drive");
         Manager blocked(usb,root/"blocked","auto",settings,"aarch64",paths);rejects([&]{blocked.install(item);},"noexec","unusable native destination blocks installation before download");
         check(blocked.synths.empty()&&read(settings)==registered,"failed automatic detection does not invent a destination or edit settings");

@@ -20,6 +20,12 @@ Stock Gen2 OS 3.9.1 and 3.10 have also passed offline firmware checks; stock Gen
 One USB bundle selects the Gen1 or Gen2 runtime automatically.<br>
 Use ARM64 plugin packages on Gen2; ARMv7 packages are rejected before installation.
 
+### Updating the OS 3.10 Helper for 1.2.2
+
+The launch diagnostic changes the helper.<br>
+Copy the complete matching bundle onto your stick, preserve preferences/history/local packages, reimport `Plugin Manager helper.xpa`, then restart the MPC application.<br>
+The existing updater refuses changed helper components; this update needs that one-time manual helper import.
+
 ### Updating from 1.2.0
 
 Use **SETUP → Check for updates**, then confirm **Install update**.<br>
@@ -154,6 +160,10 @@ The controller helper remains available for USB use; removing the SD copy does n
 
 Wait for MPC to reopen after uninstalling.<br>
 Do not remove the card or turn off the device during the transition.
+
+If opening briefly goes black and returns to MPC, preserve `bootstrap-result.txt` and `manager-result.txt` from the USB root for your report.<br>
+The first records why the helper refused to launch; the second can record a manager crash after launch.<br>
+These logs can be read on your computer without SSH.
 
 ## Find, Update and Remove Plugins
 
