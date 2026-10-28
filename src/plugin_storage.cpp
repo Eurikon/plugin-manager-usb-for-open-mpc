@@ -40,7 +40,7 @@ std::map<std::string,std::string> tagAttributes(const std::string& text){
                 if(close!=std::string::npos){need(attrs.emplace(text.substr(at,end-at),decode(text.substr(cursor+1,close-cursor-1))).second,"Duplicate settings attribute");at=close+1;continue;}
             }
         }
-        ++at;
+        at=end; // Retrying inside the same invalid name makes malformed tags quadratic.
     }
     return attrs;
 }
