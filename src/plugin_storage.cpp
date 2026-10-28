@@ -24,9 +24,7 @@ std::string decode(std::string value){
 }
 std::string encode(const std::string& value){std::string result;for(char c:value){if(c=='&')result+="&amp;";else if(c=='<')result+="&lt;";else if(c=='>')result+="&gt;";else if(c=='\"')result+="&quot;";else result+=c;}return result;}
 struct Value {size_t begin,end;std::string tag;};
-// Attributes of one <VALUE ...> tag, `name = "value"` or `name = 'value'`, scanned by hand. MPC's own settings carry
-// single attributes tens of thousands of characters long (a Live III's defaultProgramPads is ~44 KB), and std::regex
-// recurses once per matched character, so a regex here overflows the stack and the manager segfaults at start.
+// libstdc++ regex matching exhausts the stack on MPC's large settings attributes.
 std::map<std::string,std::string> tagAttributes(const std::string& text){
     std::map<std::string,std::string> attrs;
     auto space=[&](size_t at){while(at<text.size()&&std::isspace(static_cast<unsigned char>(text[at])))++at;return at;};
@@ -50,7 +48,7 @@ Value property(const std::string& xml,const std::string& name){
     Value result{std::string::npos,0,{}};
     for(size_t from=0;(from=xml.find("<VALUE",from))!=std::string::npos;){
         const size_t after=from+6;
-        if(after<xml.size()&&(std::isalnum(static_cast<unsigned char>(xml[after]))||xml[after]=='_')){from=after;continue;} // "<VALUE" must end a word, like \b
+        if(after<xml.size()&&(std::isalnum(static_cast<unsigned char>(xml[after]))||xml[after]=='_')){from=after;continue;}
         const size_t gt=xml.find('>',after);if(gt==std::string::npos)break;
         const std::string text=xml.substr(from,gt-from+1);
         const auto attrs=tagAttributes(text);

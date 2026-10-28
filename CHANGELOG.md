@@ -1,8 +1,8 @@
 # Changelog
 
-## Unreleased
+## 1.2.2 — 28-10-2026
 
-- Fix a crash at start on real Gen 2 `MPC.settings`: the settings reader scanned every `<VALUE ...>` tag with `std::regex`, whose matcher recurses once per matched character, so a single attribute tens of thousands of characters long (a Live III's `defaultProgramPads` is about 44 KB) overflowed the stack and the manager segfaulted before drawing anything. The scan is now a plain string scanner with the same behaviour, with a regression test using a 400,000-character attribute.
+- Fix a Gen2 startup crash caused by large saved settings. The settings reader now scans tags without recursive regular-expression matching.
 
 ## 1.2.1 — 28-10-2026
 
