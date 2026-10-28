@@ -2,14 +2,12 @@
 
 ## 1.2.2 — 28-10-2026
 
-- Validate the running MPC executable on overlay setups, retaining the exact supported-firmware hash check and the stock-file fallback when no owned MPC process is available.
-
-- Record OS 3.10 helper launch refusals in a bounded `bootstrap-result.txt` on the confirmed USB stick, preserving the original failure status.
-- This helper-package change requires copying the complete bundle; OS 3.10 users must also reimport the matching helper. Existing updater versions refuse changed helper components.
-
-- Fix a Gen2 startup crash caused by large saved settings. The settings reader now scans tags without recursive regular-expression matching.
+- Fix a Gen2 startup crash caused by large saved settings, without recursive regular-expression matching.
 - Keep settings scanning linear on malformed tags to prevent startup hangs with damaged settings.
-- Add an optional 180-degree display and touch override for inverted panels, with bounded display diagnostics. Preserve the override when installing to SD.
+- Validate the running MPC executable on overlay setups, retaining the exact supported-firmware hash and stock-file fallback.
+- Record OS 3.10 helper launch refusals in a bounded `bootstrap-result.txt` on the confirmed USB stick, preserving the original failure status.
+- Add an optional 180-degree display and touch override for inverted panels, with bounded display diagnostics and SD preference preservation.
+- Require a complete-bundle update and matching helper reimport on OS 3.10; older updaters refuse the changed helper package.
 
 ## 1.2.1 — 28-10-2026
 

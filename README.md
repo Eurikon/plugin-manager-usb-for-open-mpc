@@ -20,21 +20,15 @@ Stock Gen2 OS 3.9.1 and 3.10 have also passed offline firmware checks; stock Gen
 One USB bundle selects the Gen1 or Gen2 runtime automatically.<br>
 Use ARM64 plugin packages on Gen2; ARMv7 packages are rejected before installation.
 
-### Updating to 1.2.2
+### Updating an existing installation
 
-This bundle changes the helper package, so existing versions need a manual update.
+Version 1.2.2 changes the helper package; older built-in updaters cannot install this change.
+Use the complete-bundle procedure, including when updating from 1.1.0 or a beta.
 
-1. Copy the complete matching bundle onto your stick, preserving preferences, history and local packages.
-2. On OS 3.10, reimport `Plugin Manager helper.xpa`, then restart the MPC application.
-3. If you use the SD copy, open the updated USB manager and choose **SETUP → Update manager** to refresh the SD installation before removing the stick.
-
-### Updating from 1.1.0 or a 1.2.0 beta
-
-Save your project and safely eject the drive before updating it on your computer.<br>
-Extract the complete matching bundle onto the existing USB stick, replacing matching application files.<br>
-Keep `plugin-history.json`, `manager-preferences.json` and your `local-plugins/` files.<br>
-On OS 3.10, reimport `Plugin Manager helper.xpa` into internal MPC Documents and restart the MPC application.<br>
-The older updater cannot replace this changed helper and bundle layout; use this complete-bundle procedure.
+1. Save your project and safely eject the drive before connecting it to your computer.
+2. Extract the new archive onto the USB root, replacing matching application files and including `.mpc-manager-id`. Preserve `plugin-history.json`, `manager-preferences.json`, `display-rotation.txt` if present, and `local-plugins/`.
+3. On OS 3.10, reimport `Plugin Manager helper.xpa` into internal MPC Documents, then restart the MPC application.
+4. If you use the SD copy, open the updated USB manager and choose **SETUP → Update manager** before removing the stick.
 
 ![Plugin Manager catalog on the MPC touchscreen](site/assets/manager-catalog.png)
 

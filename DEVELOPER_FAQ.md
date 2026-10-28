@@ -384,6 +384,11 @@ Each source has its own history, preferences and `local-plugins/` folder.
 Opening the manager records detected installations in that source's history.
 Catalog data, downloads and extracted packages remain per-opening RAM data and are discarded on exit.
 
+An optional `display-rotation.txt` in the active USB/SD manager folder accepts `180` for a picture-and-touch flip or `0` for automatic orientation.
+Reads are bounded to 64 bytes and refuse links and non-regular files.
+First SD installation copies a valid USB setting; SD updates and removal preserve that preference.
+The raw device-tree property is diagnostic only; its numeric mapping is not guessed.
+
 ### How is SD installation different from installing a plugin?
 
 `src/sd_install.cpp` installs this manager's runtime under `Plugin Manager USB/` at the selected card's root.
@@ -408,6 +413,7 @@ An eligible newer release enables **Install update**, followed by a separate dow
 An accepted update covers connected managed media while preserving user data.
 Changed helper bindings, launcher/supervisor contracts or modified owned files can require a manual update instead.
 The running process uses its existing code until the user returns to MPC and reopens the manager.
+Version 1.2.2 changes the helper package and needs a manual update; follow [Updating an existing installation](README.md#updating-an-existing-installation).
 
 The real GitHub release check and isolated update/rollback fixtures have passed.
 Applying a genuinely newer public release on hardware remains pending because there was no newer published release during these checks.
@@ -482,10 +488,6 @@ No supplied plugin package is copied into public source or a manager release.
 Offline evaluation checks package rejection, installation/removal, inventory,
 navigation and session recovery with mocked downloads and device services.
 Record executed checks, input hashes, skipped cases and retained results.
-An optional `display-rotation.txt` in the active USB/SD manager folder accepts `180` for a picture-and-touch flip or `0` for automatic orientation.
-Reads are bounded to 64 bytes and refuse links and non-regular files.
-First SD installation copies a valid USB setting; SD updates and removal preserve that preference.
-The raw device-tree property is diagnostic only; its numeric mapping is not guessed.
 Settings-parser regressions must include large unrelated attributes; tiny settings fixtures do not establish real-device startup.
 Use generated values with the native structure rather than publishing a device’s private settings.
 An offline pass does not extend the recorded hardware compatibility or prove
@@ -513,7 +515,6 @@ test-mode environment settings against a real device as ordinary installation.
 | Manager update requires manual installation | Preserve existing media; inspect the reported helper/runtime compatibility failure instead of bypassing it. |
 
 The 1.2.2 helper includes a small native failure-note writer so descriptor checks, no-follow opens, locking and the 64 KiB limit are enforced without adding a runtime dependency. `bootstrap.sh` treats logging as best effort and preserves the original error and exit code.
-Replacing the helper requires a one-time import of the matching `Plugin Manager helper.xpa`; the existing updater deliberately rejects changed helper components.
 
 Package subprocesses have a 180-second deadline and a 512 MiB output-file size
 limit. Failure messages distinguish rejection before scripts run, potentially
