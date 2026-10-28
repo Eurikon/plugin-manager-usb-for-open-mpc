@@ -27,14 +27,24 @@ int main() {
         check(pmu_helper_directory_valid("/sdcard/MPC Documents/Devices/Plugin Manager helper"),"Gen 1 internal helper location accepted");
         for(const char* path:{"/media/USB/MPC Documents/Devices/Plugin Manager helper","/nvme/../MPC Documents/Devices/Plugin Manager helper","/nvme/MPC Documents/Devices/Other helper","nvme/MPC Documents/Devices/Plugin Manager helper"})
             check(!pmu_helper_directory_valid(path),"unapproved helper location refused");
-        for(bool portrait:{false,true}) {
-            const DisplayGeometry display{portrait};
+        for(bool portrait:{false,true}) for(bool flipped:{false,true}) {
+            const DisplayGeometry display{portrait,flipped};
             for(const auto& point:{std::make_pair(0,0),std::make_pair(1279,799),std::make_pair(640,400)}) {
                 const auto physical=display.output(point.first,point.second);
                 check(display.input(physical.first,physical.second)==point,"display touch mapping round trip");
             }
             check(display.width()*display.height()==1280*800,"display preserves full logical canvas");
             const auto edge=display.input(-100,-100);check(edge.first>=0&&edge.first<1280&&edge.second>=0&&edge.second<800,"out-of-bounds display input is clamped");
+        }
+        {
+            std::string note;
+            check(displayFlipFromSetting("180\n",note)&&note.empty(),"display-rotation 180 flips");
+            check(!displayFlipFromSetting("0",note)&&note.empty(),"display-rotation 0 leaves the automatic choice");
+            check(!displayFlipFromSetting("",note)&&note.empty(),"empty display-rotation leaves the automatic choice");
+            check(!displayFlipFromSetting("90",note)&&!note.empty(),"unsupported display-rotation is ignored and named");
+            const DisplayGeometry upright{true,false},flipped{true,true};
+            check(flipped.input(upright.output(100,50).first,upright.output(100,50).second)==std::make_pair(1280-100,800-50),"a flipped panel turns touch by 180 degrees");
+            check(devicetreePanelRotationHex("/nonexistent/panel-rotation").empty(),"missing panel-rotation property reads as empty");
         }
         fs::create_directories(root/"bin");fs::create_directories(root/"usb");fs::create_directories(root/"synths");
         const std::string digest(64,'a'),digest64(64,'b');

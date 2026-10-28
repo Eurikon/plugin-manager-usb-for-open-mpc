@@ -218,6 +218,7 @@ Plugins installed on removable storage require that storage to remain available 
 - **No automatic opening after boot:** this is intentional. Hold **Shift + Menu for two seconds**.
 - **SD copy unavailable:** reinsert the SD card and try the shortcut again, or insert the prepared USB stick. Reinserting SD is silent.
 - **Welcome screen skipped:** open **SETUP** and enable **Show on opening**.
+- **Screen upside down (a panel mounted the other way up):** create a file named `display-rotation.txt` containing `180` on the USB stick and open the manager again; `0` or no file keeps the automatic choice. The manager's result log records the display mode and the raw `inmusic,panel-rotation` device tree value, which helps set the right default.
 - **Slow return to MAIN:** allow **30 seconds or longer** on Gen 1 hardware. Do not turn off the MPC while its application is restarting.
 - **Remove the 3.10 helper completely:** first uninstall the SD manager if present. In MPC's Browser, remove only `MPC Documents/Devices/Plugin Manager helper`, then restart normally. Keep other controller profiles in `Devices`.
 
