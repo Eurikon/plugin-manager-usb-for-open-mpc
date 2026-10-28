@@ -482,6 +482,10 @@ No supplied plugin package is copied into public source or a manager release.
 Offline evaluation checks package rejection, installation/removal, inventory,
 navigation and session recovery with mocked downloads and device services.
 Record executed checks, input hashes, skipped cases and retained results.
+An optional `display-rotation.txt` in the active USB/SD manager folder accepts `180` for a picture-and-touch flip or `0` for automatic orientation.
+Reads are bounded to 64 bytes and refuse links and non-regular files.
+First SD installation copies a valid USB setting; SD updates and removal preserve that preference.
+The raw device-tree property is diagnostic only; its numeric mapping is not guessed.
 Settings-parser regressions must include large unrelated attributes; tiny settings fixtures do not establish real-device startup.
 Use generated values with the native structure rather than publishing a device’s private settings.
 An offline pass does not extend the recorded hardware compatibility or prove
@@ -494,7 +498,7 @@ test-mode environment settings against a real device as ordinary installation.
 | Evidence or error | Check |
 | --- | --- |
 | `bootstrap-result.txt` on the confirmed USB | Helper launch refusal and exit code; safely appended up to 64 KiB. It does not capture a manager crash after launch. |
-| `manager-result.txt` on the source drive | Latest opening's log; launch failure, application stop/start and manager exit. |
+| `manager-result.txt` on the source drive | Latest opening's log; display mode/orientation, raw panel-rotation property, launch failure, application stop/start and manager exit. |
 | `shortcut-result.txt` on the source drive | Latest supervisor checkpoint; panel port, session ownership and reopen events. |
 | `/run/mpc-usb-manager-session` | Current runtime directory and selected USB or SD source path. |
 | `systemctl status mpc-usb-manager` | Transient supervisor, when a device shell is already available. |

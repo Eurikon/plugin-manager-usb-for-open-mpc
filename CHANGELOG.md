@@ -9,6 +9,7 @@
 
 - Fix a Gen2 startup crash caused by large saved settings. The settings reader now scans tags without recursive regular-expression matching.
 - Keep settings scanning linear on malformed tags to prevent startup hangs with damaged settings.
+- Add an optional 180-degree display and touch override for inverted panels, with bounded display diagnostics. Preserve the override when installing to SD.
 
 ## 1.2.1 — 28-10-2026
 
