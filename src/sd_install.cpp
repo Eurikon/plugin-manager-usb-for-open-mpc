@@ -1,5 +1,6 @@
 #include "sd_install.hpp"
 #include "startup/storage.h"
+#include "display.hpp"
 #include <algorithm>
 #include <array>
 #include <cerrno>
@@ -318,6 +319,11 @@ void SdInstaller::install(const std::string& uuid,const std::function<void(const
         saveExclusive(stage/ownerFile,owner.dump(2)+'\n');makeDirectory(stage/"local-plugins");
         if(!updating)for(const char* name:{"manager-preferences.json","plugin-history.json"})if(present(source/name)){
             const auto text=readFile(source/name,8*1024*1024);const auto parsed=Json::parse(text);need(parsed.is_object(),"Invalid saved manager data");saveExclusive(stage/name,text);
+        }
+        if(!updating && present(source/"display-rotation.txt")) {
+            std::string note;
+            const bool flipped=displayFlipFromFile((source/"display-rotation.txt").string(),note);
+            if(note.empty())saveExclusive(stage/"display-rotation.txt",flipped?"180\n":"0\n");
         }
         syncDirectory(stage/"autorun/runtime");syncDirectory(stage);unchanged(paths,source,volume);
         if(progress)progress("Activating SD installation...");

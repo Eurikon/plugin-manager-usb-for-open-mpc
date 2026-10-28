@@ -38,11 +38,14 @@ struct Screen {
     DisplayGeometry geometry{true};
     SDL_Window* window=nullptr;SDL_Renderer* renderer=nullptr;SDL_Texture* texture=nullptr;
     FT_Library library=nullptr;FT_Face face=nullptr;std::vector<uint32_t> pixels;
-    Screen(const std::string& font):pixels(1280*800,0xff181c22) {
+    Screen(const std::string& font,const std::string& usb=""):pixels(1280*800,0xff181c22) {
         SDL_SetHint(SDL_HINT_TOUCH_MOUSE_EVENTS,"0");
         if(SDL_Init(SDL_INIT_VIDEO|SDL_INIT_TIMER)!=0) throw std::runtime_error(SDL_GetError());
         SDL_DisplayMode mode{};
         if(SDL_GetCurrentDisplayMode(0,&mode)==0&&mode.w>0&&mode.h>0)geometry.portrait=mode.h>mode.w;
+        std::string flipNote;
+        if(!usb.empty())geometry.flipped=displayFlipFromFile(usb+"/display-rotation.txt",flipNote);
+        std::fprintf(stderr,"Display: mode %dx%d, portrait=%d, flipped=%d, devicetree panel-rotation=[%s]%s%s\n",mode.w,mode.h,int(geometry.portrait),int(geometry.flipped),devicetreePanelRotationHex().c_str(),flipNote.empty()?"":"; ",flipNote.c_str());
         window=SDL_CreateWindow("MPC PLUGIN INSTALLER",SDL_WINDOWPOS_UNDEFINED,SDL_WINDOWPOS_UNDEFINED,geometry.width(),geometry.height(),SDL_WINDOW_FULLSCREEN_DESKTOP);
         if(!window)throw std::runtime_error(SDL_GetError());
         renderer=SDL_CreateRenderer(window,-1,0);if(!renderer)throw std::runtime_error(SDL_GetError());
@@ -114,7 +117,7 @@ struct Screen {
         }
         if(row<lines)text(x,y+row*(size+7),line,color,size,width);
     }
-    void present(){SDL_UpdateTexture(texture,nullptr,pixels.data(),1280*4);SDL_RenderClear(renderer);if(geometry.portrait){SDL_Rect destination{-240,240,1280,800};SDL_RenderCopyEx(renderer,texture,nullptr,&destination,270,nullptr,SDL_FLIP_NONE);}else SDL_RenderCopy(renderer,texture,nullptr,nullptr);SDL_RenderPresent(renderer);}
+    void present(){SDL_UpdateTexture(texture,nullptr,pixels.data(),1280*4);SDL_RenderClear(renderer);if(geometry.portrait){SDL_Rect destination{-240,240,1280,800};SDL_RenderCopyEx(renderer,texture,nullptr,&destination,geometry.flipped?90:270,nullptr,SDL_FLIP_NONE);}else if(geometry.flipped)SDL_RenderCopyEx(renderer,texture,nullptr,nullptr,180,nullptr,SDL_FLIP_NONE);else SDL_RenderCopy(renderer,texture,nullptr,nullptr);SDL_RenderPresent(renderer);}
 };
 static std::string storageSize(uint64_t bytes) {
     std::ostringstream value;const bool gigabytes=bytes>=1024ULL*1024*1024;
@@ -126,7 +129,7 @@ static int app(int argc,char**argv) {
 #ifdef MPC_MANAGER_PLUGIN_STORAGE_FIXTURE
     storagePaths=pluginStorageFixture(argv[2],argv[4],std::getenv("MPC_MANAGER_UI_TEST")&&std::string(std::getenv("MPC_MANAGER_UI_TEST"))=="plugin-location-blocked");
 #endif
-    Manager manager(argv[1],argv[2],argv[3],argv[4],managerArchitecture(),storagePaths);bool dark=false;try{dark=manager.darkTheme();}catch(const std::exception& e){std::fprintf(stderr,"Theme preference: %s\n",e.what());}Theme::set(dark);Screen screen(argv[5]);
+    Manager manager(argv[1],argv[2],argv[3],argv[4],managerArchitecture(),storagePaths);bool dark=false;try{dark=manager.darkTheme();}catch(const std::exception& e){std::fprintf(stderr,"Theme preference: %s\n",e.what());}Theme::set(dark);Screen screen(argv[5],argv[1]);
     auto labelWidth=[&](const std::string& label,int size){int width=0;FT_Set_Pixel_Sizes(screen.face,0,size);for(unsigned char letter:label)if(!FT_Load_Char(screen.face,letter,FT_LOAD_DEFAULT))width+=screen.face->glyph->advance.x>>6;return width;};
     const int setupWidth=12+24+12+labelWidth("SETUP",23)+12,setupX=1252-setupWidth;
     const int themeWidth=16+24+12+std::max(labelWidth("Light",25),labelWidth("Dark",25))+12,themeX=995-themeWidth;
