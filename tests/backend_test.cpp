@@ -130,7 +130,7 @@ static void managerStageChecks(Manager& manager) {
 static void taggedReleaseChecks(Manager& manager) {
     const auto catalog=manager.catalog;auto item=catalog.at(0);
     const std::string repo="test-owner/mixed-releases",tagPrefix="plugin-g2-v",assetPrefix="Plugin-G2-";
-    const auto version=item.at("version").get<std::string>();const auto tag=tagPrefix+version;const auto name=assetPrefix+version+"-mpc-armv7.zip";
+    const auto version=item.at("version").get<std::string>();const auto tag=tagPrefix+version;const auto name=assetPrefix+version+"-mpc-"+manager.arch+".zip";const std::string otherArch=manager.arch=="aarch64"?"armv7":"aarch64";
     const auto endpoint="https://api.github.com/repos/"+repo+"/releases/tags/"+tag;
     auto urlFor=[&](const std::string& releaseTag,const std::string& file){return "https://github.com/"+repo+"/releases/download/"+releaseTag+"/"+file;};
     auto packageUrl=[&](const std::string& file){return urlFor(tag,file);};
@@ -146,8 +146,11 @@ static void taggedReleaseChecks(Manager& manager) {
         const auto bogusTag=tagPrefix+"999.0.0";manager.catalog[0]["url"]=urlFor(bogusTag,name); // every other field consistent with the bogus tag, so only the tag check can reject
         verify(releaseFor(bogusTag,name),false,"a release whose tag is not prefix plus the catalog version is rejected even when its package URL matches the catalog");
         manager.catalog[0]["url"]=packageUrl(name);
-        const auto other="Other-"+version+"-mpc-armv7.zip";manager.catalog[0]["url"]=packageUrl(other);
+        const auto other="Other-"+version+"-mpc-"+manager.arch+".zip";manager.catalog[0]["url"]=packageUrl(other);
         verify(releaseFor(tag,other),false,"a package that is not named prefix plus version plus -mpc-<arch>.zip is rejected even when everything else matches");
+        manager.catalog[0]["url"]=packageUrl(name);
+        const auto wrongArch=assetPrefix+version+"-mpc-"+otherArch+".zip";manager.catalog[0]["url"]=packageUrl(wrongArch);
+        verify(releaseFor(tag,wrongArch),false,"the other generation's package is not accepted on this one");
         manager.catalog[0]["url"]=packageUrl(name);
         auto draft=releaseFor(tag,name);draft["prerelease"]=true;verify(draft,false,"a pre-release is not offered");
     } catch(...) {manager.catalog=catalog;save(wget,originalWget);throw;}
@@ -246,6 +249,7 @@ int main(){try{
     const auto supplied=fs::directory_iterator(manager.session/("local-"+local[0].at("sha").get<std::string>()))->path();
     latestReleaseChecks(manager,primary,fixture.at("older_version"),supplied/primary.at("folder").get<std::string>()/primary.at("so").get<std::string>());
     taggedReleaseChecks(manager);
+    {Manager otherGeneration(manager.usb,manager.session,manager.synths,manager.settings,manager.arch=="aarch64"?"armv7":"aarch64");otherGeneration.catalog=manager.catalog;taggedReleaseChecks(otherGeneration);}
     std::vector<std::string> stages;manager.install(local[0],[&](const std::string& text){stages.push_back(text);});check(stages.size()==4&&stages[2].find("compatibility")!=std::string::npos&&stages[3].find("Installing")!=std::string::npos,"validation precedes installation status");check(manager.list("installed").size()==1,"local install appears in installed view");
     check(fs::exists(registry/"uninstall.sh"),"persistent uninstall record retained");
     const auto folder=manager.synths/local[0].at("skin").get<std::string>();const bool skinManifest=fs::is_regular_file(folder/"mpc-plugin.json");
