@@ -338,7 +338,7 @@ static int app(int argc,char**argv) {
             screen.icon(92,527,Icon::Grid,Theme::red);screen.text(134,551,"Or install \"" MPC_PM_NAME "\" instead",Theme::ink,26);
             screen.wrapped(134,585,"Manage catalog plugins from a plugin track in MPC.",790,1,Theme::muted,22);
             screen.button(958,538,230,welcomeOffer.value("label","Install"),false,!offerPending&&!mutating&&welcomeOffer.value("allowed",false),Icon::Right);
-            if(!mutating&&!welcomeOffer.value("allowed",false)&&welcomeOffer.value("label","")=="Installed")screen.text(134,610,welcomeOffer.value("reason",""),Theme::muted,19,790);
+            if(!mutating&&!welcomeOffer.value("allowed",false)&&(welcomeOffer.value("label","")=="Installed"||welcomeOffer.value("label","")=="Unavailable"))screen.text(134,610,welcomeOffer.value("reason",""),Theme::muted,19,790);
             screen.box(64,634,30,30,hideNext?Theme::red:Theme::panel);if(hideNext)screen.icon(67,637,Icon::Check,Theme::white);
             screen.text(110,658,"Hide message",mutating?Theme::muted:Theme::ink,25);
             screen.button(64,680,270,"Return to MPC",false,!mutating,Icon::Return);

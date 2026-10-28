@@ -156,6 +156,20 @@ static void taggedReleaseChecks(Manager& manager) {
     } catch(...) {manager.catalog=catalog;save(wget,originalWget);throw;}
     manager.catalog=catalog;save(wget,originalWget);for(const auto& file:{response,calls})fs::remove(file);
 }
+// A Gen 2 manager that has no plugin location yet (MPC has no content drive set, so automatic selection fails): the
+// welcome-screen option must be disabled with the reason, not enabled and then fail when tapped.
+static void noLocationOfferChecks(Manager& manager) {
+    auto item=manager.catalog.at(0);
+    {const auto offer=manager.installationOffer(item);check(offer.at("allowed").get<bool>(),"an offer is allowed when the manager has a plugin location");}
+    const fs::path emptySettings=manager.session/"no-location-settings.xml";save(emptySettings,"<PROPERTIES/>");
+    Manager gen2(manager.usb,manager.session/"no-location",std::string("auto"),emptySettings,"aarch64");
+    gen2.catalog={item};
+    const auto offer=gen2.installationOffer(item);
+    check(!offer.at("allowed").get<bool>()&&offer.at("label")=="Unavailable"&&offer.at("reason").get<std::string>().find("SETUP")!=std::string::npos,"a Gen 2 manager with no plugin location disables the offer and says to choose one in SETUP");
+    bool refused=false;try{gen2.installLatestPlugin(item.at("id").get<std::string>(),ReleaseSource("test-owner/mixed-releases","plugin-g2-v","Plugin-G2-"));}catch(const std::exception& error){refused=std::string(error.what()).find("SETUP")!=std::string::npos;}
+    check(refused,"installing without a plugin location is refused before any request, naming SETUP");
+    fs::remove(emptySettings);
+}
 static void latestReleaseChecks(Manager& manager,const Json& primary,const Json& olderVersion,const fs::path& library) {
     const auto catalog=manager.catalog;auto item=catalog.at(0);
     auto repo=primary.value("source_repo","");if(!std::regex_match(repo,std::regex("[A-Za-z0-9][A-Za-z0-9-]*/[A-Za-z0-9][A-Za-z0-9_.-]*")))repo="test-owner/test-repository";
@@ -248,6 +262,7 @@ int main(){try{
     check(local[0].at("id")==id,"local manifest identity matches supplied package");
     const auto supplied=fs::directory_iterator(manager.session/("local-"+local[0].at("sha").get<std::string>()))->path();
     latestReleaseChecks(manager,primary,fixture.at("older_version"),supplied/primary.at("folder").get<std::string>()/primary.at("so").get<std::string>());
+    noLocationOfferChecks(manager);
     taggedReleaseChecks(manager);
     {Manager otherGeneration(manager.usb,manager.session,manager.synths,manager.settings,manager.arch=="aarch64"?"armv7":"aarch64");otherGeneration.catalog=manager.catalog;taggedReleaseChecks(otherGeneration);}
     std::vector<std::string> stages;manager.install(local[0],[&](const std::string& text){stages.push_back(text);});check(stages.size()==4&&stages[2].find("compatibility")!=std::string::npos&&stages[3].find("Installing")!=std::string::npos,"validation precedes installation status");check(manager.list("installed").size()==1,"local install appears in installed view");

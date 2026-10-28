@@ -531,6 +531,7 @@ Json Manager::installationOffer(const Json& item) {
         catch(const std::exception&){return offer("Installed",false,"Already installed; its release version cannot be compared");}
     }
     const auto blocked=catalogBlock(item);if(!blocked.empty())return offer("Unavailable",false,blocked);
+    if(nativePluginStorage&&synths.empty())return offer("Unavailable",false,"Choose a plugin installation location in SETUP first.");
     return offer(found?"Update":"Install",true,{});
 }
 void Manager::installLatestPlugin(const std::string& id,const ReleaseSource& source,const std::function<void(const std::string&)>& progress,const std::function<void(float)>& amount) {
