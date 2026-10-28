@@ -96,13 +96,13 @@ Wait for MPC to finish reopening; **do not turn off your device during this tran
 | **Catalog and local plugins** | Explains online browsing and offline ZIP installation from the selected USB or SD source. |
 | **Come back whenever you need** | Shows the two-second **Shift + Menu** shortcut. Keep the source drive inserted. |
 | **Plugin Manager on SD → Setup** | Opens SD installation, welcome preferences and manager updates. |
-| **Or install "poloq Plugin Manager" instead** | Offers an optional manager that runs on an MPC plugin track. |
+| **Or install "Plugin Manager G2" instead** | Offers an optional manager that runs on an MPC plugin track. |
 | **Hide message** | Skips this welcome screen on later openings from this source. Restore it in **SETUP → Show on opening**. |
 | **Browse plugins** | Opens the catalog without leaving the manager. |
 | **Return to MPC** | Closes the manager and restarts the MPC application. |
 | **Sun / moon** | Switches between light and dark themes. The label names the theme you will switch to. |
 
-The welcome screen also offers **poloq Plugin Manager**, which runs on an MPC track.<br>
+The welcome screen also offers **Plugin Manager G2**, an optional manager that runs on an MPC plugin track (Gen 1 and Gen 2). It is poloq's Plugin Manager (MIT) with Gen 2 support, installed from the catalog; the manager finds its release by the tag `plugin-manager-g2-v<version>` and the file `Plugin-Manager-G2-<version>-mpc-<armv7|aarch64>.zip`, not by the repository's latest release, and checks the size and SHA-256 against the catalog.<br>
 Its button offers **Install** when absent, or **Update** when an older, known release is installed in the selected plugin location.<br>
 **Installed** is disabled for equal, newer or unknown versions and installations outside that location.<br>
 The regular catalog still allows deliberate reinstallation.<br>

@@ -1,4 +1,5 @@
 #pragma once
+#include <utility>
 #include <nlohmann/json.hpp>
 #include "platform.hpp"
 #include "plugin_storage.hpp"
@@ -9,6 +10,14 @@
 #include <cstdint>
 namespace fs = std::filesystem;
 using Json = nlohmann::json;
+// Where a plugin is released. With an empty tagPrefix the release is the repository's latest one (poloq's layout: one
+// plugin per repository). With a tagPrefix the release is the tag tagPrefix + <catalog version>, for a repository that
+// publishes other releases too, and assetPrefix (when set) is the start of the package's exact file name.
+struct ReleaseSource {
+    std::string repo, tagPrefix, assetPrefix;
+    ReleaseSource(std::string repository, std::string tags = {}, std::string assets = {}) : repo(std::move(repository)), tagPrefix(std::move(tags)), assetPrefix(std::move(assets)) {}
+    ReleaseSource(const char* repository) : repo(repository) {}
+};
 struct Manager {
     fs::path usb, session, synths, settings;
     std::vector<Json> catalog;
@@ -21,9 +30,9 @@ struct Manager {
     void openCatalog();
     Json checkManagerUpdate();
     Json stageManagerUpdate(const Json& checkedRelease, const std::function<void(const std::string&)>& progress = {}, const std::function<void(float)>& amount = {});
-    void verifyLatestPlugin(const std::string& id, const std::string& repo);
+    void verifyLatestPlugin(const std::string& id, const ReleaseSource& source);
     Json installationOffer(const Json& item);
-    void installLatestPlugin(const std::string& id, const std::string& repo, const std::function<void(const std::string&)>& progress = {}, const std::function<void(float)>& amount = {});
+    void installLatestPlugin(const std::string& id, const ReleaseSource& source, const std::function<void(const std::string&)>& progress = {}, const std::function<void(float)>& amount = {});
     std::vector<Json> list(const std::string& view);
     void install(const Json& item, const std::function<void(const std::string&)>& progress = {}, const std::function<void(float)>& amount = {});
     void remove(const Json& item);
