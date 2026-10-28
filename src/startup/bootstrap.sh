@@ -39,19 +39,6 @@ case "$(uname -m)" in
 esac
 
 fail() { printf '%s\n' "$1" >&2; exit "$2"; }
-# The helper's native code is bound to the MPC executable that is running, which is not always the file at $MPC: on an
-# overlay (a newer app bind-mounted into the MPC service only) the file on disk is the older firmware. Prefer the running
-# process's own executable, and fall back to $MPC when none can be found (an unchanged stock device).
-running_mpc() {
-    for pid in $(pidof MPC 2>/dev/null); do
-        case "$pid" in ''|*[!0-9]*) continue ;; esac
-        [ -d "$PROC/$pid" ] && [ "$(stat -c %u "$PROC/$pid")" = "$OWNER_UID" ] || continue
-        [ -r "$PROC/$pid/exe" ] || continue
-        printf '%s\n' "$PROC/$pid/exe"
-        return 0
-    done
-    return 1
-}
 regular_source() {
     [ -f "$1" ] && [ ! -L "$1" ] || return 1
     [ "$(stat -c %u "$1")" = "$OWNER_UID" ] || return 1
@@ -98,6 +85,19 @@ STATE
         not-found:inactive:0) ;;
         *) fail 'existing manager service preserved' 14 ;;
     esac
+}
+# The helper's native code is bound to the MPC executable that is running, which is not always the file at $MPC: on an
+# overlay (a newer app bind-mounted into the MPC service only) the file on disk is the older firmware. Prefer the running
+# process's own executable, and fall back to $MPC when none can be found (an unchanged stock device).
+running_mpc() {
+    for pid in $(pidof MPC 2>/dev/null); do
+        case "$pid" in ''|*[!0-9]*) continue ;; esac
+        [ -d "$PROC/$pid" ] && [ "$(stat -c %u "$PROC/$pid")" = "$OWNER_UID" ] || continue
+        [ -r "$PROC/$pid/exe" ] || continue
+        printf '%s\n' "$PROC/$pid/exe"
+        return 0
+    done
+    return 1
 }
 mounted() {
     while read -r device point rest; do
