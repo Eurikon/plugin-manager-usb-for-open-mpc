@@ -2,8 +2,14 @@
 
 ## 1.2.2 — 28-10-2026
 
+- Validate the running MPC executable on overlay setups, retaining the exact supported-firmware hash check and the stock-file fallback when no owned MPC process is available.
+
+- Record OS 3.10 helper launch refusals in a bounded `bootstrap-result.txt` on the confirmed USB stick, preserving the original failure status.
+- This helper-package change requires copying the complete bundle; OS 3.10 users must also reimport the matching helper. Existing updater versions refuse changed helper components.
+
 - Fix a Gen2 startup crash caused by large saved settings. The settings reader now scans tags without recursive regular-expression matching.
-- Add an optional `display-rotation.txt` on the USB stick (`180` turns the picture and touch upside down; `0` or empty keeps the automatic choice) for panels mounted the other way up, such as a reported MPC XL on OS 3.9.1 that showed the manager inverted. The manager's result log now records the display mode and the raw `inmusic,panel-rotation` device tree property that MPC itself uses, so the right default can be set from real reports.
+- Keep settings scanning linear on malformed tags to prevent startup hangs with damaged settings.
+- Add an optional 180-degree display and touch override for inverted panels, with bounded display diagnostics. Preserve the override when installing to SD.
 
 ## 1.2.1 — 28-10-2026
 

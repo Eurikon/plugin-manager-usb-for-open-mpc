@@ -23,19 +23,24 @@ int main(){
             check(t.installer.targets().size()==1&&t.installer.targets()[0]["uuid"]=="1234-ABCD","mounted noexec SD selected by stable filesystem UUID");
             check(!t.installer.inspect()["configured"].get<bool>(),"new helper has no SD installation");
             sd_fixture::save(t.data.source/"manager-preferences.json","{\"schema\":1,\"dark_theme\":true}\n");
+            sd_fixture::save(t.data.source/"display-rotation.txt","180\n");
             sd_fixture::save(t.data.source/"plugin-history.json","{\"schema\":1,\"plugins\":{}}\n");
             float progress=0;t.installer.install("1234-ABCD",{},[&](float value){progress=value;});
             check(progress==1&&t.installer.inspect()["installed"].get<bool>(),"verified installation activates selected card");
             check(t.data.target==t.data.card/"Plugin Manager USB"&&!fs::exists(t.data.card/"OPEN MPC"),"manager installs directly at card root without an extra parent folder");
             check(sd_fixture::text(t.data.paths.helper/"installed-storage")=="open-mpc-manager-storage-v1\n1234-ABCD\n","helper activation uses exact agreed configuration");
             check(sd_fixture::text(t.data.target/"manager-preferences.json")==sd_fixture::text(t.data.source/"manager-preferences.json"),"first installation copies saved preferences");
+            check(sd_fixture::text(t.data.target/"display-rotation.txt")=="180\n","first SD installation copies the display orientation");
+            sd_fixture::save(t.data.target/"display-rotation.txt","0\n");
             sd_fixture::save(t.data.target/"local-plugins/user.zip","user package");sd_fixture::save(t.data.target/"user.txt","unrelated file");sd_fixture::save(t.data.target/"manager-preferences.json","{\"user\":true}\n");
             t.installer.install("1234-ABCD");
             check(sd_fixture::text(t.data.target/"manager-preferences.json")=="{\"user\":true}\n"&&fs::exists(t.data.target/"local-plugins/user.zip"),"reinstallation preserves SD preferences and local packages");
+            check(sd_fixture::text(t.data.target/"display-rotation.txt")=="0\n","SD update preserves its own display orientation");
             SdInstaller current(t.data.target,t.data.session,t.data.paths);check(current.inspect()["current"].get<bool>(),"installed runtime identifies current source");
             current.remove();
             check(!fs::exists(t.data.target/".mpc-manager-id")&&!fs::exists(t.data.target/"autorun/runtime")&&!fs::exists(t.data.paths.helper/"installed-storage"),"removal disables registration and removes only owned runtime");
             check(fs::exists(t.data.target/"manager-preferences.json")&&fs::exists(t.data.target/"plugin-history.json")&&fs::exists(t.data.target/"local-plugins/user.zip")&&fs::exists(t.data.target/"user.txt"),"removal preserves settings history local packages and unrelated files");
+            check(sd_fixture::text(t.data.target/"display-rotation.txt")=="0\n","SD removal preserves the display preference");
             t.installer.install("1234-ABCD");check(t.installer.inspect()["installed"].get<bool>(),"removed SD installation can be reinstalled");
         }
         {

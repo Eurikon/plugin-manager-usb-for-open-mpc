@@ -46,6 +46,19 @@ int main() {
             check(flipped.input(upright.output(100,50).first,upright.output(100,50).second)==std::make_pair(1280-100,800-50),"a flipped panel turns touch by 180 degrees");
             check(devicetreePanelRotationHex("/nonexistent/panel-rotation").empty(),"missing panel-rotation property reads as empty");
         }
+        {
+            const auto path=root/"display-rotation.txt";
+            std::string note="old diagnostic";
+            check(!displayFlipFromFile(path.string(),note)&&note.empty(),"missing rotation file keeps automatic orientation");
+            save(path,"180\r\n");check(displayFlipFromFile(path.string(),note)&&note.empty(),"rotation file selects picture and touch flip");
+            save(path,"90\n");check(!displayFlipFromFile(path.string(),note)&&!note.empty(),"unsupported rotation file is ignored with a diagnostic");
+            save(path,"0\n");check(!displayFlipFromFile(path.string(),note)&&note.empty(),"valid rotation clears a previous diagnostic");
+            save(path,std::string(65,' '));check(!displayFlipFromFile(path.string(),note)&&!note.empty(),"oversized rotation file is ignored");
+            fs::remove(path);fs::create_symlink("/dev/zero",path);check(!displayFlipFromFile(path.string(),note)&&!note.empty(),"rotation file never follows links");
+            fs::remove(path);check(mkfifo(path.c_str(),0600)==0,"rotation FIFO fixture created");
+            check(!displayFlipFromFile(path.string(),note)&&!note.empty(),"rotation FIFO is ignored without waiting for a writer");
+            fs::remove(path);fs::create_directory(path);check(!displayFlipFromFile(path.string(),note)&&!note.empty(),"rotation directory is ignored");fs::remove(path);
+        }
         fs::create_directories(root/"bin");fs::create_directories(root/"usb");fs::create_directories(root/"synths");
         const std::string digest(64,'a'),digest64(64,'b');
         auto row=[&](const std::string& id,bool legacy,bool modern){

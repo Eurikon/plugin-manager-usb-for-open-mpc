@@ -42,9 +42,8 @@ struct Screen {
         if(SDL_Init(SDL_INIT_VIDEO|SDL_INIT_TIMER)!=0) throw std::runtime_error(SDL_GetError());
         SDL_DisplayMode mode{};
         if(SDL_GetCurrentDisplayMode(0,&mode)==0&&mode.w>0&&mode.h>0)geometry.portrait=mode.h>mode.w;
-        std::string flipNote,flipText;
-        if(!usb.empty()){if(FILE* file=std::fopen((usb+"/display-rotation.txt").c_str(),"rb")){char buffer[64]={};const size_t count=std::fread(buffer,1,sizeof buffer-1,file);std::fclose(file);flipText.assign(buffer,count);}}
-        geometry.flipped=displayFlipFromSetting(flipText,flipNote);
+        std::string flipNote;
+        if(!usb.empty())geometry.flipped=displayFlipFromFile(usb+"/display-rotation.txt",flipNote);
         std::fprintf(stderr,"Display: mode %dx%d, portrait=%d, flipped=%d, devicetree panel-rotation=[%s]%s%s\n",mode.w,mode.h,int(geometry.portrait),int(geometry.flipped),devicetreePanelRotationHex().c_str(),flipNote.empty()?"":"; ",flipNote.c_str());
         window=SDL_CreateWindow("MPC PLUGIN INSTALLER",SDL_WINDOWPOS_UNDEFINED,SDL_WINDOWPOS_UNDEFINED,geometry.width(),geometry.height(),SDL_WINDOW_FULLSCREEN_DESKTOP);
         if(!window)throw std::runtime_error(SDL_GetError());

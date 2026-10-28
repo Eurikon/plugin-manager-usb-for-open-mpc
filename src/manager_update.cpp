@@ -22,7 +22,7 @@ namespace {
         "manager","font.ttf","launch.sh","setup.sh","shortcut","shortcut-hook.so"
     };
     const std::set<std::string> helperNames={
-        ".owner","PluginManager.xpj","bootstrap.sh","controller.ini","manager-enabled","manager-entry.so","plugin_manager.lua","runtime.sha256","sd-install-capability","manager-entry-aarch64.so","runtime-aarch64.sha256"
+        ".owner","PluginManager.xpj","bootstrap.sh","bootstrap-note","bootstrap-note-aarch64","controller.ini","manager-enabled","manager-entry.so","plugin_manager.lua","runtime.sha256","sd-install-capability","manager-entry-aarch64.so","runtime-aarch64.sha256"
     };
     constexpr const char* marker="mpc-usb-manager-v1\n";
     void need(bool value,const std::string& message){
@@ -301,9 +301,11 @@ namespace {
                 need(archive_read_data(ar,&extra,1)==0,"Manager helper size mismatch");
                 result.emplace(name,std::move(data));
             }
-            need(status==ARCHIVE_EOF&&(result.size()==9||result.size()==11),"Incomplete manager helper");
+            need(status==ARCHIVE_EOF&&(result.size()==9||result.size()==10||result.size()==11||result.size()==13),"Incomplete manager helper");
             for(const auto* name:{".owner","PluginManager.xpj","bootstrap.sh","controller.ini","manager-enabled","manager-entry.so","plugin_manager.lua","runtime.sha256","sd-install-capability"})need(result.count(name),"Incomplete manager helper");
             need(bool(result.count("manager-entry-aarch64.so"))==bool(result.count("runtime-aarch64.sha256")),"Incomplete ARM64 manager helper");
+            need(!result.count("bootstrap-note-aarch64")||(result.count("bootstrap-note")&&result.count("manager-entry-aarch64.so")),"Incomplete failure-note writer");
+            need(!result.count("bootstrap-note")||!result.count("manager-entry-aarch64.so")||result.count("bootstrap-note-aarch64"),"Missing ARM64 failure-note writer");
             archive_read_free(ar);
             return result;
         }
@@ -458,6 +460,7 @@ Json applyManagerUpdate(const fs::path& source,const fs::path& session,const Jso
         need(helper.count(manifestName)&&helper.at(manifestName)==nextManifest,"Manager helper and update runtime differ");
     }
     for(const auto& item:helper)if(hasHelper&&item.first!="runtime.sha256"&&item.first!="runtime-aarch64.sha256"&&item.first!="PluginManager.xpj"){
+        need(present(paths.helper/item.first),"Unsupported update: import the new Plugin Manager helper.xpa manually");
         owned(paths.helper/item.first,paths.owner);
         need(read(paths.helper/item.first,1024*1024)==item.second,"Unsupported update: changed native helper requires a manual update");
     }

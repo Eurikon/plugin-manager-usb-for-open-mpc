@@ -20,16 +20,18 @@ Stock Gen2 OS 3.9.1 and 3.10 have also passed offline firmware checks; stock Gen
 One USB bundle selects the Gen1 or Gen2 runtime automatically.<br>
 Use ARM64 plugin packages on Gen2; ARMv7 packages are rejected before installation.
 
-### Updating from 1.2.0
+### Updating to 1.2.2
 
-Use **SETUP → Check for updates**, then confirm **Install update**.<br>
-Alternatively, replace the application files on your stick with the complete new bundle, preserving preferences, history and local packages.<br>
-For manual replacement on OS 3.10, reimport `Plugin Manager helper.xpa` and restart the MPC application so its runtime checks match the new bundle.
+This bundle changes the helper package, so existing versions need a manual update.
+
+1. Copy the complete matching bundle onto your stick, preserving preferences, history and local packages.
+2. On OS 3.10, reimport `Plugin Manager helper.xpa`, then restart the MPC application.
+3. If you use the SD copy, open the updated USB manager and choose **SETUP → Update manager** to refresh the SD installation before removing the stick.
 
 ### Updating from 1.1.0 or a 1.2.0 beta
 
 Save your project and safely eject the drive before updating it on your computer.<br>
-Extract the complete 1.2.1 bundle onto the existing USB stick, replacing matching application files.<br>
+Extract the complete matching bundle onto the existing USB stick, replacing matching application files.<br>
 Keep `plugin-history.json`, `manager-preferences.json` and your `local-plugins/` files.<br>
 On OS 3.10, reimport `Plugin Manager helper.xpa` into internal MPC Documents and restart the MPC application.<br>
 The older updater cannot replace this changed helper and bundle layout; use this complete-bundle procedure.
@@ -155,6 +157,10 @@ The controller helper remains available for USB use; removing the SD copy does n
 Wait for MPC to reopen after uninstalling.<br>
 Do not remove the card or turn off the device during the transition.
 
+If opening briefly goes black and returns to MPC, preserve `bootstrap-result.txt` and `manager-result.txt` from the USB root for your report.<br>
+The first records why the helper refused to launch; the second can record a manager crash after launch.<br>
+These logs can be read on your computer without SSH.
+
 ## Find, Update and Remove Plugins
 
 | Tab | Use it for |
@@ -218,7 +224,7 @@ Plugins installed on removable storage require that storage to remain available 
 - **No automatic opening after boot:** this is intentional. Hold **Shift + Menu for two seconds**.
 - **SD copy unavailable:** reinsert the SD card and try the shortcut again, or insert the prepared USB stick. Reinserting SD is silent.
 - **Welcome screen skipped:** open **SETUP** and enable **Show on opening**.
-- **Screen upside down (a panel mounted the other way up):** create a file named `display-rotation.txt` containing `180` on the USB stick and open the manager again; `0` or no file keeps the automatic choice. The manager's result log records the display mode and the raw `inmusic,panel-rotation` device tree value, which helps set the right default.
+- **Screen upside down:** create `display-rotation.txt` containing `180` in the manager’s folder on the USB stick or SD card, then reopen it. `0` or no file keeps the automatic orientation. A first SD installation copies the USB setting. The result log records display details for diagnosis.
 - **Slow return to MAIN:** allow **30 seconds or longer** on Gen 1 hardware. Do not turn off the MPC while its application is restarting.
 - **Remove the 3.10 helper completely:** first uninstall the SD manager if present. In MPC's Browser, remove only `MPC Documents/Devices/Plugin Manager helper`, then restart normally. Keep other controller profiles in `Devices`.
 
