@@ -1,5 +1,6 @@
 #include "plugin_storage.hpp"
 #include <algorithm>
+#include <cctype>
 #include <cerrno>
 #include <fcntl.h>
 #include <fstream>
@@ -23,16 +24,43 @@ std::string decode(std::string value){
 }
 std::string encode(const std::string& value){std::string result;for(char c:value){if(c=='&')result+="&amp;";else if(c=='<')result+="&lt;";else if(c=='>')result+="&gt;";else if(c=='\"')result+="&quot;";else result+=c;}return result;}
 struct Value {size_t begin,end;std::string tag;};
+// Attributes of one <VALUE ...> tag, `name = "value"` or `name = 'value'`, scanned by hand. MPC's own settings carry
+// single attributes tens of thousands of characters long (a Live III's defaultProgramPads is ~44 KB), and std::regex
+// recurses once per matched character, so a regex here overflows the stack and the manager segfaults at start.
+std::map<std::string,std::string> tagAttributes(const std::string& text){
+    std::map<std::string,std::string> attrs;
+    auto space=[&](size_t at){while(at<text.size()&&std::isspace(static_cast<unsigned char>(text[at])))++at;return at;};
+    auto nameChar=[](char c){return std::isalnum(static_cast<unsigned char>(c))||c=='_'||c=='.'||c=='-';};
+    for(size_t at=0;at<text.size();){
+        if(!std::isalpha(static_cast<unsigned char>(text[at]))){++at;continue;}
+        size_t end=at;while(end<text.size()&&nameChar(text[end]))++end;
+        size_t cursor=space(end);
+        if(cursor<text.size()&&text[cursor]=='='){
+            cursor=space(cursor+1);
+            if(cursor<text.size()&&(text[cursor]=='"'||text[cursor]=='\'')){
+                const size_t close=text.find(text[cursor],cursor+1);
+                if(close!=std::string::npos){need(attrs.emplace(text.substr(at,end-at),decode(text.substr(cursor+1,close-cursor-1))).second,"Duplicate settings attribute");at=close+1;continue;}
+            }
+        }
+        ++at;
+    }
+    return attrs;
+}
 Value property(const std::string& xml,const std::string& name){
-    const std::regex tag("<VALUE\\b[^>]*>"),attribute("([A-Za-z][A-Za-z0-9_.-]*)\\s*=\\s*([\"'])(.*?)\\2");Value result{std::string::npos,0,{}};
-    for(std::sregex_iterator it(xml.begin(),xml.end(),tag),end;it!=end;++it){
-        const std::string text=it->str();std::map<std::string,std::string> attrs;
-        for(std::sregex_iterator at(text.begin(),text.end(),attribute);at!=end;++at)need(attrs.emplace((*at)[1].str(),decode((*at)[3])).second,"Duplicate settings attribute");
-        if(attrs["name"]!=name)continue;
+    Value result{std::string::npos,0,{}};
+    for(size_t from=0;(from=xml.find("<VALUE",from))!=std::string::npos;){
+        const size_t after=from+6;
+        if(after<xml.size()&&(std::isalnum(static_cast<unsigned char>(xml[after]))||xml[after]=='_')){from=after;continue;} // "<VALUE" must end a word, like \b
+        const size_t gt=xml.find('>',after);if(gt==std::string::npos)break;
+        const std::string text=xml.substr(from,gt-from+1);
+        const auto attrs=tagAttributes(text);
+        const auto named=attrs.find("name");
+        if(named==attrs.end()||named->second!=name){from=gt+1;continue;}
         need(result.begin==std::string::npos,"Duplicate "+name+" setting");
-        const auto start=size_t(it->position()),close=text.size()>1&&text[text.size()-2]=='/'?start+text.size():xml.find("</VALUE>",start+text.size());
+        const auto start=from,close=text.size()>1&&text[text.size()-2]=='/'?start+text.size():xml.find("</VALUE>",start+text.size());
         need(close!=std::string::npos,"Invalid "+name+" setting");
         result={start,text.size()>1&&text[text.size()-2]=='/'?close:close+8,text};
+        from=gt+1;
     }
     return result;
 }

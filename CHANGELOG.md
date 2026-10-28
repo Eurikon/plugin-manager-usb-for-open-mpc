@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Fix a crash at start on real Gen 2 `MPC.settings`: the settings reader scanned every `<VALUE ...>` tag with `std::regex`, whose matcher recurses once per matched character, so a single attribute tens of thousands of characters long (a Live III's `defaultProgramPads` is about 44 KB) overflowed the stack and the manager segfaulted before drawing anything. The scan is now a plain string scanner with the same behaviour, with a regression test using a 400,000-character attribute.
+
 ## 1.2.1 — 28-10-2026
 
 - Follow the Gen2 MPC content-download drive preference for automatic plugin installation, using the mounted drive’s `Synths` folder instead of a guessed `/nvme/Synths` fallback.
