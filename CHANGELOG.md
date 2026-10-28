@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.2.2 — 28-10-2026
+
+- Fix a Gen2 startup crash caused by large saved settings. The settings reader now scans tags without recursive regular-expression matching.
+
 ## 1.2.1 — 28-10-2026
 
 - Follow the Gen2 MPC content-download drive preference for automatic plugin installation, using the mounted drive’s `Synths` folder instead of a guessed `/nvme/Synths` fallback.
