@@ -23,7 +23,7 @@ class FailureNoteTests(unittest.TestCase):
         self.helper = Path(self.temporary.name) / "helper"
         self.helper.mkdir()
         subprocess.run(["cc", "-std=c11", "-O2", "-Wall", "-Wextra", "-Werror",
-                        "-DPMU_NOTE_MEDIA=" + json.dumps(str(self.media)),
+                        *shlex.split(os.environ.get("CFLAGS", "")), "-DPMU_NOTE_MEDIA=" + json.dumps(str(self.media)),
                         str(ROOT / "src/startup/bootstrap_note.c"), "-o", str(self.helper / "bootstrap-note")],
                        check=True, capture_output=True, text=True)
 

@@ -13,6 +13,7 @@ UUIDS='/dev/disk/by-uuid'
 INTERNAL='/sdcard'
 SD_SUFFIX='/Plugin Manager USB'
 RUN='/run'
+PROC='/proc'
 RAM_TEMPLATE='/tmp/mpc-usb-session.XXXXXX'
 USB_WAIT=20
 READY_WAIT=15
@@ -92,6 +93,17 @@ STATE
         not-found:inactive:0) ;;
         *) fail 'existing manager service preserved' 14 ;;
     esac
+}
+# The bootstrap service may see the stock file while MPC sees an application overlay.
+running_mpc() {
+    for pid in $(pidof MPC 2>/dev/null); do
+        case "$pid" in ''|*[!0-9]*) continue ;; esac
+        [ -d "$PROC/$pid" ] && [ "$(stat -c %u "$PROC/$pid")" = "$OWNER_UID" ] || continue
+        [ -r "$PROC/$pid/exe" ] || continue
+        printf '%s\n' "$PROC/$pid/exe"
+        return 0
+    done
+    return 1
 }
 mounted() {
     while read -r device point rest; do
@@ -278,7 +290,8 @@ done
 ! IFS= read -r entry <&3 || fail 'extra manifest entry' 11
 exec 3<&-
 [ "$(wc -c < "$SOURCE/$MANIFEST")" = "$bytes" ] || fail 'extra manifest content' 11
-actual=$(sha256sum "$MPC" 2>/dev/null) || fail 'firmware unavailable' 10
+firmware=$(running_mpc) || firmware=$MPC
+actual=$(sha256sum "$firmware" 2>/dev/null) || fail 'firmware unavailable' 10
 [ "${actual%% *}" = "$EXPECTED" ] || fail 'unsupported firmware' 10
 idle_session
 [ -r "$MOUNTS" ] || fail 'mount inventory unavailable' 13

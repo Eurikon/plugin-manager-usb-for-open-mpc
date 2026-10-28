@@ -482,6 +482,8 @@ No supplied plugin package is copied into public source or a manager release.
 Offline evaluation checks package rejection, installation/removal, inventory,
 navigation and session recovery with mocked downloads and device services.
 Record executed checks, input hashes, skipped cases and retained results.
+Settings-parser regressions must include large unrelated attributes; tiny settings fixtures do not establish real-device startup.
+Use generated values with the native structure rather than publishing a device’s private settings.
 An offline pass does not extend the recorded hardware compatibility or prove
 physical display/touch behavior, actual USB prompt behavior or hardware CPU
 performance. Record those separately against the installed artifact. Never run
