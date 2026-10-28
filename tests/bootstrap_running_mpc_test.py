@@ -2,6 +2,7 @@ import os
 from pathlib import Path
 import re
 import stat
+import sys
 import subprocess
 import tempfile
 import unittest
@@ -20,6 +21,12 @@ class RunningMpcTests(unittest.TestCase):
         self.proc.mkdir()
         self.bin = self.root / "bin"
         self.bin.mkdir()
+        if sys.platform == "darwin":
+            checker = self.bin / "stat"
+            checker.write_text(f"#!{sys.executable}\nimport os, sys\n"
+                               "if sys.argv[1:3] != ['-c', '%u'] or len(sys.argv) != 4: raise SystemExit(2)\n"
+                               "print(os.stat(sys.argv[3]).st_uid)\n")
+            checker.chmod(0o755)
 
     def fake_pidof(self, output):
         script = self.bin / "pidof"
@@ -53,6 +60,12 @@ class RunningMpcTests(unittest.TestCase):
         self.process(99)
         result = self.run_function()
         self.assertEqual(result.stdout.strip(), f"{self.proc}/99/exe")
+
+    def test_a_process_without_an_executable_is_skipped(self):
+        self.fake_pidof("7 99")
+        (self.proc / "7").mkdir()
+        self.process(99)
+        self.assertEqual(self.run_function().stdout.strip(), f"{self.proc}/99/exe")
 
     def test_a_process_owned_by_someone_else_is_ignored(self):
         self.fake_pidof("5")

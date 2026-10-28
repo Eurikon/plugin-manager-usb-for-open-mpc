@@ -482,6 +482,8 @@ No supplied plugin package is copied into public source or a manager release.
 Offline evaluation checks package rejection, installation/removal, inventory,
 navigation and session recovery with mocked downloads and device services.
 Record executed checks, input hashes, skipped cases and retained results.
+Settings-parser regressions must include large unrelated attributes; tiny settings fixtures do not establish real-device startup.
+Use generated values with the native structure rather than publishing a device’s private settings.
 An offline pass does not extend the recorded hardware compatibility or prove
 physical display/touch behavior, actual USB prompt behavior or hardware CPU
 performance. Record those separately against the installed artifact. Never run
@@ -491,6 +493,7 @@ test-mode environment settings against a real device as ordinary installation.
 
 | Evidence or error | Check |
 | --- | --- |
+| `bootstrap-result.txt` on the confirmed USB | Helper launch refusal and exit code; safely appended up to 64 KiB. It does not capture a manager crash after launch. |
 | `manager-result.txt` on the source drive | Latest opening's log; launch failure, application stop/start and manager exit. |
 | `shortcut-result.txt` on the source drive | Latest supervisor checkpoint; panel port, session ownership and reopen events. |
 | `/run/mpc-usb-manager-session` | Current runtime directory and selected USB or SD source path. |
@@ -504,6 +507,9 @@ test-mode environment settings against a real device as ordinary installation.
 | No first-use USB prompt on 3.10 | Import the helper into internal MPC Documents and restart the MPC application; legacy autorun alone does not provide this route. |
 | No interface after boot or SD reinsertion | Intentional quiet startup; use the two-second Shift + Menu shortcut. |
 | Manager update requires manual installation | Preserve existing media; inspect the reported helper/runtime compatibility failure instead of bypassing it. |
+
+The 1.2.2 helper includes a small native failure-note writer so descriptor checks, no-follow opens, locking and the 64 KiB limit are enforced without adding a runtime dependency. `bootstrap.sh` treats logging as best effort and preserves the original error and exit code.
+Replacing the helper requires a one-time import of the matching `Plugin Manager helper.xpa`; the existing updater deliberately rejects changed helper components.
 
 Package subprocesses have a 180-second deadline and a 512 MiB output-file size
 limit. Failure messages distinguish rejection before scripts run, potentially

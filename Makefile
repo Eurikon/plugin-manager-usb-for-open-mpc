@@ -47,6 +47,7 @@ test-local:
 	$(PYTHON) -m unittest discover -s tests -p launch_test.py
 	$(PYTHON) -m unittest discover -s tests -p bootstrap_running_mpc_test.py
 	$(PYTHON) -m unittest discover -s tests -p startup_package_test.py
+	$(PYTHON) -m unittest discover -s tests -p bootstrap_failure_note_test.py
 
 site:
 	$(PYTHON) tools/build_site.py

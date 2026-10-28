@@ -59,6 +59,7 @@ class StartupPackageTests(unittest.TestCase):
         (self.root / "build/startup").mkdir()
         self.module = self.root / "build/startup/manager-entry.so"
         self.module.write_bytes(module)
+        (self.root / "build/startup/bootstrap-note").write_bytes(module)
         self.project = self.root / "blank.xpj"
         self.project.write_bytes(project())
         self.seed_reader = HELPER.profile_seed
@@ -137,6 +138,7 @@ class StartupPackageTests(unittest.TestCase):
         module[:7] = b"\x7fELF\x02\x01\x01"
         struct.pack_into("<H", module, 18, 183)
         (runtime64 / "startup/manager-entry.so").write_bytes(module)
+        (runtime64 / "startup/bootstrap-note").write_bytes(module)
         for name in ("manager", "shortcut", "shortcut-hook.so"):
             (runtime64 / name).write_bytes(("ARM64 " + name).encode())
         data = HELPER.build_archive(self.root / "external-MPC", self.project, self.root / "external-Gen2-MPC")

@@ -1,8 +1,13 @@
 # Changelog
 
-## Unreleased
+## 1.2.2 — 28-10-2026
 
-- The OS 3.10 helper's `bootstrap.sh` hashed `/usr/bin/MPC` for its firmware check. When a newer app is bind-mounted into the MPC service only (a 3.10 app over a 3.9.1 root), that file is the older firmware and the helper refused with "unsupported firmware". It now hashes the executable of the MPC process that is actually running (`/proc/<pid>/exe`, owned by root) and falls back to `/usr/bin/MPC` when none is found, so a stock device behaves as before.
+- Validate the running MPC executable on overlay setups, retaining the exact supported-firmware hash check and the stock-file fallback when no owned MPC process is available.
+
+- Record OS 3.10 helper launch refusals in a bounded `bootstrap-result.txt` on the confirmed USB stick, preserving the original failure status.
+- This helper-package change requires copying the complete bundle; OS 3.10 users must also reimport the matching helper. Existing updater versions refuse changed helper components.
+
+- Fix a Gen2 startup crash caused by large saved settings. The settings reader now scans tags without recursive regular-expression matching.
 
 ## 1.2.1 — 28-10-2026
 
