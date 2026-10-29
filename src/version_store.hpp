@@ -35,6 +35,7 @@ public:
     void activate(const std::string& id);
     std::optional<Generation> current();
     std::optional<Generation> boot();
+    std::filesystem::path entrypoint(const std::string& id,const std::string& role);
     void confirm(const std::string& id);
     void prune();
 private:

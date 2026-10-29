@@ -229,9 +229,11 @@ std::optional<Generation> VersionStore::boot(){
     try{need(!selected->pending||!selected->attempted,"Unconfirmed generation did not start");auto result=impl->generation(selected->active,selected->pending);if(selected->pending){selected->attempted=true;impl->record("active.json",*selected);}return result;}
     catch(const std::exception&){
         const auto healthy=impl->state("healthy.json");const auto previous=selected->previous.empty()?(healthy?healthy->active:std::string()):selected->previous;
-        need(!previous.empty()&&previous!=selected->active,"No verified fallback generation is available");auto result=impl->generation(previous);impl->record("active.json",{previous,"",false,false});return result;
+        need(!previous.empty()&&previous!=selected->active,"No verified fallback generation is available");auto result=impl->generation(previous);impl->record("healthy.json",{previous,"",false,false});impl->record("active.json",{previous,"",false,false});return result;
     }
 }
+// The open store pins the path; the generation ID prevents retained dlopen names from aliasing later versions.
+fs::path VersionStore::entrypoint(const std::string& id,const std::string& role){auto guard=impl->lock();const auto generation=impl->generation(id);const auto found=generation.spec.entrypoints.find(role);need(found!=generation.spec.entrypoints.end(),"Generation has no requested entrypoint");return fs::path("/proc/"+std::to_string(getpid())+"/fd/"+std::to_string(impl->root.value))/id/found->second;}
 void VersionStore::confirm(const std::string& id){auto guard=impl->lock();const auto current=impl->state("active.json");need(current&&current->active==id,"Stale generation health confirmation");impl->generation(id);if(!current->pending)return;need(current->attempted,"Generation has not been started");impl->record("healthy.json",{id,"",false,false});impl->record("active.json",{id,current->previous,false,false});}
 void VersionStore::prune(){
     auto guard=impl->lock();impl->recoverStaging();const auto current=impl->state("active.json");need(current&&!current->pending,"Unconfirmed generations cannot be retired");impl->generation(current->active);if(!current->previous.empty())impl->generation(current->previous);

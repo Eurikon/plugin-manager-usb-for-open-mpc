@@ -62,18 +62,6 @@ std::string readResponse(int fd,size_t& offset){
     const auto value=regular(fd,true);need(value.st_size>=0&&uint64_t(value.st_size)<=responseLimit&&uint64_t(value.st_size)>=offset,"Invalid update response size");
     std::string text(size_t(value.st_size)-offset,'\0');size_t at=0;while(at<text.size()){const auto n=pread(fd,text.data()+at,text.size()-at,off_t(offset+at));if(n<0&&errno==EINTR)continue;need(n>0,"Cannot read update response");at+=size_t(n);}offset+=text.size();return text;
 }
-void elf(int fd,const std::string& architecture){
-    std::array<unsigned char,64> header{};const auto count=pread(fd,header.data(),header.size(),0);const bool wide=architecture=="aarch64";
-    auto word=[&](size_t at){return unsigned(header[at])|(unsigned(header[at+1])<<8);};
-    need((architecture=="armv7"||wide)&&count>=ssize_t(wide?64:52)&&std::memcmp(header.data(),"\177ELF",4)==0&&header[4]==(wide?2:1)&&header[5]==1&&header[6]==1&&(word(16)==2||word(16)==3)&&word(18)==(wide?183:40)&&word(wide?52:40)==(wide?64:52),"Update worker has the wrong native architecture");
-}
-Fd executable(const IncomingWorker& worker,int scratch){
-    need(hex(worker.sha256,64),"Invalid incoming worker checksum");auto parent=directory(worker.executable.parent_path());Fd source(openat(parent.value,worker.executable.filename().c_str(),O_RDONLY|O_NOFOLLOW|O_NONBLOCK|O_CLOEXEC));need(source.value>=0,"Cannot open incoming update worker");
-    const auto before=regular(source.value);need(before.st_size>=52&&uint64_t(before.st_size)<=64*1024*1024,"Invalid incoming worker size");elf(source.value,worker.architecture);need(fileSha256(descriptor(source.value))==worker.sha256,"Incoming worker checksum mismatch");
-    auto copy=anonymous(scratch);std::array<char,65536> buffer{};uint64_t bytes=0;
-    for(;;){const auto n=read(source.value,buffer.data(),buffer.size());if(n<0&&errno==EINTR)continue;need(n>=0,"Cannot copy incoming update worker");if(!n)break;bytes+=uint64_t(n);need(bytes<=uint64_t(before.st_size),"Incoming worker changed while copying");writeAll(copy.value,std::string(buffer.data(),size_t(n)));}
-    need(bytes==uint64_t(before.st_size)&&fchmod(copy.value,0500)==0&&fsync(copy.value)==0,"Cannot finish incoming worker copy");need(fileSha256(descriptor(copy.value))==worker.sha256,"Incoming worker RAM copy differs");return readonly(copy.value);
-}
 bool closeOthers(){
     const int folder=open("/proc/self/fd",O_RDONLY|O_DIRECTORY|O_CLOEXEC);if(folder<0)return false;alignas(8)std::array<unsigned char,8192> buffer{};
     for(;;){const auto size=syscall(SYS_getdents64,folder,buffer.data(),buffer.size());if(size<0&&errno==EINTR)continue;if(size<0){close(folder);return false;}if(!size)break;
@@ -127,8 +115,8 @@ IncomingWorker generationWorker(const Generation& generation,const std::string& 
     const auto role="update_worker_"+architecture;const auto found=generation.spec.entrypoints.find(role);need(found!=generation.spec.entrypoints.end(),"Release has no update worker for this architecture");const auto file=generation.spec.files.find(found->second);need(file!=generation.spec.files.end(),"Update worker is not covered by the generation inventory");return {generation.directory/found->second,file->second,architecture};
 }
 Json runIncomingWorker(const IncomingWorker& worker,const fs::path& session,const Json& task,const UpdateProgress& progress,std::chrono::milliseconds timeout){
-    need(timeout.count()>0&&timeout<=std::chrono::minutes(15),"Invalid update-worker deadline");need(task.is_object(),"Invalid update-worker task");auto scratch=directory(session);struct stat value{};need(fstat(scratch.value,&value)==0&&value.st_uid==geteuid()&&!(value.st_mode&0022),"Unsafe update-worker scratch directory");auto program=executable(worker,scratch.value);
-    const auto hello=exchange(program.value,scratch.value,{{"operation","hello"}},{},timeout);need(hello.value("product",std::string())=="plugin-manager-usb"&&hello.value("protocol",0)==1,"Incoming release does not support the stable update protocol");return exchange(program.value,scratch.value,task,progress,timeout);
+    need(timeout.count()>0&&timeout<=std::chrono::minutes(15),"Invalid update-worker deadline");need(task.is_object(),"Invalid update-worker task");auto scratch=directory(session);struct stat value{};need(fstat(scratch.value,&value)==0&&value.st_uid==geteuid()&&!(value.st_mode&0022),"Unsafe update-worker scratch directory");auto program=pinNativeImage(worker,session);
+    const auto hello=exchange(program.descriptor(),scratch.value,{{"operation","hello"}},{},timeout);need(hello.value("product",std::string())=="plugin-manager-usb"&&hello.value("protocol",0)==1,"Incoming release does not support the stable update protocol");return exchange(program.descriptor(),scratch.value,task,progress,timeout);
 }
 int serveUpdateWorker(const UpdateHandler& handler){
     std::string requestId;size_t written=0;bool reported=false;

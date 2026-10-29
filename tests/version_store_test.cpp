@@ -65,7 +65,7 @@ int main(){
             check(store.boot()->id==a,"failed or damaged activation automatically selects last working generation");check(read(f.store/a/"program")=="payload","recovery preserves the fallback payload");
         }
         {
-            Fixture f(root/"healthy-damage");auto store=f.open();const auto a=store.stage(f.input,f.spec("1.0.0"));store.seed(a);const auto b=store.stage(f.input,f.spec("2.0.0",{{"program","second"}}));store.activate(b);store.boot();store.confirm(b);save(f.store/b/"program","damaged");check(store.boot()->id==a,"damaged confirmed release falls back to the retained previous version");
+            Fixture f(root/"healthy-damage");auto store=f.open();const auto a=store.stage(f.input,f.spec("1.0.0"));store.seed(a);const auto b=store.stage(f.input,f.spec("2.0.0",{{"program","second"}}));store.activate(b);store.boot();store.confirm(b);save(f.store/b/"program","damaged");check(store.boot()->id==a,"damaged confirmed release falls back to the retained previous version");save(f.store/"active.json","{}");check(store.boot()->id==a,"restored health record survives subsequent selection damage");
         }
         for(const std::string path:{"../outside","/tmp/outside","a/../../outside","a//b","generation.json/child","a\\b","a\nb"}){
             Fixture f(root/("bad-path-"+std::to_string(checks)));auto store=f.open();auto spec=f.spec("1.0.0");spec.files={{path,std::string(64,'a')}};rejects([&]{store.stage(f.input,spec);},"unsafe generation path is rejected");
