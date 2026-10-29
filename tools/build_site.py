@@ -350,7 +350,7 @@ def site_icon(name: str) -> str:
 
 PAGE_NAVIGATION = [('index.html', 'Overview', 'overview'), ('guide.html', 'User guide', 'guide'), ('developer.html', 'Developer FAQ', 'code'), ('changelog.html', 'Changelog', 'history')]
 SCREEN_PAGES = [
-    ('welcome', 'Welcome', 'Choose how to open the manager, install to SD or use poloq’s alternative.', 'setup', 'guide.html#welcome-screen', 'Opening'),
+    ('welcome', 'Welcome', 'Choose how to open the manager, install to SD or use the on-track OpenMPC Plugin Manager G2 instead.', 'setup', 'guide.html#welcome-screen', 'Opening'),
     ('catalog', 'Catalog', 'Browse community releases and check compatibility before downloading.', 'browse', 'guide.html#find-update-and-remove-plugins', 'Online'),
     ('local', 'Local', 'Install compatible ZIPs from the source drive’s local-plugins folder.', 'browse', 'guide.html#find-update-and-remove-plugins', 'Offline'),
     ('on-mpc', 'On MPC', 'See what is installed on the device and choose update or removal actions.', 'browse', 'guide.html#find-update-and-remove-plugins', 'Device'),

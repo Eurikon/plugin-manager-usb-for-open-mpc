@@ -3,6 +3,7 @@
 #include "manager_update.hpp"
 #include "display.hpp"
 #include "thumbnail.hpp"
+#include "plugin_manager_option.hpp"
 #ifdef MPC_MANAGER_PLUGIN_STORAGE_FIXTURE
 #include "../tests/plugin_storage_fixture.hpp"
 #endif
@@ -172,7 +173,7 @@ static int app(int argc,char**argv) {
     bool offerPending=false,themePending=false,hidePending=false,savedDark=dark,savedHidden=!welcome,activeDark=dark,activeHidden=!welcome;
     bool saveTheme=false,saveHidden=false;std::string activeView;unsigned long request=0,activeRequest=0;
     Json welcomeOffer={{"label","Install"},{"allowed",false},{"reason","Loading catalog..."}};
-    auto currentOffer=[&]() -> Json {for(const auto& item:manager.catalog)if(item.value("id","")=="plugin-manager")return manager.installationOffer(item);return {{"label","Unavailable"},{"allowed",false},{"reason","Plugin Manager is unavailable in the current catalog."}};};
+    auto currentOffer=[&]() -> Json {for(const auto& item:manager.catalog)if(item.value("id","")==MPC_PM_ID)return manager.installationOffer(item);return {{"label","Unavailable"},{"allowed",false},{"reason","Plugin Manager is unavailable in the current catalog."}};};
     Work work=Work::Open;
     std::future<Result> job=std::async(std::launch::async,[&]{manager.openCatalog();manager.recordInstalled();Result result{{},manager.catalogError.empty()?"Catalog ready. Choose a package.":manager.catalogError,manager.catalogError,currentOffer()};if(manager.arch=="aarch64")result.pluginLocation=manager.pluginStorageInfo();if(sdAvailable){try{result.storage=sdInstaller.inspect();}catch(const std::exception& e){result.storage={{"reason",e.what()}};}}return result;});
     const char* renderView=std::getenv("MPC_MANAGER_RENDER_VIEW");if(renderView)view=renderView;
@@ -198,7 +199,7 @@ static int app(int argc,char**argv) {
             job=std::async(std::launch::async,[&]{Result result;result.managerUpdate=manager.checkManagerUpdate();return result;});
         }else if(offerPending&&!returning){
             work=Work::Offer;busy=mutating=true;offerPending=false;completed=false;failed=false;progressFading=false;amount(-1);
-            job=std::async(std::launch::async,[&]{manager.installLatestPlugin("plugin-manager","poloq-instruments/mpc-vst-manager",progress,amount);return Result{};});
+            job=std::async(std::launch::async,[&]{manager.installLatestPlugin(MPC_PM_ID,{MPC_PM_REPO,MPC_PM_TAG_PREFIX,MPC_PM_ASSET_PREFIX},progress,amount);return Result{};});
         }else if(listPending&&!returning){
             work=Work::List;busy=true;activeView=view;activeRequest=request;listPending=false;
             job=std::async(std::launch::async,[&,requestedView=activeView]{return Result{manager.list(requestedView),{}, {},currentOffer()};});
@@ -244,7 +245,7 @@ static int app(int argc,char**argv) {
                 if(success){managerUpdated=true;managerCheckPending=false;managerCheckFailed=false;completed=true;failed=false;managerUpdateStatus=result.managerUpdate.at("message").get<std::string>();status=managerUpdateStatus;sourceOnSd=result.managerUpdate.value("source_on_sd",sourceOnSd);}
                 progressEnded=SDL_GetTicks();progressFading=true;
             }else if(work==Work::Offer){
-                mutating=false;if(success){status="poloq Plugin Manager installed. Return to MPC to use it on a plugin track.";completed=true;failed=false;welcomeOffer={{"label","Installed"},{"allowed",false},{"reason","Latest version already installed."}};}
+                mutating=false;if(success){status=MPC_PM_NAME " installed. Return to MPC to use it on a plugin track.";completed=true;failed=false;welcomeOffer={{"label","Installed"},{"allowed",false},{"reason","Catalog release installed."}};}
                 progressEnded=SDL_GetTicks();progressFading=true;reload();
             }else if(work==Work::SdRead){
                 sdReady=success;if(success){sdCards=std::move(result.cards);sdPage=std::clamp(sdPage,0,std::max(0,(int(sdCards.size())-1)/4));if(sdView)status=sdState.value("configured",false)?sdState.value("reason",""):sdCards.empty()?"No suitable SD card found. Insert your card and choose Refresh.":"Select an SD card. Installation starts only after confirmation.";}
@@ -354,10 +355,10 @@ static int app(int argc,char**argv) {
             screen.wrapped(134,493,sourceOnSd?"Update or remove the manager installed on your SD card.":"Install this manager on SD and set your opening preferences.",790,1,Theme::muted,22);
             screen.button(958,446,230,"Setup",false,!mutating,Icon::Right);
             screen.rect(92,521,1096,1,Theme::line);
-            screen.icon(92,527,Icon::Grid,Theme::red);screen.text(134,551,"Or install \"poloq Plugin Manager\" instead",Theme::ink,26);
+            screen.icon(92,527,Icon::Grid,Theme::red);screen.text(134,551,"Or install \"" MPC_PM_NAME "\" instead",Theme::ink,26);
             screen.wrapped(134,585,"Manage catalog plugins from a plugin track in MPC.",790,1,Theme::muted,22);
             screen.button(958,538,230,welcomeOffer.value("label","Install"),false,!offerPending&&!mutating&&welcomeOffer.value("allowed",false),Icon::Right);
-            if(!mutating&&!welcomeOffer.value("allowed",false)&&welcomeOffer.value("label","")=="Installed")screen.text(134,610,welcomeOffer.value("reason",""),Theme::muted,19,790);
+            if(!mutating&&!welcomeOffer.value("allowed",false)&&(welcomeOffer.value("label","")=="Installed"||welcomeOffer.value("label","")=="Unavailable"))screen.text(134,610,welcomeOffer.value("reason",""),Theme::muted,19,790);
             screen.box(64,634,30,30,hideNext?Theme::red:Theme::panel);if(hideNext)screen.icon(67,637,Icon::Check,Theme::white);
             screen.text(110,658,"Hide message",mutating?Theme::muted:Theme::ink,25);
             screen.button(64,680,270,"Return to MPC",false,!mutating,Icon::Return);
@@ -563,7 +564,7 @@ static int app(int argc,char**argv) {
         if(responsive){
             const Uint32 now=SDL_GetTicks();
             if(step==0&&!busy&&listReady){click(1070,565);click(170,650);click(1100,705);probeStarted=now;++step;}
-            else if(step==1){if(welcome||!hideNext||offerPending||status.find("Checking poloq")!=std::string::npos||now-probeStarted>250)throw std::runtime_error("Welcome input stalled or optional lookup was not cancelled");click(930,90);++step;}
+            else if(step==1){if(welcome||!hideNext||offerPending||status.find("Checking the catalog-selected")!=std::string::npos||now-probeStarted>250)throw std::runtime_error("Welcome input stalled or optional lookup was not cancelled");click(930,90);++step;}
             else if(step==2&&!busy&&listReady){if(!manager.hideWelcome()||manager.darkTheme()==startingDark)throw std::runtime_error("Queued preferences failed");click(320,90);click(320,90);click(320,90);probeStarted=now;++step;}
             else if(step==3){if(view!="local"||!busy||work!=Work::List)throw std::runtime_error("Local background read did not start");click(650,90);++step;}
             else if(step==4){if(view!="history"||now-probeStarted>250)throw std::runtime_error("Navigation blocked on local ZIP read");click(100,90);click(930,90);++step;}
@@ -649,7 +650,7 @@ static int app(int argc,char**argv) {
                 if(mutating)continue;
                 if(y>=48&&y<86&&x>=1084&&x<1216){dark=!dark;Theme::set(dark);themePending=true;}
                 else if(y>=628&&y<671&&x>=64&&x<600){hideNext=!hideNext;hidePending=true;failed=false;}
-                else if(y>=538&&y<596&&x>=958&&x<1188&&!offerPending&&!(busy&&work==Work::Offer)&&welcomeOffer.value("allowed",false)){offerPending=true;failed=false;status="Checking poloq's latest stable release...";}
+                else if(y>=538&&y<596&&x>=958&&x<1188&&!offerPending&&!(busy&&work==Work::Offer)&&welcomeOffer.value("allowed",false)){offerPending=true;failed=false;status="Checking the catalog-selected " MPC_PM_NAME " release...";}
                 else if(y>=446&&y<504&&x>=958&&x<1188){openSd();continue;}
                 else if(y>=680&&y<738){if(x>=64&&x<334){returnToMpc();break;}if(x>=958&&x<1216){welcome=false;offerPending=false;failed=false;status=listReady?(catalogError.empty()?"Catalog ready. Choose a package.":catalogError):"Loading plugins...";}}
                 continue;

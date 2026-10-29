@@ -421,15 +421,21 @@ Do not describe that application step as a completed hardware test.
 
 ### How does the welcome-screen Plugin Manager offer work?
 
+The default offer is **OpenMPC Plugin Manager G2**, the MIT-licensed Gen 1/Gen 2 adaptation of poloq’s Plugin Manager.
+`src/plugin_manager_option.hpp` defines its catalog ID, display name and `ReleaseSource` repository/tag/package prefixes.
+Its repository publishes multiple products: verification requests `releases/tags/plugin-manager-g2-v<catalog version>` and checks the exact architecture-specific package name, URL, size and SHA-256 against the session catalog.
+This verifies the catalog-selected release; it does not independently establish the newest release across matching tags.
+A Gen 2 device without a selected plugin location shows an unavailable offer with a SETUP instruction.
+
 `Manager::installationOffer()` compares the catalog release with actual
 installations matched by ID, skin or UID.
 It offers **Install** when absent and **Update** only when all matching releases
-are known, older and inside the managed SD target.
+are known, older and inside the selected managed plugin location.
 Equal, newer, unknown-version or external installations show disabled **Installed**.
 Choosing **Install** or **Update** authorizes the operation without another prompt.
 `Manager::installLatestPlugin()` rechecks this guard before the live release
 lookup, before downloading and immediately before installer execution.
-`Manager::verifyLatestPlugin()` checks the pinned repository's latest stable release.
+`Manager::verifyLatestPlugin()` checks the selected release in the pinned repository.
 Its asset for the current architecture must match the session catalog's version, download URL, size
 and SHA-256 digest; unavailable, stale or conflicting metadata blocks the offer.
 The package then passes the existing ZIP checksum, compatibility, identity

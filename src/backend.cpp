@@ -334,7 +334,8 @@ Json Manager::stageManagerUpdate(const Json& checkedRelease,const std::function<
         return {{"bundle_root",bundle.string()},{"release",release},{"files",files}};
     }catch(...){std::error_code error;fs::remove_all(stage,error);throw;}
 }
-void Manager::verifyLatestPlugin(const std::string& id,const std::string& repo) {
+void Manager::verifyLatestPlugin(const std::string& id,const ReleaseSource& source) {
+    const std::string& repo=source.repo;
     require(std::regex_match(repo,std::regex("[A-Za-z0-9][A-Za-z0-9-]*/[A-Za-z0-9][A-Za-z0-9_.-]*")),"Invalid plugin repository");
     const Json* item=nullptr;
     for(const auto& entry:catalog)if(entry.value("id","")==id){require(item==nullptr,"Catalog contains duplicate plugin entries");item=&entry;}
@@ -342,16 +343,19 @@ void Manager::verifyLatestPlugin(const std::string& id,const std::string& repo) 
     const auto blocked=catalogBlock(*item);require(blocked.empty(),"Plugin unavailable: "+blocked);
     const auto prefix="https://github.com/"+repo+"/releases/download/";
     require(item->value("url","").rfind(prefix,0)==0,"Catalog plugin repository does not match");
+    auto version=[](std::string value){if(!value.empty()&&value.front()=='v')value.erase(0,1);return value;};
+    const auto catalogVersion=version(item->at("version").get<std::string>());
+    const auto wantedTag=source.tagPrefix+catalogVersion;
+    if(!source.tagPrefix.empty())require(std::regex_match(wantedTag,std::regex("[A-Za-z0-9][A-Za-z0-9_.-]*")),"Catalog version is not usable in a release tag");
     const auto path=session/"latest-release.json";
     fs::remove(path);
     try {
-        require(runProcess({"wget","-T","15","-t","1","--header=Accept: application/vnd.github+json","-O",path.string(),"https://api.github.com/repos/"+repo+"/releases/latest"})==0,"Cannot check the latest release; try again when online");
+        require(runProcess({"wget","-T","15","-t","1","--header=Accept: application/vnd.github+json","-O",path.string(),"https://api.github.com/repos/"+repo+"/releases/"+(source.tagPrefix.empty()?std::string("latest"):"tags/"+wantedTag)})==0,"Cannot check the latest release; try again when online");
         require(fs::is_regular_file(path)&&fs::file_size(path)<=1024*1024,"Invalid latest release response");
         const auto release=Json::parse(read(path));
         require(release.is_object()&&release.contains("draft")&&release.at("draft")==false&&release.contains("prerelease")&&release.at("prerelease")==false,"Latest release is not a stable published release");
-        auto version=[](std::string value){if(!value.empty()&&value.front()=='v')value.erase(0,1);return value;};
         const auto tag=release.at("tag_name").get<std::string>();
-        require(std::regex_match(tag,std::regex("[A-Za-z0-9][A-Za-z0-9_.-]*"))&&version(tag)==version(item->at("version").get<std::string>()),"Catalog has not caught up with the latest release; try again later");
+        require(std::regex_match(tag,std::regex("[A-Za-z0-9][A-Za-z0-9_.-]*"))&&(source.tagPrefix.empty()?version(tag)==catalogVersion:tag==wantedTag),"Catalog has not caught up with the latest release; try again later");
         const auto& assets=release.at("assets");require(assets.is_array()&&assets.size()<=1024,"Invalid latest release assets");
         const Json* asset=nullptr;
         for(const auto& entry:assets) {
@@ -361,8 +365,9 @@ void Manager::verifyLatestPlugin(const std::string& id,const std::string& repo) 
             if(name.size()<suffix.size()||name.compare(name.size()-suffix.size(),suffix.size(),suffix)!=0)continue;
             require(asset==nullptr,"Latest release has multiple ARMv7 packages");asset=&entry;
         }
-        require(asset!=nullptr&&asset->value("state","")=="uploaded","Latest release has no ready ARMv7 package");
+        require(asset!=nullptr&&asset->value("state","")=="uploaded","Selected release has no ready "+arch+" package");
         const auto name=asset->at("name").get<std::string>();
+        require(source.assetPrefix.empty()||name==source.assetPrefix+catalogVersion+"-mpc-"+arch+".zip","Release package name does not match this manager");
         require(std::regex_match(name,std::regex("[A-Za-z0-9][A-Za-z0-9_.-]*"))&&asset->at("browser_download_url").get<std::string>()==prefix+tag+"/"+name&&asset->at("browser_download_url")==item->at("url"),"Latest package does not match the catalog download");
         const auto size=item->at("size").get<std::string>();
         require(std::regex_match(size,std::regex("[1-9][0-9]*"))&&asset->at("size").is_number_unsigned(),"Invalid latest package size");
@@ -526,14 +531,15 @@ Json Manager::installationOffer(const Json& item) {
         catch(const std::exception&){return offer("Installed",false,"Already installed; its release version cannot be compared");}
     }
     const auto blocked=catalogBlock(item);if(!blocked.empty())return offer("Unavailable",false,blocked);
+    if(nativePluginStorage&&synths.empty())return offer("Unavailable",false,"Choose a plugin installation location in SETUP first.");
     return offer(found?"Update":"Install",true,{});
 }
-void Manager::installLatestPlugin(const std::string& id,const std::string& repo,const std::function<void(const std::string&)>& progress,const std::function<void(float)>& amount) {
+void Manager::installLatestPlugin(const std::string& id,const ReleaseSource& source,const std::function<void(const std::string&)>& progress,const std::function<void(float)>& amount) {
     const Json* selected=nullptr;
     for(const auto& item:catalog)if(item.value("id","")==id){require(selected==nullptr,"Catalog contains duplicate plugin entries");selected=&item;}
     require(selected!=nullptr,"Plugin is unavailable in the current catalog");
     const Json item=*selected;const auto offer=installationOffer(item);require(offer.at("allowed").get<bool>(),offer.at("reason").get<std::string>());
-    verifyLatestPlugin(id,repo);
+    verifyLatestPlugin(id,source);
     installPackage(item,progress,amount,true);
 }
 std::vector<Json> Manager::list(const std::string& view) {

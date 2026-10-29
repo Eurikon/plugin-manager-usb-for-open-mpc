@@ -125,6 +125,51 @@ static void managerStageChecks(Manager& manager) {
     }catch(...){save(wget,originalWget);throw;}
     save(wget,originalWget);for(const auto& file:{source,response,status,calls,hashInput})fs::remove(file);
 }
+// A repository that publishes other things too (so "latest" is the wrong release): the release is found by tag prefix
+// plus the catalog version, and the package by its exact name.
+static void taggedReleaseChecks(Manager& manager) {
+    const auto catalog=manager.catalog;auto item=catalog.at(0);
+    const std::string repo="test-owner/mixed-releases",tagPrefix="plugin-g2-v",assetPrefix="Plugin-G2-";
+    const auto version=item.at("version").get<std::string>();const auto tag=tagPrefix+version;const auto name=assetPrefix+version+"-mpc-"+manager.arch+".zip";const std::string otherArch=manager.arch=="aarch64"?"armv7":"aarch64";
+    const auto endpoint="https://api.github.com/repos/"+repo+"/releases/tags/"+tag;
+    auto urlFor=[&](const std::string& releaseTag,const std::string& file){return "https://github.com/"+repo+"/releases/download/"+releaseTag+"/"+file;};
+    auto packageUrl=[&](const std::string& file){return urlFor(tag,file);};
+    item["url"]=packageUrl(name);manager.catalog={item};
+    const auto response=manager.session/"tagged-response.json",calls=manager.session/"tagged-requests";
+    const auto wget=fs::path("/tmp/manager-test-bin/wget");const auto originalWget=text(wget);
+    save(wget,"#!/bin/sh\nset -eu\nprintf '%s\\n' \"$8\" >>/tmp/manager-session/tagged-requests\n[ \"$#\" -eq 8 ] && [ \"$1\" = -T ] && [ \"$2\" = 15 ] && [ \"$3\" = -t ] && [ \"$4\" = 1 ] && [ \"$5\" = '--header=Accept: application/vnd.github+json' ] && [ \"$6\" = -O ] && [ \"$8\" = '"+endpoint+"' ] || exit 9\ncp /tmp/manager-session/tagged-response.json \"$7\"\n");
+    auto releaseFor=[&](const std::string& releaseTag,const std::string& file){return Json{{"draft",false},{"prerelease",false},{"tag_name",releaseTag},{"assets",Json::array({{{"name",file},{"state","uploaded"},{"size",std::stoull(item.at("size").get<std::string>())},{"browser_download_url",urlFor(releaseTag,file)},{"digest","sha256:"+item.at("sha").get<std::string>()}}})}};};
+    auto verify=[&](const Json& metadata,bool accepted,const char* label){save(response,metadata.dump());bool passed=true;try{manager.verifyLatestPlugin(item.at("id").get<std::string>(),ReleaseSource(repo,tagPrefix,assetPrefix));}catch(const std::exception&){passed=false;}check(passed==accepted&&!fs::exists(manager.session/"latest-release.json"),label);};
+    try {
+        verify(releaseFor(tag,name),true,"tagged release and exact package name match the catalog (the tag endpoint is the only request the fake wget allows)");
+        check(text(calls).find("/releases/latest")==std::string::npos&&text(calls).find("/releases/tags/"+tag)!=std::string::npos,"a prefixed release is never looked up through releases/latest");
+        const auto bogusTag=tagPrefix+"999.0.0";manager.catalog[0]["url"]=urlFor(bogusTag,name); // every other field consistent with the bogus tag, so only the tag check can reject
+        verify(releaseFor(bogusTag,name),false,"a release whose tag is not prefix plus the catalog version is rejected even when its package URL matches the catalog");
+        manager.catalog[0]["url"]=packageUrl(name);
+        const auto other="Other-"+version+"-mpc-"+manager.arch+".zip";manager.catalog[0]["url"]=packageUrl(other);
+        verify(releaseFor(tag,other),false,"a package that is not named prefix plus version plus -mpc-<arch>.zip is rejected even when everything else matches");
+        manager.catalog[0]["url"]=packageUrl(name);
+        const auto wrongArch=assetPrefix+version+"-mpc-"+otherArch+".zip";manager.catalog[0]["url"]=packageUrl(wrongArch);
+        verify(releaseFor(tag,wrongArch),false,"the other generation's package is not accepted on this one");
+        manager.catalog[0]["url"]=packageUrl(name);
+        auto draft=releaseFor(tag,name);draft["prerelease"]=true;verify(draft,false,"a pre-release is not offered");
+    } catch(...) {manager.catalog=catalog;save(wget,originalWget);throw;}
+    manager.catalog=catalog;save(wget,originalWget);for(const auto& file:{response,calls})fs::remove(file);
+}
+// A Gen 2 manager that has no plugin location yet (MPC has no content drive set, so automatic selection fails): the
+// welcome-screen option must be disabled with the reason, not enabled and then fail when tapped.
+static void noLocationOfferChecks(Manager& manager) {
+    auto item=manager.catalog.at(0);
+    {const auto offer=manager.installationOffer(item);check(offer.at("allowed").get<bool>(),"an offer is allowed when the manager has a plugin location");}
+    const fs::path emptySettings=manager.session/"no-location-settings.xml";save(emptySettings,"<PROPERTIES/>");
+    Manager gen2(manager.usb,manager.session/"no-location",std::string("auto"),emptySettings,"aarch64");
+    gen2.catalog={item};
+    const auto offer=gen2.installationOffer(item);
+    check(!offer.at("allowed").get<bool>()&&offer.at("label")=="Unavailable"&&offer.at("reason").get<std::string>().find("SETUP")!=std::string::npos,"a Gen 2 manager with no plugin location disables the offer and says to choose one in SETUP");
+    bool refused=false;try{gen2.installLatestPlugin(item.at("id").get<std::string>(),ReleaseSource("test-owner/mixed-releases","plugin-g2-v","Plugin-G2-"));}catch(const std::exception& error){refused=std::string(error.what()).find("SETUP")!=std::string::npos;}
+    check(refused,"installing without a plugin location is refused before any request, naming SETUP");
+    fs::remove(emptySettings);
+}
 static void latestReleaseChecks(Manager& manager,const Json& primary,const Json& olderVersion,const fs::path& library) {
     const auto catalog=manager.catalog;auto item=catalog.at(0);
     auto repo=primary.value("source_repo","");if(!std::regex_match(repo,std::regex("[A-Za-z0-9][A-Za-z0-9-]*/[A-Za-z0-9][A-Za-z0-9_.-]*")))repo="test-owner/test-repository";
@@ -217,6 +262,9 @@ int main(){try{
     check(local[0].at("id")==id,"local manifest identity matches supplied package");
     const auto supplied=fs::directory_iterator(manager.session/("local-"+local[0].at("sha").get<std::string>()))->path();
     latestReleaseChecks(manager,primary,fixture.at("older_version"),supplied/primary.at("folder").get<std::string>()/primary.at("so").get<std::string>());
+    noLocationOfferChecks(manager);
+    taggedReleaseChecks(manager);
+    {Manager otherGeneration(manager.usb,manager.session,manager.synths,manager.settings,manager.arch=="aarch64"?"armv7":"aarch64");otherGeneration.catalog=manager.catalog;taggedReleaseChecks(otherGeneration);}
     std::vector<std::string> stages;manager.install(local[0],[&](const std::string& text){stages.push_back(text);});check(stages.size()==4&&stages[2].find("compatibility")!=std::string::npos&&stages[3].find("Installing")!=std::string::npos,"validation precedes installation status");check(manager.list("installed").size()==1,"local install appears in installed view");
     check(fs::exists(registry/"uninstall.sh"),"persistent uninstall record retained");
     const auto folder=manager.synths/local[0].at("skin").get<std::string>();const bool skinManifest=fs::is_regular_file(folder/"mpc-plugin.json");
