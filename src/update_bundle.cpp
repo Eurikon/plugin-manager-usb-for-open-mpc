@@ -3,6 +3,8 @@
 #endif
 #include "update_bundle.hpp"
 #include "checksum.hpp"
+#include "metadata.hpp"
+#include "crypto.hpp"
 #include <archive.h>
 #include <archive_entry.h>
 #include <array>
@@ -62,22 +64,12 @@ std::string contents(archive* input,uint64_t bytes,size_t maximum){
     need(count==0&&result.size()==bytes,"Incomplete update metadata");return result;
 }
 GenerationSpec specification(const Json& value){
-    need(value.is_object()&&value.value("protocol",0)==1&&value.value("product",std::string())=="plugin-manager-usb"&&value.contains("generation"),"Unsupported update bundle protocol");auto spec=generationSpecFromJson(value.at("generation"));
+    need(value.is_object()&&value.size()==4&&value.value("protocol",0)==1&&value.value("product",std::string())=="plugin-manager-usb"&&value.contains("generation")&&value.contains("authorization"),"Unsupported update bundle protocol");auto spec=generationSpecFromJson(value.at("generation"));need(value.at("generation")==generationSpecToJson(spec),"Unsupported update envelope fields; place future metadata in inventoried files");
     need(!spec.files.count(envelopeName),"Update envelope cannot inventory itself");
     for(const auto& arch:{std::string("armv7"),std::string("aarch64")}){
         if(spec.architecture=="universal"||spec.architecture==arch)need(spec.entrypoints.count("update_worker_"+arch),"Update bundle lacks a native migration worker");
     }
     return spec;
-}
-Json metadata(const std::string& text){
-    std::map<int,std::set<std::string>> keys;
-    return Json::parse(text,[&](int depth,Json::parse_event_t event,Json& value){
-        need(depth<=16,"Update metadata nesting exceeds its limit");
-        if(event==Json::parse_event_t::object_start)keys[depth].clear();
-        else if(event==Json::parse_event_t::key)need(keys[depth-1].insert(value.get<std::string>()).second,"Duplicate update metadata key");
-        else if(event==Json::parse_event_t::object_end)keys.erase(depth);
-        return true;
-    });
 }
 struct Staging {
     fs::path path;
@@ -121,8 +113,8 @@ struct Staging {
 };
 void writeAll(int fd,const char* data,size_t bytes){size_t at=0;while(at<bytes){const auto n=write(fd,data+at,bytes-at);if(n<0&&errno==EINTR)continue;need(n>0,"Cannot write staged update file");at+=size_t(n);}}
 }
-Json updateEnvelope(const GenerationSpec& spec){Json result={{"protocol",1},{"product","plugin-manager-usb"},{"generation",generationSpecToJson(spec)}};(void)specification(result);return result;}
-UpdateBundle unpackUpdateBundle(const fs::path& zip,const std::string& sha,uint64_t bytes,const fs::path& destination,const std::string& architecture,const std::string& version,const UpdateProgress& progress){
+Json updateEnvelope(const GenerationSpec& spec,const std::string& authorization){Json result={{"protocol",1},{"product","plugin-manager-usb"},{"generation",generationSpecToJson(spec)},{"authorization",authorization}};(void)specification(result);return result;}
+UpdateBundle unpackUpdateBundle(const fs::path& zip,const std::string& sha,uint64_t bytes,const fs::path& destination,const std::string& architecture,const std::string& version,const std::string& publisherKey,const UpdateProgress& progress){
     need(bytes>0&&bytes<=totalLimit&&sha.size()==64&&sha.find_first_not_of("0123456789abcdef")==std::string::npos,"Invalid expected update ZIP identity");auto zipParent=folder(zip.parent_path());Fd input(openat(zipParent.value,zip.filename().c_str(),O_RDONLY|O_NONBLOCK|O_NOFOLLOW|O_CLOEXEC));need(input.value>=0,"Cannot pin update ZIP");const auto before=information(input.value);
     need(S_ISREG(before.st_mode)&&before.st_nlink==1&&before.st_uid==geteuid()&&!(before.st_mode&0022)&&before.st_size>=0&&uint64_t(before.st_size)==bytes,"Unsafe or incomplete update ZIP");need(fileSha256(descriptor(input.value))==sha&&unchanged(before,information(input.value)),"Update ZIP checksum mismatch");
     std::string text;std::set<std::string> names;std::map<std::string,Header> entries;uint64_t total=0;
@@ -131,7 +123,7 @@ UpdateBundle unpackUpdateBundle(const fs::path& zip,const std::string& sha,uint6
             if(value.name==envelopeName){need(!value.directory,"Update envelope is a directory");text=contents(archive.value,value.size,128*1024);}else need(archive_read_data_skip(archive.value)==ARCHIVE_OK,"Cannot inspect update ZIP");
         }need(status==ARCHIVE_EOF&&!text.empty(),"Update ZIP has no complete v1 envelope");
     }
-    const auto spec=specification(metadata(text));need(spec.version==version,"Update envelope version differs from the selected release");need((architecture=="armv7"||architecture=="aarch64")&&(spec.architecture==architecture||spec.architecture=="universal"),"Update bundle has the wrong device architecture");
+    const auto envelope=parseMetadata(text);const auto spec=specification(envelope);need(spec.version==version,"Update envelope version differs from the selected release");need((architecture=="armv7"||architecture=="aarch64")&&(spec.architecture==architecture||spec.architecture=="universal"),"Update bundle has the wrong device architecture");verifyAuthorization(publisherKey,"update",sha256Text(generationSpecToJson(spec).dump()+'\n'),envelope.at("authorization").get<std::string>());
     std::set<std::string> directories;for(const auto& file:spec.files){auto found=entries.find(file.first);need(found!=entries.end()&&!found->second.directory,"Update envelope lists a missing file");for(auto parent=fs::path(file.first).parent_path();!parent.empty();parent=parent.parent_path())directories.insert(parent.generic_string());}
     for(const auto& entry:entries)need(entry.second.directory?directories.count(entry.first):entry.first==envelopeName||spec.files.count(entry.first),"Update ZIP contains uninventoried content");
     Staging output(destination);uint64_t copied=0;

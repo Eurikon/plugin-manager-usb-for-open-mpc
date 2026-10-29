@@ -6,7 +6,7 @@
 namespace pmu {
 class HelperLoader {
 public:
-    HelperLoader(std::filesystem::path store,std::filesystem::path helperDirectory,std::string architecture);
+    HelperLoader(std::filesystem::path store,std::filesystem::path helperDirectory,std::string architecture,std::string publisherKey);
     ~HelperLoader();
     HelperLoader(const HelperLoader&)=delete;
     HelperLoader& operator=(const HelperLoader&)=delete;

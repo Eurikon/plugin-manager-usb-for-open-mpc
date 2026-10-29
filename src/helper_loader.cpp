@@ -2,6 +2,7 @@
 #include "helper_payload.h"
 #include "version_store.hpp"
 #include "checksum.hpp"
+#include "crypto.hpp"
 #include <atomic>
 #include <dlfcn.h>
 #include <mutex>
@@ -22,7 +23,7 @@ struct HelperLoader::Impl {
     std::atomic<bool> accepting{false},observed{false},claimed{false},ready{false};
     mutable std::mutex errorMutex;
     std::string lastError;
-    Impl(std::filesystem::path location,std::filesystem::path root,std::string arch):store(location,geteuid(),[](const auto& path){return fileSha256(path);},{},false),helper(root.string()),architecture(std::move(arch)){
+    Impl(std::filesystem::path location,std::filesystem::path root,std::string arch,std::string publisher):store(location,geteuid(),[](const auto& path){return fileSha256(path);},{},false,[publisher](const auto& id,const auto&,const auto& proof){verifyAuthorization(publisher,"helper",id,proof);}),helper(root.string()),architecture(std::move(arch)){
         need(root.is_absolute()&&root.lexically_normal()==root&&root!=root.root_path()&&location.parent_path()==root,"Helper version store is outside its installation");need(architecture=="armv7"||architecture=="aarch64","Unsupported helper architecture");
     }
     void failure(const std::string& text){std::lock_guard<std::mutex> guard(errorMutex);lastError=text;}
@@ -47,7 +48,7 @@ struct HelperLoader::Impl {
         accepting.store(true);confirmOnce();return true;
     }
 };
-HelperLoader::HelperLoader(std::filesystem::path store,std::filesystem::path helper,std::string architecture):impl(std::make_unique<Impl>(std::move(store),std::move(helper),std::move(architecture))){}
+HelperLoader::HelperLoader(std::filesystem::path store,std::filesystem::path helper,std::string architecture,std::string publisher):impl(std::make_unique<Impl>(std::move(store),std::move(helper),std::move(architecture),std::move(publisher))){}
 HelperLoader::~HelperLoader(){impl->stop();}
 bool HelperLoader::start(void* binding){
     if(impl->module)return true;

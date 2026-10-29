@@ -21,22 +21,25 @@ struct Generation {
     std::filesystem::path directory;
     GenerationSpec spec;
     bool pending=false;
+    std::string authorization{};
 };
 class VersionStore {
 public:
     using Hash=std::function<std::string(const std::filesystem::path&)>;
     using Checkpoint=std::function<void(const std::string&)>;
-    VersionStore(std::filesystem::path root,uid_t owner,Hash hash,Checkpoint checkpoint={},bool create=true);
+    using Trust=std::function<void(const std::string&,const GenerationSpec&,const std::string&)>;
+    VersionStore(std::filesystem::path root,uid_t owner,Hash hash,Checkpoint checkpoint={},bool create=true,Trust trust={});
     ~VersionStore();
     VersionStore(const VersionStore&)=delete;
     VersionStore& operator=(const VersionStore&)=delete;
-    std::string stage(const std::filesystem::path& source,const GenerationSpec& spec);
+    std::string stage(const std::filesystem::path& source,const GenerationSpec& spec,const std::string& authorization={});
     void seed(const std::string& id);
-    void activate(const std::string& id);
+    void activate(const std::string& id,const std::string& expectedCurrent={});
     std::optional<Generation> current();
     std::optional<Generation> boot();
     std::filesystem::path entrypoint(const std::string& id,const std::string& role);
     void confirm(const std::string& id);
+    void reject(const std::string& id);
     void prune();
 private:
     struct Impl;

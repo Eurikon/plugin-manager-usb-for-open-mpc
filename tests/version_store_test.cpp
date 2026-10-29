@@ -49,6 +49,7 @@ int main(){
             check(!fs::exists(f.store/b/"assets/data")&&fs::exists(f.store/b/"new/nested/file"),"new generation handles changed file layout without editing old files");
             rejects([&]{store.confirm(b);},"health confirmation requires an actual boot attempt");rejects([&]{store.activate(a);},"another activation waits for health or recovery");rejects([&]{store.prune();},"unconfirmed activation cannot retire its fallback");
             check(store.boot()->id==b,"first boot attempts the complete new release");rejects([&]{store.confirm(a);},"stale health acknowledgement cannot confirm another version");store.confirm(b);
+            rejects([&]{store.activate(a,a);},"stale update preparation cannot replace a subsequently confirmed version");check(store.current()->id==b,"rejected stale activation preserves the newer selected version");
             check(store.boot()->id==b&&!store.current()->pending,"confirmed release survives later boots");
             const auto c=store.stage(f.input,f.spec("3.0.0",{{"other/program","third release"}}));store.activate(c);store.boot();store.confirm(c);save(f.store/"user-file","keep");store.prune();
             check(!fs::exists(f.store/a)&&fs::exists(f.store/b)&&fs::exists(f.store/c),"retirement keeps current and one previous generation");check(read(f.store/"user-file")=="keep","retirement preserves unrelated files");
@@ -88,10 +89,10 @@ int main(){
         for(const auto& point:metadataPoints){
             Fixture f(root/("activate-kill-"+std::to_string(checks)));auto store=f.open();const auto a=store.stage(f.input,f.spec("1.0.0"));store.seed(a);const auto b=store.stage(f.input,f.spec("2.0.0",{{"program","second"}}));interrupted(f,point,[&](auto& child){child.activate(b);});auto restarted=f.open();const auto chosen=restarted.boot();check(chosen&&(chosen->id==a||chosen->id==b),"interrupted activation selects only a complete verified generation");if(chosen->pending)check(restarted.boot()->id==a,"unconfirmed post-interruption candidate falls back on next boot");
         }
-        for(const std::string operation:{"boot","confirm"})for(const auto& point:metadataPoints){
+        for(const std::string operation:{"boot","confirm","reject"})for(const auto& point:metadataPoints){
             if(operation=="boot"&&point.find("healthy.json")!=std::string::npos)continue;
             Fixture f(root/(operation+"-kill-"+std::to_string(checks)));auto store=f.open();const auto a=store.stage(f.input,f.spec("1.0.0"));store.seed(a);const auto b=store.stage(f.input,f.spec("2.0.0",{{"program","second"}}));store.activate(b);if(operation=="confirm")store.boot();
-            interrupted(f,point,[&](auto& child){if(operation=="boot")child.boot();else child.confirm(b);});auto restarted=f.open();const auto chosen=restarted.boot();check(chosen&&(chosen->id==a||chosen->id==b),"interrupted boot or health commit recovers a complete generation");
+            interrupted(f,point,[&](auto& child){if(operation=="boot")child.boot();else if(operation=="confirm")child.confirm(b);else child.reject(b);});auto restarted=f.open();const auto chosen=restarted.boot();check(chosen&&(chosen->id==a||chosen->id==b),"interrupted boot, health or rejection recovers a complete generation");
         }
         for(const std::string point:{"generation-staging","copy:program","copy-durable:program","generation-ready","generation-durable"}){
             Fixture f(root/("stage-kill-"+std::to_string(checks)));auto store=f.open();const auto a=store.stage(f.input,f.spec("1.0.0"));store.seed(a);const auto next=f.spec("2.0.0",{{"program","second"}});interrupted(f,point,[&](auto& child){child.stage(f.input,next);});auto restarted=f.open();check(restarted.boot()->id==a,"interrupted staging never changes the working version");const auto b=restarted.stage(f.input,next);restarted.activate(b);check(restarted.boot()->id==b,"retry after interrupted staging can activate the complete update");for(const auto& entry:fs::directory_iterator(f.store))check(entry.path().filename().string().rfind(".stage-",0)!=0,"retry clears only its interrupted staging data");
