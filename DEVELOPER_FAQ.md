@@ -177,7 +177,7 @@ It uses the stock controller-script mechanism; it is not an instrument plugin.
 Its persistent files live in the user's MPC Documents content area, with no root-filesystem startup service.
 
 The universal bundle carries both routes; OS 3.9.1 does not need the controller profile.
-On 3.10, import `Plugin Manager helper.xpa` into internal MPC Documents once and restart the MPC application.
+On 3.10, import `Plugin Manager helper.xpa` into internal MPC Documents once, shut down normally, then switch the MPC back on.
 On Gen 1 the directory is `/sdcard/MPC Documents/Devices/Plugin Manager helper`.
 Gen 2 resolves the corresponding internal Documents location, including `/nvme/MPC Documents` on NVMe-equipped devices.
 Extraction beside the XPA on removable media does not activate it.
@@ -572,7 +572,7 @@ test-mode environment settings against a real device as ordinary installation.
 | Missing plugin storage | Check MPC settings, the selected content drive and its writable/executable mount. On Gen 2 use SETUP → Plugin location; there is no guessed fallback. |
 | Effective service environment unavailable | MPC must be running; the service MainPID and its process environment must be readable before opening a new session. |
 | Invalid history/preferences | Preserve the original source-drive JSON before repairing its schema or contents. |
-| No first-use USB prompt on 3.10 | Import the helper into internal MPC Documents and restart the MPC application; legacy autorun alone does not provide this route. |
+| No first-use USB prompt on 3.10 | Import the helper into internal MPC Documents, shut down normally, then switch the MPC back on; legacy autorun alone does not provide this route. |
 | No interface after boot or SD reinsertion | Intentional quiet startup; use the two-second Shift + Menu shortcut. |
 | Manager update requires manual installation | Preserve existing media; inspect the reported helper/runtime compatibility failure instead of bypassing it. |
 

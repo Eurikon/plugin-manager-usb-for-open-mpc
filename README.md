@@ -31,7 +31,7 @@ Later compatible releases can update the manager and its helper together through
 3. On OS 3.10, reimport `Plugin Manager helper.xpa` into internal MPC Documents, then shut down normally and switch the MPC back on. This clears the previous RAM session.
 4. If you use the SD copy, open the updated USB manager and choose **SETUP → Update manager** before removing the stick.
 
-![Plugin Manager catalog on the MPC touchscreen](site/assets/manager-catalog.png)
+![Plugin Manager catalog](site/assets/manager-catalog.png)
 
 On your computer, extract the ZIP first, then copy its contents rather than the enclosing extraction folder.<br>
 Show hidden files to include `.mpc-manager-id`.<br>
@@ -77,7 +77,7 @@ A short press retains the MPC Browser shortcut.<br>
 The helper does not need importing again after each opening or reboot.
 
 Choose **Browse plugins** on the welcome screen, then select a compatible package from **Catalog** or **Local**.<br>
-Confirm its installation into the MPC's managed Expansions folder, then install more packages or choose **Return to MPC**.<br>
+Confirm its installation into the selected plugin installation location, then install more packages or choose **Return to MPC**.<br>
 Installed instruments and effects become available through MPC's normal plugin selection.
 
 Returning to MPC can take **30 seconds or longer**.<br>
@@ -85,7 +85,7 @@ Wait for MPC to finish reopening; **do not turn off your device during this tran
 
 ## Welcome Screen
 
-![Plugin Manager welcome screen on the MPC](site/assets/manager-welcome.png)
+![Plugin Manager welcome screen](site/assets/manager-welcome.png)
 
 | Section or control | What it does |
 | --- | --- |
@@ -104,7 +104,7 @@ Its button offers **Install** when absent, or **Update** when an older, known re
 **Installed** is disabled for equal, newer or unknown versions and installations outside that location.<br>
 The regular catalog still allows deliberate reinstallation.<br>
 Choosing **Install** or **Update** authorizes the operation directly.<br>
-The latest stable release must match the current catalog before the package is downloaded and checked; failed verification stops installation.<br>
+The catalog selects the release; its package is verified before installation, and failed verification stops installation.<br>
 No plugin package is downloaded before you choose an enabled action.
 
 ## Install the Manager on SD
@@ -128,7 +128,7 @@ The same interface is used for both sources; each source keeps its own preferenc
 
 ## Setup and Manager Updates
 
-![Plugin Manager SETUP page on the MPC](site/assets/manager-setup.png)
+![Plugin Manager SETUP page](site/assets/manager-setup.png)
 
 - **Plugin Manager installation:** install, update/reinstall or uninstall the SD copy. **Update manager** copies the current session's manager onto SD; it is separate from downloading a new release.
 - **Plugin Manager updates:** choose **Check for updates** to check GitHub Releases. If a supported newer release is available, **Install update** opens a confirmation before downloading and installing it.
@@ -173,11 +173,11 @@ Thumbnails load into RAM and are discarded when the manager closes.
 Uninstall removes the managed plugin and its registration, while keeping its history entry.<br>
 History helps identify previous installations after wiping or changing a device; it does not back up projects or plugin files.
 
-![Local packages on the MPC](site/assets/manager-local.png)
+![Local packages](site/assets/manager-local.png)
 
 ![Plugins detected on the MPC](site/assets/manager-on-mpc.png)
 
-![Saved installation history on the MPC](site/assets/manager-history.png)
+![Saved installation history](site/assets/manager-history.png)
 
 Theme and welcome-message preferences stay on the source USB or SD card.<br>
 Page positions last only while the manager is open.<br>
@@ -230,7 +230,7 @@ When a usable location appears, select it to continue.
 
 ## Opening and Recovery
 
-- **No first-use prompt on 3.10:** import `Plugin Manager helper.xpa` into internal MPC Documents and restart the MPC application once.
+- **No first-use prompt on 3.10:** import `Plugin Manager helper.xpa` into internal MPC Documents, shut down normally, then switch the MPC back on.
 - **No automatic opening after boot:** this is intentional. Hold **Shift + Menu for two seconds**.
 - **SD copy unavailable:** reinsert the SD card and try the shortcut again, or insert the prepared USB stick. Reinserting SD is silent.
 - **Welcome screen skipped:** open **SETUP** and enable **Show on opening**.
