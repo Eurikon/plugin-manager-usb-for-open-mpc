@@ -5,4 +5,5 @@
 
 namespace pmu {
 std::string fileSha256(const std::filesystem::path& path,std::chrono::milliseconds timeout=std::chrono::seconds(30));
+std::string runningImageSha256();
 }

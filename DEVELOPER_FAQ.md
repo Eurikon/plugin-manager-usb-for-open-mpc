@@ -289,7 +289,7 @@ payload. The checks in `Manager::manifest()` include:
 
 | Field or content | Requirement |
 | --- | --- |
-| `schema`, `arch` | `1` and `"armv7"`. |
+| `schema`, `arch` | `1` and the device architecture: `"armv7"` or `"aarch64"`. |
 | `id` | Lowercase identity matching `[a-z0-9][a-z0-9_-]*`. |
 | `kind` | System `addin` packages are unsupported. |
 | `os_compat` | Array containing `"3.x"`; an omitted value can be supplied by a compatible matching catalog item. Local packages need their own declaration. |
@@ -511,6 +511,8 @@ scripts execute as root inside that environment; use only scripts you trust.
 
 Run fast local checks with a trusted package you supply:
 
+Signing checks require OpenSSL 3; set `OPENSSL` to its executable if it is not the default `openssl` on your computer.
+
 ```sh
 make test-local TEST_PACKAGE_ZIP="/path/to/your-plugin.zip"
 ```
@@ -645,6 +647,9 @@ USB root, without an extra enclosing folder. Use it only on fresh packager
 output: an inventory is not a secret scan or proof of publisher identity.
 
 Record the source commit, tested target and final ZIP checksum in release notes.
+Normal stable updates use tag `v<version>` and asset `plugin-manager-usb-v<version>.zip`.
+The one-time 1.3.0 migration uses `plugin-manager-usb-v1.3.0-migration.zip`, deliberately outside the old updater's asset match.
+Do not publish a normal-name alias for that migration bundle.
 The commands do not upload or publish anything. Installer release automation
 is not configured; creating a website does not create an installer release.
 

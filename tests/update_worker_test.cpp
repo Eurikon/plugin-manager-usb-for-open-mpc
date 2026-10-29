@@ -25,6 +25,7 @@ int main(int argc,char** argv){
         const auto program=fs::canonical(argv[1]);pmu::IncomingWorker worker{program,pmu::fileSha256(program),architecture};
         int messages=0,fractions=0;pmu::UpdateProgress progress{[&](const auto& text){check(!text.empty(),"worker progress has a message");++messages;},[&](float fraction){check(fraction>=0&&fraction<=1,"worker fraction is bounded");++fractions;}};
         const auto result=pmu::runIncomingWorker(worker,root,{{"operation","apply"},{"echo","roundtrip"}},progress);
+        check(result.at("running_image_sha256")==worker.sha256,"worker self-identification matches its verified executable");
         check(result.at("pinned_image_retained").get<bool>(),"the read-only executable stays pinned without leaking to child commands");
         check(result.at("applied").get<bool>()&&result.at("echo")=="roundtrip"&&result.at("activation")=="next_open","incoming native worker handshake and application succeed");check(messages>0&&fractions>0,"incoming worker supplies UI progress without sharing UI code");check(fs::is_empty(root),"IPC and executable copies leave no named scratch files");
         const char* original=getenv("LD_PRELOAD");const std::string saved=original?original:"";const bool had=original!=nullptr;setenv("LD_PRELOAD","should-not-load",1);

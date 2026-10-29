@@ -30,7 +30,7 @@ void mark(const fs::path& file,const std::string& generation){
     const std::string text=generation+'\n';const int fd=open(file.c_str(),O_WRONLY|O_CREAT|O_EXCL|O_NOFOLLOW|O_CLOEXEC,0600);need(fd>=0,"Cannot record runtime handover progress");const bool ok=write(fd,text.data(),text.size())==ssize_t(text.size())&&fsync(fd)==0;close(fd);need(ok,"Cannot finish runtime handover progress");
 }
 bool marked(const fs::path& file,const std::string& generation){struct stat status{};if(lstat(file.c_str(),&status)!=0){need(errno==ENOENT,"Cannot inspect runtime handover progress");return false;}return read(file,65)==generation+'\n';}
-void self(const NativeImageSpec& image){validateNativeImage(image);need(fileSha256("/proc/"+std::to_string(getpid())+"/exe")==image.sha256,"Another running program cannot handle this runtime handover");}
+void self(const NativeImageSpec& image){validateNativeImage(image);need(runningImageSha256()==image.sha256,"Another running program cannot handle this runtime handover");}
 void helper(const fs::path& path){if(path.empty())return;need(pmu_helper_directory_valid(path.c_str()),"Unsupported handover helper location");
 #if !defined(__aarch64__)
     need(path==PMU_HELPER_DIRECTORY,"Unsupported Gen 1 handover helper location");

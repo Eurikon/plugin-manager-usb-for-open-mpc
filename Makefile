@@ -53,6 +53,8 @@ test-local:
 	$(PYTHON) -m unittest discover -s tests -p launch_test.py
 	$(PYTHON) -m unittest discover -s tests -p bootstrap_running_mpc_test.py
 	$(PYTHON) -m unittest discover -s tests -p startup_package_test.py
+	$(PYTHON) -m unittest discover -s tests -p payload_package_test.py
+	$(PYTHON) -m unittest discover -s tests -p sign_release_test.py
 	$(PYTHON) -m unittest discover -s tests -p bootstrap_failure_note_test.py
 
 site:

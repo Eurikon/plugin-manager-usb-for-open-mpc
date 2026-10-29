@@ -65,4 +65,9 @@ std::string fileSha256(const std::filesystem::path& path,std::chrono::millisecon
     need(WIFEXITED(status)&&WEXITSTATUS(status)==0&&result.size()>64&&result.substr(0,64).find_first_not_of("0123456789abcdef")==std::string::npos&&(result[64]==' '||result[64]=='\t'),"Checksum failed");
     return result.substr(0,64);
 }
+std::string runningImageSha256(){
+    Fd image{open("/proc/self/exe",O_RDONLY|O_CLOEXEC)};
+    need(image.value>=0,"Cannot identify the running manager executable");
+    return fileSha256("/proc/"+std::to_string(getpid())+"/fd/"+std::to_string(image.value));
+}
 }

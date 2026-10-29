@@ -33,10 +33,6 @@ void helperLocation(const fs::path& helper){
     need(helper==PMU_HELPER_DIRECTORY,"Unsupported Gen 1 helper task location");
 #endif
 }
-std::string selfHash(){
-    const int fd=open("/proc/self/exe",O_RDONLY|O_CLOEXEC);need(fd>=0,"Cannot identify the running update worker");
-    try{const auto hash=fileSha256("/proc/"+std::to_string(getpid())+"/fd/"+std::to_string(fd));close(fd);return hash;}catch(...){close(fd);throw;}
-}
 void pruneWorking(const fs::path& path,const std::string& profile,const std::string& kind,const std::string& publisher){
     try{VersionStore store(path,geteuid(),[](const auto& file){return fileSha256(file);},{},false,[&](const auto& id,const auto&,const auto& proof){verifyAuthorization(publisher,kind,id,proof);},profile);const auto current=store.current();if(current&&!current->pending)store.prune();}
     catch(const std::exception& error){std::fprintf(stderr,"Old manager versions preserved: %.1024s\n",error.what());}
@@ -51,19 +47,19 @@ Json handleRuntimeTask(const Json& task,const std::string& publisher,const Updat
     SourceRuntime current(source,architecture,publisher);const auto selected=current.choose(false,identity);
     if(intent=="refresh-runtime"){
         need(runningVersion.empty()||selected.generation.spec.version==runningVersion,"Running worker version differs from the selected runtime");
-        need(selfHash()==selected.worker.sha256,"A different running program cannot refresh this runtime");const auto cache=pathField(task,"session");const auto context=guiRuntimeContext(cache.parent_path());need(context.at("source")==source.string()&&context.at("source_identity")==identity,"Another GUI session cannot refresh this runtime");const auto previous=context.at("generation").get<std::string>();need(previous!=selected.generation.id,"Runtime refresh does not need a handover");UpdateSession session(source,cache,previous,identity);const auto snapshot=session.preloadSnapshot();const auto retained=current.retained(previous,identity);
+        need(runningImageSha256()==selected.worker.sha256,"A different running program cannot refresh this runtime");const auto cache=pathField(task,"session");const auto context=guiRuntimeContext(cache.parent_path());need(context.at("source")==source.string()&&context.at("source_identity")==identity,"Another GUI session cannot refresh this runtime");const auto previous=context.at("generation").get<std::string>();need(previous!=selected.generation.id,"Runtime refresh does not need a handover");UpdateSession session(source,cache,previous,identity);const auto snapshot=session.preloadSnapshot();const auto retained=current.retained(previous,identity);
         const auto result=runIncomingWorker(retained.worker,cache,{{"operation","apply"},{"intent","prepare-retained"},{"source",source.string()},{"helper",helper.string()},{"generation",previous},{"source_identity",identity},{"publisher",publisher},{"preload_snapshot",snapshot},{"stage_only",true}},progress);const fs::path rollback=result.at("session").get<std::string>();const auto& image=result.at("worker");const NativeImageSpec recovery{image.at("path").get<std::string>(),image.at("sha256").get<std::string>(),image.at("architecture").get<std::string>()};need(result.at("generation")==previous&&result.at("source_identity")==identity&&recovery.executable.parent_path()==rollback&&recovery.architecture==architecture,"Retained worker returned another recovery cohort");validateNativeImage(recovery);
         const auto prepared=prepareRuntimeSession(selected,source,helper,publisher,progress,snapshot,RuntimeStart::StageOnly);const auto capsule=session.publish(prepared,helper,selected.generation.id,rollback,recovery,{},{},true);beginRuntimeHandoff(capsule,publisher);return {{"handoff_started",true}};
     }
     if(intent=="finish-update"){
         need(runningVersion.empty()||selected.generation.spec.version==runningVersion,"Running worker version differs from the selected runtime");
-        need(selfHash()==selected.worker.sha256,"A different running program cannot finish this runtime update");const auto capsule=pathField(task,"handoff");const auto item=readSessionHandoff(capsule);need(item.source==source&&item.helper==helper&&item.generation==selected.generation.id&&item.sourceIdentity==identity,"Queued handover does not match this runtime update");beginRuntimeHandoff(capsule,publisher);return {{"handoff_started",true}};
+        need(runningImageSha256()==selected.worker.sha256,"A different running program cannot finish this runtime update");const auto capsule=pathField(task,"handoff");const auto item=readSessionHandoff(capsule);need(item.source==source&&item.helper==helper&&item.generation==selected.generation.id&&item.sourceIdentity==identity,"Queued handover does not match this runtime update");beginRuntimeHandoff(capsule,publisher);return {{"handoff_started",true}};
     }
     if(intent=="prepare-runtime"||intent=="prepare-retained"){
         const bool retained=intent=="prepare-retained";const auto requested=retained?current.retained(task.at("generation").get<std::string>(),identity):selected;
         need(runningVersion.empty()||requested.generation.spec.version==runningVersion,"Running worker version differs from the requested runtime");
         need(task.at("generation").get<std::string>()==requested.generation.id,"Stale runtime preparation request");
-        need(selfHash()==requested.worker.sha256,"A different running program cannot prepare this runtime version");
+        need(runningImageSha256()==requested.worker.sha256,"A different running program cannot prepare this runtime version");
         if(!retained&&!requested.generation.pending){pruneWorking(source/"autorun/runtime/.pmu-versions",architecture,"runtime",publisher);if(!helper.empty())pruneWorking(helper/".pmu-versions",{},"helper",publisher);}
         const auto snapshot=task.value("preload_snapshot",std::string());const auto mode=task.value("stage_only",false)?RuntimeStart::StageOnly:RuntimeStart::Quiet;
         need(!retained||mode==RuntimeStart::StageOnly,"Retained recovery cannot replace the active runtime before restoration");const auto base=prepareRuntimeSession(requested,source,helper,publisher,progress,snapshot,mode,retained);const auto worker=preparedRuntimeWorker(base,publisher,retained);
@@ -72,7 +68,7 @@ Json handleRuntimeTask(const Json& task,const std::string& publisher,const Updat
     if(intent=="install-update"){
         const auto directory=pathField(task,"bundle");const auto relative=directory.lexically_relative("/tmp");need(!relative.empty()&&!relative.is_absolute()&&*relative.begin()!="..","Incoming update is outside private RAM staging");
         const auto version=task.at("version").get<std::string>();need(runningVersion.empty()||version==runningVersion,"Incoming update worker has a different compiled version");const auto bundle=verifyStagedUpdate(directory,architecture,version,publisher);
-        const auto worker=bundle.spec.entrypoints.at("update_worker_"+architecture);need(selfHash()==bundle.spec.files.at(worker),"A different running program cannot apply this update");
+        const auto worker=bundle.spec.entrypoints.at("update_worker_"+architecture);need(runningImageSha256()==bundle.spec.files.at(worker),"A different running program cannot apply this update");
         const auto plan=readMigrationPackage(bundle,architecture);const auto cache=pathField(task,"session");const auto context=guiRuntimeContext(cache.parent_path());need(context.at("source")==source.string()&&context.at("helper")==helper.string()&&context.at("generation")==selected.generation.id&&context.at("source_identity")==identity,"The update request does not match the running GUI cohort");UpdateSession session(source,cache,selected.generation.id,identity);
         auto stopped=[&]{if(stoppedCheck)stoppedCheck(session.mpcService());else{const auto state=runtimeOutput({"/bin/systemctl","show",session.mpcService(),"-pMainPID","--value"});need(state.first==0&&state.second=="0\n","MPC must remain stopped while the manager update is prepared");}};stopped();
         const auto snapshot=session.preloadSnapshot();const auto rollback=runIncomingWorker(selected.worker,cache,{{"operation","apply"},{"intent","prepare-runtime"},{"source",source.string()},{"helper",helper.string()},{"generation",selected.generation.id},{"source_identity",identity},{"publisher",publisher},{"preload_snapshot",snapshot},{"stage_only",true}},progress);

@@ -40,7 +40,7 @@ Development tools and firmware extraction are only needed when building from sou
 
 ## Using a Prepared USB Bundle
 
-You need an MPC-formatted USB stick and the MPC's registered `Expansions` content folder.<br>
+You need an MPC-formatted USB stick and a writable plugin content location on the MPC.<br>
 Use your computer to copy the bundle onto the stick; no SSH, development tools or ongoing computer connection is needed.<br>
 The online catalog needs internet on the MPC; local plugin ZIPs can be installed offline.
 
@@ -166,7 +166,7 @@ These logs can be read on your computer without SSH.
 | <picture><img src="site/assets/tab-installed.svg" width="16" height="16" alt=""></picture> **On MPC** | See plugins actually present on the device and select available update/removal actions. |
 | <picture><img src="site/assets/tab-history.svg" width="16" height="16" alt=""></picture> **History** | Compare this stick's saved installation record with the current device and available packages. |
 
-The top-right version is the package offered in that tab.<br>
+The top-right version belongs to the catalog release, local ZIP, on-device installation or saved history entry shown in that tab.<br>
 A floppy symbol and version beside the MPC OS badge identify the installed copy; a small light beside the offered version indicates a newer update.<br>
 Thumbnails load into RAM and are discarded when the manager closes.
 
@@ -185,7 +185,7 @@ The catalog and downloaded packages are kept temporarily in RAM and discarded wh
 
 ## What Changes on the MPC?
 
-Plugin files go to `/sdcard/Expansions`; retained uninstall scripts go into `.mpc-usb-manager/` there.<br>
+On Gen1, plugin files go to `/sdcard/Expansions`; retained uninstall scripts go into `.mpc-usb-manager/` there.<br>
 On the tested Live II, `/sdcard` is internal content storage; it is separate from the removable SD card selected for the manager application.<br>
 Package scripts run as root and update `MPC.settings`.<br>
 The installer does not replace your firmware.<br>
