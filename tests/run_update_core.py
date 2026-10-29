@@ -9,7 +9,8 @@ import uuid
 
 ROOT = Path(__file__).resolve().parents[1]
 SOURCES = ("src/checksum.hpp", "src/checksum.cpp", "src/version_store.hpp",
-           "src/version_store.cpp", "tests/version_store_test.cpp")
+           "src/version_store.cpp", "src/update_worker.hpp", "src/update_worker.cpp",
+           "tests/version_store_test.cpp", "tests/update_worker_fixture.cpp", "tests/update_worker_test.cpp")
 
 
 def main():
@@ -31,16 +32,22 @@ def main():
         path.write_bytes(value)
     image = "mpc-usb-plugin-installer-build-tools" + (":aarch64" if args.arch == "aarch64" else "")
     flags = ["-O0", "-g", "-fsanitize=address,undefined", "-fno-sanitize-recover=all", "-fno-omit-frame-pointer"] if args.sanitize else ["-O2"]
-    compile_command = ["c++", "-std=c++17", "-Wall", "-Wextra", "-Werror", *flags, "-I/source/src",
-                       "/source/src/checksum.cpp", "/source/src/version_store.cpp", "/source/tests/version_store_test.cpp",
-                       "-o", "/results/version-store-test"]
+    compiler = ["c++", "-std=c++17", "-Wall", "-Wextra", "-Werror", *flags, "-I/source/src"]
+    commands = [" ".join([*compiler, "-c", "/source/src/" + name + ".cpp", "-o", "/results/" + name + ".o"])
+                for name in ("checksum", "version_store", "update_worker")]
+    objects = ["/results/" + name + ".o" for name in ("checksum", "version_store", "update_worker")]
+    for source_name, binary in (("version_store_test.cpp", "version-store-test"),
+                                ("update_worker_fixture.cpp", "worker-fixture"),
+                                ("update_worker_test.cpp", "update-worker-test")):
+        commands.append(" ".join([*compiler, "/source/tests/" + source_name, *objects, "-o", "/results/" + binary]))
+    commands.extend(("/results/version-store-test", "/results/update-worker-test /results/worker-fixture"))
     container = "pmu-update-core-" + uuid.uuid4().hex[:12]
     command = ["docker", "run", "--rm", "--pull=never", "--name", container,
                "--platform=" + ("linux/arm64" if args.arch == "aarch64" else "linux/arm/v7"),
                "--network=none", "--read-only", "--memory=768m", "--pids-limit=128",
                "--tmpfs=/tmp:rw,exec,size=67108864", "--mount", f"type=bind,src={source},dst=/source,readonly",
                "--mount", f"type=bind,src={output},dst=/results", image, "sh", "-ec",
-               " ".join(compile_command) + "; /results/version-store-test"]
+               "; ".join(commands)]
     report = {"date": datetime.now().strftime("%d-%m-%Y"), "arch": args.arch, "sanitizers": args.sanitize,
               "source_sha256": fingerprint, "files": {name: hashlib.sha256(value).hexdigest() for name, value in data.items()},
               "scope": "Offline native core; no hardware or media operations", "command": command}
@@ -50,9 +57,10 @@ def main():
         text = (output / "tests.log").read_text()
         report["returncode"] = result.returncode
         report["passed"] = result.returncode == 0 and not re.search(r"warning:|runtime error:|AddressSanitizer:|^FAIL:", text, re.M)
-        match = re.search(r"PASS: (\d+) version-store", text)
-        report["checks"] = int(match.group(1)) if match else 0
-        if not report["passed"] or not report["checks"]:
+        counts = {name: int(count) for count, name in re.findall(r"PASS: (\d+) (version-store|update-worker)", text)}
+        report["checks_by_suite"] = counts
+        report["checks"] = sum(counts.values())
+        if not report["passed"] or set(counts) != {"version-store", "update-worker"}:
             raise RuntimeError("Update-core verification failed; inspect " + str(output / "tests.log"))
         print(f"PASS: {args.arch}, {report['checks']} checks" + (", fatal ASan/UBSan" if args.sanitize else ""))
     except Exception as error:

@@ -41,9 +41,9 @@ int main(){
         }
         {
             Fixture f(root/"normal");auto store=f.open();check(!store.current()&&!store.boot(),"empty store has no active generation");
-            auto first=f.spec("1.0.0");const auto a=store.stage(f.input,first);check(a.size()==64,"generation has a content-derived identifier");check(read(f.input/"program")=="payload","staging preserves input");
+            auto first=f.spec("1.0.0");first.entrypoints={{"manager","program"}};const auto a=store.stage(f.input,first);check(a.size()==64,"generation has a content-derived identifier");check(read(f.input/"program")=="payload","staging preserves input");
             check(store.stage(f.input,first)==a,"identical staging reuses the verified generation");rejects([&]{store.activate(a);},"activation requires a seeded working release");
-            store.seed(a);check(store.current()->id==a&&!store.current()->pending,"initial working generation is healthy");rejects([&]{store.seed(a);},"initialization cannot overwrite an existing selection");
+            store.seed(a);check(store.current()->id==a&&!store.current()->pending,"initial working generation is healthy");check(store.current()->spec.entrypoints.at("manager")=="program","entrypoint roles are preserved independently of file names");rejects([&]{store.seed(a);},"initialization cannot overwrite an existing selection");
             const auto b=store.stage(f.input,f.spec("2.0.0",{{"program","new program"},{"new/nested/file","new resource"},{"empty",""}}));store.activate(b);
             check(store.current()->id==b&&store.current()->pending,"activation selects a complete pending generation");check(read(f.store/a/"program")=="payload","activation leaves old payload intact");
             check(!fs::exists(f.store/b/"assets/data")&&fs::exists(f.store/b/"new/nested/file"),"new generation handles changed file layout without editing old files");
@@ -72,6 +72,7 @@ int main(){
         }
         {
             Fixture f(root/"bad-spec");auto store=f.open();auto spec=f.spec("1.0.0");spec.files["program/child"]=std::string(64,'a');rejects([&]{store.stage(f.input,spec);},"file cannot also be a generation directory");spec=f.spec("1.0.0");spec.files["program"]="invalid";rejects([&]{store.stage(f.input,spec);},"malformed digest is rejected");spec=f.spec("1.0.0");spec.files["program"]=std::string(64,'a');rejects([&]{store.stage(f.input,spec);},"source checksum mismatch is rejected");
+            spec=f.spec("1.0.0");spec.entrypoints={{"manager","missing"}};rejects([&]{store.stage(f.input,spec);},"entrypoint must refer to an inventoried file");
             spec=f.spec("1.0.0");fs::remove(f.input/"program");fs::create_symlink(f.input/"assets/data",f.input/"program");rejects([&]{store.stage(f.input,spec);},"source symlink is rejected");fs::remove(f.input/"program");check(mkfifo((f.input/"program").c_str(),0600)==0,"FIFO fixture created");rejects([&]{store.stage(f.input,spec);},"source FIFO is rejected without blocking");
         }
         {

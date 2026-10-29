@@ -91,12 +91,14 @@ void validate(const GenerationSpec& spec){
         need(relative(item.first)&&*fs::path(item.first).begin()!=receipt&&hex(item.second),"Invalid generation file");
         for(auto parent=fs::path(item.first).parent_path();!parent.empty();parent=parent.parent_path())need(!spec.files.count(parent.generic_string()),"Generation file conflicts with a directory");
     }
+    need(spec.entrypoints.size()<=32,"Too many generation entrypoints");
+    for(const auto& item:spec.entrypoints)need(!item.first.empty()&&item.first.size()<=80&&item.first.find_first_not_of("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_.-")==std::string::npos&&spec.files.count(item.second),"Invalid generation entrypoint");
 }
 GenerationSpec specification(const Json& value){
     need(value.is_object()&&value.value("schema",0)==1,"Unsupported generation inventory");
-    GenerationSpec spec{value.at("version").get<std::string>(),value.at("architecture").get<std::string>(),value.at("files").get<std::map<std::string,std::string>>()};validate(spec);return spec;
+    GenerationSpec spec{value.at("version").get<std::string>(),value.at("architecture").get<std::string>(),value.at("files").get<std::map<std::string,std::string>>()};if(value.contains("entrypoints"))spec.entrypoints=value.at("entrypoints").get<std::map<std::string,std::string>>();validate(spec);return spec;
 }
-Json specificationJson(const GenerationSpec& s){return {{"schema",1},{"version",s.version},{"architecture",s.architecture},{"files",s.files}};}
+Json specificationJson(const GenerationSpec& s){return {{"schema",1},{"version",s.version},{"architecture",s.architecture},{"files",s.files},{"entrypoints",s.entrypoints}};}
 }
 
 struct VersionStore::Impl {

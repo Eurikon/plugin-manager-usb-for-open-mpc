@@ -11,6 +11,7 @@ namespace pmu {
 struct GenerationSpec {
     std::string version, architecture;
     std::map<std::string,std::string> files;
+    std::map<std::string,std::string> entrypoints{};
 };
 struct Generation {
     std::string id;
