@@ -3,10 +3,13 @@ ARM_IMAGE ?= mpc-usb-plugin-installer-build-tools
 ARM64_IMAGE ?= mpc-usb-plugin-installer-build-tools:aarch64
 
 OFFLINE_ARGS ?=
+UPDATE_ARCH ?= aarch64
+UPDATE_OUTPUT ?= $(CURDIR)/build/update-core-$(UPDATE_ARCH)-$(shell date +%d-%m-%Y-%H%M%S)
+UPDATE_CORE_ARGS ?=
 .DEFAULT_GOAL := arm
 -include private/offline-tests.mk
 
-.PHONY: arm64 arm64-image arm arm-helper arm-image test test-arm64 test-local test-runner test-offline syntax site
+.PHONY: arm64 arm64-image arm arm-helper arm-image test test-arm64 test-local test-runner test-offline test-update-core syntax site
 
 arm: arm-image
 	docker run --rm --platform linux/arm/v7 --network none -v "$(CURDIR):/work" -w /work $(ARM_IMAGE) sh build.sh
@@ -37,6 +40,9 @@ test-arm64: arm64
 
 test-runner:
 	TEST_PACKAGE_ZIP="$(TEST_PACKAGE_ZIP)" LEGACY_PACKAGE_ZIP="$(LEGACY_PACKAGE_ZIP)" $(PYTHON) tests/offline_runner_test.py
+
+test-update-core:
+	$(PYTHON) tests/run_update_core.py --arch "$(UPDATE_ARCH)" --output "$(UPDATE_OUTPUT)" $(UPDATE_CORE_ARGS)
 
 test-local:
 	TEST_PACKAGE_ZIP="$(TEST_PACKAGE_ZIP)" LEGACY_PACKAGE_ZIP="$(LEGACY_PACKAGE_ZIP)" $(PYTHON) -m unittest discover -s tests -p offline_runner_test.py
