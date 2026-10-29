@@ -151,7 +151,7 @@ case "$url" in
   https://github.com/Eurikon/plugin-manager-usb-for-open-mpc/releases/download/v@VERSION@/plugin-manager-usb-v@VERSION@.zip)
     printf 'download\\n' >> "$root/session/manager-downloads.log"
     sleep 1
-    cp "$root/update.zip" "$out";;
+    dd if="$root/update.zip" of="$out" bs=65536 status=none;;
   *) exit 1;;
 esac
 """)
@@ -181,13 +181,19 @@ JSON
 c++ -std=c++17 -O2 -Wall -Wextra -Werror -DMPC_MANAGER_SD_FIXTURE -Isrc -Itests -I/opt/sdl/include/SDL2 $(pkg-config --cflags freetype2) -c src/main.cpp -o /results/main.o
 c++ /results/main.o build/backend.o build/plugin_storage.o build/sd_install.o build/manager_update.o build/thumbnail.o -o /results/manager-ui $(/opt/sdl/bin/sdl2-config --static-libs) $(pkg-config --libs freetype2) -larchive -Wl,-Bstatic -lpng -ljpeg -lz -Wl,-Bdynamic
 for mode in sd-unavailable sd-empty sd-cancel sd-install sd-remove sd-remove-current sd-hidden sd-themes sd-updates sd-update-error sd-self-update sd-self-update-fail sd-install-dark legacy-smoke; do
-  root=/results/$mode
+  # Shared mounts can change inode identities after atomic replacement.
+  root=$(mktemp -d "/tmp/pmu-ui-$mode.XXXXXX")
+  cp -a "/results/$mode/." "$root/"
   binary=/results/manager-ui
   testmode=$mode
   if [ "$mode" = legacy-smoke ]; then binary=/work/build/manager; testmode=smoke; fi
   if [ "$mode" = sd-install-dark ]; then testmode=sd-install; fi
   printf 'MODE %s\\n' "$mode"
-  env -u MPC_MANAGER_SD_HELPER PATH="$root/bin:$PATH" SDL_VIDEODRIVER=dummy MPC_MANAGER_UI_UPDATE_VERSION="@VERSION@" MPC_MANAGER_UI_TEST="$testmode" "$binary" "$root/source" "$root/session" "$root/Expansions" "$root/MPC.settings" /work/build/font.ttf
+  status=0
+  env -u MPC_MANAGER_SD_HELPER PATH="$root/bin:$PATH" SDL_VIDEODRIVER=dummy MPC_MANAGER_UI_UPDATE_VERSION="@VERSION@" MPC_MANAGER_UI_TEST="$testmode" "$binary" "$root/source" "$root/session" "$root/Expansions" "$root/MPC.settings" /work/build/font.ttf || status=$?
+  cp -a "$root/." "/results/$mode/"
+  rm -rf "$root"
+  [ "$status" -eq 0 ] || exit "$status"
 done
 """
     script = script.replace("@VERSION@", version)
