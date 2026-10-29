@@ -10,6 +10,7 @@ import uuid
 ROOT = Path(__file__).resolve().parents[1]
 SOURCES = ("src/checksum.hpp", "src/checksum.cpp", "src/version_store.hpp",
            "src/version_store.cpp", "src/update_worker.hpp", "src/update_worker.cpp",
+           "src/update_bundle.hpp", "src/update_bundle.cpp", "tests/update_bundle_test.cpp",
            "tests/version_store_test.cpp", "tests/update_worker_fixture.cpp", "tests/update_worker_test.cpp")
 
 
@@ -34,13 +35,16 @@ def main():
     flags = ["-O0", "-g", "-fsanitize=address,undefined", "-fno-sanitize-recover=all", "-fno-omit-frame-pointer"] if args.sanitize else ["-O2"]
     compiler = ["c++", "-std=c++17", "-Wall", "-Wextra", "-Werror", *flags, "-I/source/src"]
     commands = [" ".join([*compiler, "-c", "/source/src/" + name + ".cpp", "-o", "/results/" + name + ".o"])
-                for name in ("checksum", "version_store", "update_worker")]
+                for name in ("checksum", "version_store", "update_worker", "update_bundle")]
     objects = ["/results/" + name + ".o" for name in ("checksum", "version_store", "update_worker")]
     for source_name, binary in (("version_store_test.cpp", "version-store-test"),
                                 ("update_worker_fixture.cpp", "worker-fixture"),
-                                ("update_worker_test.cpp", "update-worker-test")):
-        commands.append(" ".join([*compiler, "/source/tests/" + source_name, *objects, "-o", "/results/" + binary]))
-    commands.extend(("/results/version-store-test", "/results/update-worker-test /results/worker-fixture"))
+                                ("update_worker_test.cpp", "update-worker-test"),
+                                ("update_bundle_test.cpp", "update-bundle-test")):
+        bundle = ["/results/update_bundle.o", "-larchive"] if binary == "update-bundle-test" else []
+        commands.append(" ".join([*compiler, "/source/tests/" + source_name, *objects, *bundle, "-o", "/results/" + binary]))
+    commands.extend(("/results/version-store-test", "/results/update-worker-test /results/worker-fixture",
+                     "/results/update-bundle-test /results/worker-fixture"))
     container = "pmu-update-core-" + uuid.uuid4().hex[:12]
     command = ["docker", "run", "--rm", "--pull=never", "--name", container,
                "--platform=" + ("linux/arm64" if args.arch == "aarch64" else "linux/arm/v7"),
@@ -57,10 +61,10 @@ def main():
         text = (output / "tests.log").read_text()
         report["returncode"] = result.returncode
         report["passed"] = result.returncode == 0 and not re.search(r"warning:|runtime error:|AddressSanitizer:|^FAIL:", text, re.M)
-        counts = {name: int(count) for count, name in re.findall(r"PASS: (\d+) (version-store|update-worker)", text)}
+        counts = {name: int(count) for count, name in re.findall(r"PASS: (\d+) (version-store|update-worker|update-bundle)", text)}
         report["checks_by_suite"] = counts
         report["checks"] = sum(counts.values())
-        if not report["passed"] or set(counts) != {"version-store", "update-worker"}:
+        if not report["passed"] or set(counts) != {"version-store", "update-worker", "update-bundle"}:
             raise RuntimeError("Update-core verification failed; inspect " + str(output / "tests.log"))
         print(f"PASS: {args.arch}, {report['checks']} checks" + (", fatal ASan/UBSan" if args.sanitize else ""))
     except Exception as error:

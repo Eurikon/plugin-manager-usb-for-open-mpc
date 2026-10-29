@@ -195,6 +195,8 @@ struct VersionStore::Impl {
     }
 };
 
+GenerationSpec generationSpecFromJson(const Json& value){return specification(value);}
+Json generationSpecToJson(const GenerationSpec& spec){validate(spec);return specificationJson(spec);}
 VersionStore::VersionStore(fs::path root,uid_t owner,Hash hash,Checkpoint checkpoint,bool create):impl(std::make_unique<Impl>(std::move(root),owner,std::move(hash),std::move(checkpoint),create)){}
 VersionStore::~VersionStore()=default;
 std::string VersionStore::stage(const fs::path& source,const GenerationSpec& spec){

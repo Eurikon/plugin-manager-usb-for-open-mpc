@@ -6,6 +6,7 @@
 #include <optional>
 #include <string>
 #include <sys/types.h>
+#include <nlohmann/json_fwd.hpp>
 
 namespace pmu {
 struct GenerationSpec {
@@ -13,6 +14,8 @@ struct GenerationSpec {
     std::map<std::string,std::string> files;
     std::map<std::string,std::string> entrypoints{};
 };
+GenerationSpec generationSpecFromJson(const nlohmann::json& value);
+nlohmann::json generationSpecToJson(const GenerationSpec& spec);
 struct Generation {
     std::string id;
     std::filesystem::path directory;
