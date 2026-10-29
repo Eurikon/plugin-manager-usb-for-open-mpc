@@ -2,6 +2,7 @@
 #include "sd_install.hpp"
 #include "manager_update.hpp"
 #include "display.hpp"
+#include "thumbnail.hpp"
 #ifdef MPC_MANAGER_PLUGIN_STORAGE_FIXTURE
 #include "../tests/plugin_storage_fixture.hpp"
 #endif
@@ -116,6 +117,20 @@ struct Screen {
         }
         if(row<lines)text(x,y+row*(size+7),line,color,size,width);
     }
+    void thumbnail(int x,int y,const Thumbnail* image){
+        box(x,y,128,80,image?Theme::lcd:Theme::panel);
+        if(!image){uint32_t color=0xff000000;for(int shift:{0,8,16})color|=((((Theme::muted>>shift)&255)*45+((Theme::panel>>shift)&255)*55)/100)<<shift;box(x+43,y+25,42,30,Theme::panel,color);const int points[][2]={{48,40},{53,40},{56,33},{61,48},{66,31},{70,45},{73,40},{79,40}};for(size_t i=1;i<8;++i)line(x+points[i-1][0],y+points[i-1][1],x+points[i][0],y+points[i][1],color);return;}
+        const int left=x+(128-image->width)/2,top=y+(80-image->height)/2;
+        for(int row=0;row<image->height;++row)for(int col=0;col<image->width;++col){const int px=left+col,py=top+row;if(px<0||px>=1280||py<0||py>=800)continue;const auto source=image->pixels[row*image->width+col];const unsigned alpha=source>>24;auto& target=pixels[py*1280+px];uint32_t result=0xff000000;for(int shift:{0,8,16})result|=((((source>>shift)&255)*alpha+((target>>shift)&255)*(255-alpha))/255)<<shift;target=result;}
+    }
+    void installedVersion(int x,int y,const std::string& version){
+        box(x,y,116,30,Theme::panel);const int dx=x+8,dy=y+4;const auto color=Theme::ink;
+        rect(dx,dy,22,2,color);rect(dx,dy,2,22,color);rect(dx+20,dy,2,22,color);rect(dx,dy+20,22,2,color);rect(dx+5,dy+2,12,6,color);rect(dx+5,dy+12,12,2,color);rect(dx+5,dy+12,2,9,color);rect(dx+15,dy+12,2,9,color);
+        text(x+40,y+22,version,Theme::muted,18,68);
+    }
+    void updateLed(int x,int y){
+        for(int row=-6;row<=6;++row)for(int col=-6;col<=6;++col){const int radius=row*row+col*col;if(radius>36)continue;const unsigned alpha=radius<=9?255:unsigned((36-radius)*5);auto& target=pixels[(y+row)*1280+x+col];uint32_t result=0xff000000;for(int shift:{0,8,16})result|=((((Theme::red>>shift)&255)*alpha+((target>>shift)&255)*(255-alpha))/255)<<shift;target=result;}
+    }
     void present(){SDL_UpdateTexture(texture,nullptr,pixels.data(),1280*4);SDL_RenderClear(renderer);if(geometry.portrait){SDL_Rect destination{-240,240,1280,800};SDL_RenderCopyEx(renderer,texture,nullptr,&destination,geometry.flipped?90:270,nullptr,SDL_FLIP_NONE);}else if(geometry.flipped)SDL_RenderCopyEx(renderer,texture,nullptr,nullptr,180,nullptr,SDL_FLIP_NONE);else SDL_RenderCopy(renderer,texture,nullptr,nullptr);SDL_RenderPresent(renderer);}
 };
 static std::string storageSize(uint64_t bytes) {
@@ -129,6 +144,7 @@ static int app(int argc,char**argv) {
     storagePaths=pluginStorageFixture(argv[2],argv[4],std::getenv("MPC_MANAGER_UI_TEST")&&std::string(std::getenv("MPC_MANAGER_UI_TEST"))=="plugin-location-blocked");
 #endif
     Manager manager(argv[1],argv[2],argv[3],argv[4],managerArchitecture(),storagePaths);bool dark=false;try{dark=manager.darkTheme();}catch(const std::exception& e){std::fprintf(stderr,"Theme preference: %s\n",e.what());}Theme::set(dark);Screen screen(argv[5],argv[1]);
+    ThumbnailCache thumbnails;uint64_t artworkRevision=0;
     auto labelWidth=[&](const std::string& label,int size){int width=0;FT_Set_Pixel_Sizes(screen.face,0,size);for(unsigned char letter:label)if(!FT_Load_Char(screen.face,letter,FT_LOAD_DEFAULT))width+=screen.face->glyph->advance.x>>6;return width;};
     const int setupWidth=12+24+12+labelWidth("SETUP",23)+12,setupX=1252-setupWidth;
     const int themeWidth=16+24+12+std::max(labelWidth("Light",25),labelWidth("Dark",25))+12,themeX=995-themeWidth;
@@ -244,6 +260,10 @@ static int app(int argc,char**argv) {
             if(returning)status="Returning to MPC...";
         }
         startNext();
+        std::vector<std::string> artworkUrls;
+        if(!welcome&&!sdView&&!confirming&&!returning&&!mutating&&listReady)for(int i=page*6;i<std::min(int(items.size()),page*6+6);++i)artworkUrls.push_back(items[i].value("screenshot",""));
+        thumbnails.visible(artworkUrls);const auto revision=thumbnails.revision();if(revision!=artworkRevision){artworkRevision=revision;dirty=true;}
+        if(quitting||returning)thumbnails.clear();
         if(returning&&!busy&&!themePending&&!hidePending)quitting=1;
         const Uint32 fadeElapsed=SDL_GetTicks()-progressEnded;if(progressFading&&fadeElapsed>=600){progressFading=false;dirty=true;}
         if(SDL_GetTicks()-lastTouch>=300000&&!busy)quitting=1;
@@ -348,8 +368,6 @@ static int app(int argc,char**argv) {
         screen.box(setupX,8,setupWidth,40,Theme::panel);screen.icon(setupX+12,16,Icon::Cog,mutating?Theme::muted:Theme::ink);screen.text(setupX+48,36,"SETUP",mutating?Theme::muted:Theme::ink,23,setupWidth-60);
         screen.rect(28,55,1224,1,Theme::line);
         screen.button(28,65,175,"Catalog",view=="catalog",!mutating,Icon::Grid);screen.button(215,65,175,"Local",view=="local",!mutating,Icon::Folder);screen.button(402,65,175,"On MPC",view=="installed",!mutating,Icon::Check);screen.button(589,65,175,"History",view=="history",!mutating,Icon::History);screen.button(1007,65,245,"Return to MPC",false,!mutating,Icon::Return);screen.themeButton(themeX,65,themeWidth,dark,!mutating);
-        screen.text(28,159,view=="catalog"?"Browse community plugins":view=="local"?(sourceOnSd?"Install your own plugins from this SD card":"Install your own plugins from this USB"):view=="history"?(sourceOnSd?"Installation history on this SD card - compare with this MPC":"Installation history on this USB - compare with this MPC"):"Manage your installed plugins",Theme::muted,25,800);
-        screen.text(850,159,std::to_string(items.size())+" plugins  |  MPC OS 3",Theme::muted,23,400);
         if(confirming){
             screen.box(28,185,1224,390,Theme::panel);
             screen.text(52,239,operation+" "+items[selected].value("name","Plugin")+"?",Theme::ink,34,1150);
@@ -358,17 +376,19 @@ static int app(int argc,char**argv) {
             screen.text(52,371,manager.synths.empty()?"No plugin installation location selected. Open SETUP.":manager.synths.string(),Theme::muted,22,1150);
             screen.button(28,395,300,"Confirm "+operation,true,!busy);screen.button(345,395,220,"Cancel");
         } else {
-            for(int row=0;row<6;++row){int index=page*6+row;if(index>=int(items.size()))break;const auto& item=items[index];int x=28+(row%2)*620,y=185+(row/2)*130;
+            for(int row=0;row<6;++row){int index=page*6+row;if(index>=int(items.size()))break;const auto& item=items[index];const int x=28+(row%2)*620,y=143+(row/2)*151;
                 const bool blocked=!item.value("blocked_reason","").empty();
-                screen.box(x,y,604,120,Theme::panel,index==selected?Theme::red:Theme::line);
-                if(index==selected)screen.rect(x,y,4,120,Theme::red);
+                screen.box(x,y,604,140,Theme::panel,index==selected?Theme::red:Theme::line);
+                if(index==selected)screen.rect(x,y,4,140,Theme::red);
                 screen.text(x+18,y+35,item.value("name","Plugin"),Theme::ink,31,420);
-                screen.rect(x+455,y+12,132,30,Theme::lcd);screen.text(x+466,y+35,view=="installed"?item.value("installed_version",""):view=="history"?item.value("saved_version",""):item.value("version",""),Theme::white,21,112);
-                screen.text(x+18,y+63,"by "+item.value("author",item.value("manufacturer","Not listed")),Theme::muted,21,560);
-                screen.badge(x+18,y+77,150,item.value("kind","")=="effect"?"EFFECT":"INSTRUMENT");
-                screen.badge(x+178,y+77,140,blocked?"UNAVAILABLE":"MPC OS 3",blocked);
-                if(item.value("installed",false)){if(view=="history")screen.text(x+328,y+100,"Installed v"+item.value("installed_version",""),Theme::muted,20,210);screen.icon(x+563,y+84,Icon::Disk,Theme::ink);}
-                else if(view=="history")screen.badge(x+328,y+77,250,"NOT INSTALLED");
+                screen.rect(x+459,y+12,128,30,Theme::lcd);screen.text(x+470,y+35,view=="installed"?item.value("installed_version",""):view=="history"?item.value("saved_version",""):item.value("version",""),Theme::white,21,90);
+                if((view=="catalog"||view=="local")&&item.value("installed",false)&&item.value("update_available",false))screen.updateLed(x+572,y+27);
+                screen.text(x+18,y+63,"by "+item.value("author",item.value("manufacturer","Not listed")),Theme::muted,21,420);
+                screen.badge(x+18,y+98,128,item.value("kind","")=="effect"?"EFFECT":"INSTRUMENT");
+                if(blocked){screen.box(x+156,y+98,112,30,Theme::warning,0xffe0a100);screen.text(x+165,y+120,"UNAVAILABLE",Theme::amber,17,94);}else screen.badge(x+156,y+98,112,"MPC OS 3");
+                if(item.value("installed",false))screen.installedVersion(x+278,y+98,item.value("installed_version",""));
+                else if(view=="history"){screen.box(x+278,y+98,139,30,Theme::panel);screen.text(x+287,y+120,"NOT INSTALLED",Theme::muted,17,121);}
+                const auto artwork=thumbnails.get(item.value("screenshot",""));screen.thumbnail(x+459,y+48,artwork.get());
             }
             if(!initial&&items.empty())screen.wrapped(28,230,!listReady?(failed?status:"Loading plugins..."):view=="catalog"&&!catalogError.empty()?catalogError:"No plugins in this view.",1100,3);
             screen.button(28,605,180,"Previous",false,listReady&&(!busy||work==Work::Preferences)&&page>0,Icon::Left);screen.button(220,605,180,"Next",false,listReady&&(!busy||work==Work::Preferences)&&(page+1)*6<int(items.size()),Icon::Right);screen.text(430,643,"Page "+std::to_string(page+1)+" / "+std::to_string(std::max(1,(int(items.size())+5)/6)),Theme::muted);
@@ -643,7 +663,7 @@ static int app(int argc,char**argv) {
                 if(!busy&&y>=395&&y<453&&x>=28&&x<328){Json chosen=items[selected];const bool remove=operation=="Uninstall";busy=mutating=true;work=Work::Mutation;confirming=false;completed=false;failed=false;progressFading=false;amount(-1);status=remove?(sourceOnSd?"Uninstalling. Keep the SD card inserted...":"Uninstalling. Keep the USB inserted..."):"Preparing package checks...";job=std::async(std::launch::async,[&,chosen,remove]{if(remove)manager.remove(chosen);else manager.install(chosen,progress,amount);return Result{};});}
                 continue;
             }
-            if(y>=185&&y<575&&x>=28&&x<1252){int row=(y-185)/130,col=(x-28)/620;if((x-28)%620>=604||(y-185)%130>=120)continue;int index=page*6+row*2+col;if(index<int(items.size())){selected=index;if(!items[index].value("blocked_reason","").empty())status="Download blocked: "+items[index].value("blocked_reason","");else if(!items[index].value("summary","").empty()){status=items[index].value("summary","");completed=false;}}}
+            if(y>=143&&y<585&&x>=28&&x<1252){int row=(y-143)/151,col=(x-28)/620;if((x-28)%620>=604||(y-143)%151>=140)continue;int index=page*6+row*2+col;if(index<int(items.size())){selected=index;if(!items[index].value("blocked_reason","").empty())status="Download blocked: "+items[index].value("blocked_reason","");else if(!items[index].value("summary","").empty()){status=items[index].value("summary","");completed=false;}}}
             if(y>=605&&y<663){if(x>=28&&x<208&&page>0){--page;selected=-1;}else if(x>=220&&x<400&&(page+1)*6<int(items.size())){++page;selected=-1;}else if(selected>=0){const auto& choice=items[selected];const bool installed=choice.value("installed",false);
                 if(installed&&x>=660&&x<910){if(choice.at("device_item").value("device_target","")!=manager.synths.string()){status="Use this plugin's original installer to remove it.";continue;}operation="Uninstall";confirming=true;}
                 else if(!choice.value("blocked_reason","").empty())continue;

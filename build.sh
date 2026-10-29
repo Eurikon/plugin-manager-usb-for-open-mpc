@@ -18,14 +18,17 @@ c++ -std=c++17 -O2 -Wall -Wextra -Werror -Isrc -c src/plugin_storage.cpp -o "$ou
 c++ -std=c++17 -O2 -Wall -Wextra -Werror "$manager_version_flag" -Isrc -c src/backend.cpp -o "$output"/backend.o
 c++ -std=c++17 -O2 -Wall -Wextra -Werror -Isrc -c src/sd_install.cpp -o "$output"/sd_install.o
 c++ -std=c++17 -O2 -Wall -Wextra -Werror -Isrc -c src/manager_update.cpp -o "$output"/manager_update.o
+c++ -std=c++17 -O2 -Wall -Wextra -Werror -Isrc $(pkg-config --cflags libpng) -c src/thumbnail.cpp -o "$output"/thumbnail.o
 c++ -std=c++17 -O2 -Wall -Wextra -Werror "$manager_version_flag" -I/opt/sdl/include/SDL2 $(pkg-config --cflags freetype2) -c src/main.cpp -o "$output"/main.o
-c++ "$output"/backend.o "$output"/plugin_storage.o "$output"/sd_install.o "$output"/manager_update.o "$output"/main.o -o "$output"/manager $(/opt/sdl/bin/sdl2-config --static-libs) $(pkg-config --libs freetype2) -larchive
+c++ "$output"/backend.o "$output"/plugin_storage.o "$output"/sd_install.o "$output"/manager_update.o "$output"/thumbnail.o "$output"/main.o -o "$output"/manager $(/opt/sdl/bin/sdl2-config --static-libs) $(pkg-config --libs freetype2) -larchive -Wl,-Bstatic -lpng -ljpeg -lz -Wl,-Bdynamic
 strip "$output"/manager
 c++ -std=c++17 -O2 -Wall -Wextra -Werror "$manager_version_flag" -Isrc tests/backend_test.cpp "$output"/backend.o "$output"/plugin_storage.o -larchive -pthread -o "$output"/backend-test
 c++ -std=c++17 -O2 -Wall -Wextra -Werror -Isrc tests/architecture_test.cpp "$output"/backend.o "$output"/plugin_storage.o -larchive -pthread -o "$output"/architecture-test
 c++ -std=c++17 -O2 -Wall -Wextra -Werror -Isrc -Itests tests/sd_install_test.cpp "$output"/backend.o "$output"/plugin_storage.o "$output"/sd_install.o -larchive -pthread -o "$output"/sd-install-test
 c++ -std=c++17 -O2 -Wall -Wextra -Werror -Isrc -Itests tests/manager_update_test.cpp "$output"/backend.o "$output"/plugin_storage.o "$output"/manager_update.o -larchive -pthread -o "$output"/manager-update-test
 c++ -std=c++17 -O2 -Wall -Wextra -Werror -Isrc tests/plugin_storage_test.cpp "$output"/backend.o "$output"/plugin_storage.o -larchive -pthread -o "$output"/plugin-storage-test
+c++ -std=c++17 -O2 -Wall -Wextra -Werror -Isrc $(pkg-config --cflags libpng) tests/thumbnail_test.cpp "$output"/thumbnail.o -Wl,-Bstatic -lpng -ljpeg -lz -Wl,-Bdynamic -ldl -pthread -o "$output"/thumbnail-test
+c++ -std=c++17 -O2 -Wall -Wextra -Werror -Isrc $(pkg-config --cflags libpng) tests/thumbnail_network_test.cpp "$output"/thumbnail.o -Wl,-Bstatic -lpng -ljpeg -lz -Wl,-Bdynamic -ldl -pthread -o "$output"/thumbnail-network-test
 cp assets/font.ttf "$output"/font.ttf
 cp licenses/TitilliumWeb.txt "$output"/font-license.txt
 cp /usr/share/doc/nlohmann-json3-dev/copyright "$output"/json-license.txt

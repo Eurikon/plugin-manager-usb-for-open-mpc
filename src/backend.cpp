@@ -191,7 +191,7 @@ void Manager::openCatalog() {
                             asset=&version.at("assets").at(arch);
                         }
                         if(asset->value("sha256","")!=item.at("sha"))continue;
-                        for(const char* field:{"author","summary","license"})if(plugin.contains(field)&&plugin.at(field).is_string())item[field]=plugin.at(field);
+                        for(const char* field:{"author","summary","license","screenshot"})if(plugin.contains(field)&&plugin.at(field).is_string())item[field]=plugin.at(field);
                     }
                 }
             }
@@ -563,6 +563,8 @@ std::vector<Json> Manager::list(const std::string& view) {
             } catch(const std::exception& e) {std::fprintf(stderr,"Local package %s: %s\n",entry.path().filename().c_str(),e.what());}
         }
     }
+
+    for(auto& item:result){item.erase("screenshot");for(const auto& candidate:catalog)if(candidate.at("id")==item.at("id")&&candidate.contains("screenshot")&&candidate.at("screenshot").is_string()){item["screenshot"]=candidate.at("screenshot");break;}}
 
     const auto actual=view=="installed"?result:installedPlugins();
     if(view=="installed")for(auto& item:result){bool offered=false;for(const auto& candidate:catalog)if(candidate.at("id")==item.at("id")){item=candidate;offered=true;break;}if(!offered){for(const auto& candidate:local())if(candidate.at("id")==item.at("id")){item=candidate;offered=true;break;}}if(!offered)item["blocked_reason"]="This plugin is managed by its original installer";}

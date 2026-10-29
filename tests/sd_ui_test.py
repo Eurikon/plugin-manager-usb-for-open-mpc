@@ -115,7 +115,7 @@ def main():
     inputs = [SOURCE / name for name in (
         "src/main.cpp", "src/sd_install.cpp", "src/sd_install.hpp", "tests/sd_install_fixture.hpp",
         "src/backend.cpp", "src/plugin_storage.cpp", "src/plugin_storage.hpp", "src/backend.hpp", "src/version.hpp", "src/manager_update.cpp", "src/manager_update.hpp", "tests/manager_update_fixture.hpp",
-        "build/backend.o", "build/plugin_storage.o", "build/sd_install.o", "build/manager_update.o", "build/manager", "build/font.ttf")]
+        "src/thumbnail.hpp", "src/thumbnail.cpp", "build/thumbnail.o", "build/backend.o", "build/plugin_storage.o", "build/sd_install.o", "build/manager_update.o", "build/manager", "build/font.ttf")]
     hashes = {str(path.relative_to(SOURCE)): digest(path) for path in inputs}
     output.mkdir(parents=True, exist_ok=False)
     preserved = {}
@@ -179,7 +179,7 @@ JSON
         downloader.chmod(0o755)
     script = """set -eu
 c++ -std=c++17 -O2 -Wall -Wextra -Werror -DMPC_MANAGER_SD_FIXTURE -Isrc -Itests -I/opt/sdl/include/SDL2 $(pkg-config --cflags freetype2) -c src/main.cpp -o /results/main.o
-c++ /results/main.o build/backend.o build/plugin_storage.o build/sd_install.o build/manager_update.o -o /results/manager-ui $(/opt/sdl/bin/sdl2-config --static-libs) $(pkg-config --libs freetype2) -larchive
+c++ /results/main.o build/backend.o build/plugin_storage.o build/sd_install.o build/manager_update.o build/thumbnail.o -o /results/manager-ui $(/opt/sdl/bin/sdl2-config --static-libs) $(pkg-config --libs freetype2) -larchive -Wl,-Bstatic -lpng -ljpeg -lz -Wl,-Bdynamic
 for mode in sd-unavailable sd-empty sd-cancel sd-install sd-remove sd-remove-current sd-hidden sd-themes sd-updates sd-update-error sd-self-update sd-self-update-fail sd-install-dark legacy-smoke; do
   root=/results/$mode
   binary=/results/manager-ui

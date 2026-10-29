@@ -67,7 +67,7 @@ int main() {
                 (modern?"2000\t"+digest64+"\thttps://example.invalid/aarch64.zip":"-\t-\t-")+"\n";
         };
         save(root/"catalog.tsv","#mpc-catalog-tsv 1\n"+row("both",true,true)+row("legacy",true,false)+row("modern",false,true));
-        save(root/"catalog.json",Json{{"schema",1},{"plugins",Json::array({{{"id","both"},{"author","Fixture author"},{"versions",Json::array({{{"version","1.0.0"},{"sha256",digest},{"assets",{{"aarch64",{{"sha256",digest64}}}}}}})}}})}}.dump());
+        save(root/"catalog.json",Json{{"schema",1},{"plugins",Json::array({{{"id","both"},{"author","Fixture author"},{"screenshot","https://example.invalid/screen.png"},{"versions",Json::array({{{"version","1.0.0"},{"sha256",digest},{"assets",{{"aarch64",{{"sha256",digest64}}}}}}})}}})}}.dump());
         save(root/"bin/wget","#!/bin/sh\nset -eu\ncase \"$5\" in */catalog.tsv) cp \"$MPC_ARCHITECTURE_FIXTURE/catalog.tsv\" \"$4\" ;; */catalog.json) cp \"$MPC_ARCHITECTURE_FIXTURE/catalog.json\" \"$4\" ;; *) exit 99 ;; esac\n");
         chmod((root/"bin/wget").c_str(),0700);
         setenv("PATH",((root/"bin").string()+":"+savedPath).c_str(),1);setenv("MPC_ARCHITECTURE_FIXTURE",root.c_str(),1);
@@ -79,6 +79,8 @@ int main() {
             const auto& both=manager.catalog[0];check(both.at("sha")== (arch=="aarch64"?digest64:digest),"catalog selects the device checksum");
             check(both.at("url")==std::string("https://example.invalid/")+arch+".zip","catalog selects the device URL");
             check(both.at("author")=="Fixture author","metadata follows the architecture-specific asset");
+            check(both.at("screenshot")=="https://example.invalid/screen.png","screenshot metadata follows the matched architecture-specific asset");
+            check(manager.list("catalog")[0].at("screenshot")==both.at("screenshot"),"catalog artwork resolution preserves image URL without changing package URL");
             check(manager.catalog[arch=="aarch64"?1:2].at("blocked_reason")!="","missing architecture is blocked before download");
             check(manager.catalog[arch=="aarch64"?2:1].at("blocked_reason")=="","available architecture remains installable");
             const auto installed=manager.installedPlugins();check(installed.size()==1&&installed[0].at("uid")== (arch=="aarch64"?"Mod1":"Leg1"),"installed inventory reads the correct registry");

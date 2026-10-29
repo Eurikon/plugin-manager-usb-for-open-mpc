@@ -32,7 +32,7 @@ def main():
         downloader.chmod(0o755)
     script = """set -eu
 c++ -std=c++17 -O2 -Wall -Wextra -Werror -DMPC_MANAGER_PLUGIN_STORAGE_FIXTURE -Isrc -Itests -I/opt/sdl/include/SDL2 $(pkg-config --cflags freetype2) -c src/main.cpp -o /results/main.o
-c++ /results/main.o build/aarch64/backend.o build/aarch64/plugin_storage.o build/aarch64/sd_install.o build/aarch64/manager_update.o -o /results/manager-ui $(/opt/sdl/bin/sdl2-config --static-libs) $(pkg-config --libs freetype2) -larchive
+c++ /results/main.o build/aarch64/backend.o build/aarch64/plugin_storage.o build/aarch64/sd_install.o build/aarch64/manager_update.o build/aarch64/thumbnail.o -o /results/manager-ui $(/opt/sdl/bin/sdl2-config --static-libs) $(pkg-config --libs freetype2) -larchive -Wl,-Bstatic -lpng -ljpeg -lz -Wl,-Bdynamic
 for mode in plugin-location plugin-location-blocked plugin-location-custom plugin-location-dark; do
   root=/results/$mode
   PATH="$root/bin:$PATH" SDL_VIDEODRIVER=dummy MPC_MANAGER_UI_TEST="$mode" /results/manager-ui "$root/source" "$root/session" auto "$root/MPC.settings" /work/build/aarch64/font.ttf

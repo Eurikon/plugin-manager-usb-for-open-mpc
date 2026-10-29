@@ -53,6 +53,8 @@ class PackageTests(unittest.TestCase):
         for name in ("launch.sh", "setup.sh", "open.sh", "LICENSE"):
             (self.project / name).write_text("fixture " + name)
         (self.project / "licenses/SDL2.txt").write_text("SDL notice")
+        for name in ("libpng.txt", "libjpeg-turbo.txt", "zlib.txt"):
+            (self.project / "licenses" / name).write_text("third-party notice " + name)
         (self.project / "licenses/TitilliumWeb.txt").write_text("font notice")
         self.firmware = self.root / "external MPC"
         self.firmware.write_bytes(executable())
@@ -86,6 +88,9 @@ class PackageTests(unittest.TestCase):
         autorun = self.output / "autorun"
         payload = json.loads((autorun / "autorun.json").read_text())["value0"]
         self.assertIn("runtime/licenses/plugin-manager-usb.txt", payload["files"])
+        for name in ("libpng.txt", "libjpeg-turbo.txt", "zlib.txt"):
+            self.assertIn("runtime/licenses/" + name, payload["files"])
+            self.assertEqual((autorun / "runtime/licenses" / name).read_text(), "third-party notice " + name)
         ordered = ["autorun.json", "open.sh"] + payload["files"]
         expected = hashlib.sha256(b"".join((autorun / name).read_bytes() for name in ordered) + TEST_SALT).hexdigest()
         self.assertEqual((autorun / "autorun.check").read_text(), expected)
