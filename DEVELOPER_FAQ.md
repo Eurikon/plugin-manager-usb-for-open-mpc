@@ -464,6 +464,8 @@ It runs with `--pmu-update-v1`, reads its bounded JSON request from descriptor 3
 The verified executable remains pinned through descriptor 5.
 A capability handshake precedes application; process groups, clean environment and deadlines bound execution.
 
+Keep the version-1 handover capsule and its 15 fields compatible with the retained previous worker.
+Its `open_after_handoff` mode refreshes RAM without undoing the source’s startup-health decision.
 The stable controller filename and C payload ABI v1 remain outside routine replacement.
 Mutable helper/bootstrap/runtime files are selected through signed manifests rather than a fixed legacy filename whitelist.
 Keep factory selection records distinct from live update state, and preserve other architectures’ working generations during pruning.

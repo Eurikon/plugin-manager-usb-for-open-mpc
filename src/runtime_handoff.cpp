@@ -82,7 +82,9 @@ void recoverRuntimeHandoff(const fs::path& capsule,const std::string& publisher)
         if(!registered(item.oldBase,item.source))need(runtimeCommand({"/bin/systemctl","stop",item.service},item.helper,std::chrono::seconds(45))==0,"Cannot stop the failed updated MPC application before recovery");
         if(registered(item.newBase,item.source))retire(item,item.newBase);
         SourceRuntime source(item.source,managerArchitecture(),publisher);source.identity();need(source.identity()==item.sourceIdentity,"Recovery source was removed or replaced");
-        restore(item.source/"autorun/runtime/.pmu-versions",item.previousGeneration,item.generation,"runtime",publisher,managerArchitecture());if(!item.helper.empty())restore(item.helper/".pmu-versions",item.previousHelperGeneration,item.helperGeneration,"helper",publisher);
+        // A RAM refresh must preserve storage's health decision, not revive its failed GUI.
+        if(!item.openAfterHandoff)restore(item.source/"autorun/runtime/.pmu-versions",item.previousGeneration,item.generation,"runtime",publisher,managerArchitecture());
+        if(!item.helper.empty())restore(item.helper/".pmu-versions",item.previousHelperGeneration,item.helperGeneration,"helper",publisher);
         if(!registered(item.oldBase,item.source)){waitUnit(std::chrono::steady_clock::now()+std::chrono::seconds(15));startPreparedRuntime(item.rollbackBase,publisher);}
     }catch(...){runtimeCommand({"/bin/systemctl","start",item.service},item.helper,std::chrono::seconds(45));throw;}
     need(runtimeCommand({"/bin/systemctl","start",item.service},item.helper,std::chrono::seconds(45))==0,"MPC application recovery failed");
