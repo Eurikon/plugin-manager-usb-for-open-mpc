@@ -14,19 +14,26 @@ if command -v git >/dev/null 2>&1 &&
     manager_development=0
 fi
 manager_version_flag="-DMPC_MANAGER_DEVELOPMENT=$manager_development"
+update_objects=''
+for unit in checksum crypto native_image version_store source_runtime update_worker update_bundle update_migration runtime_session migration_package session_handoff runtime_handoff runtime_worker; do
+    c++ -std=c++17 -O2 -Wall -Wextra -Werror -Isrc -c "src/$unit.cpp" -o "$output/$unit.o"
+    update_objects="$update_objects $output/$unit.o"
+done
+c++ -std=c++17 -O2 -Wall -Wextra -Werror -Isrc src/source_dispatcher.cpp "$output"/checksum.o "$output"/crypto.o "$output"/native_image.o "$output"/version_store.o "$output"/source_runtime.o "$output"/update_worker.o -ldl -pthread -o "$output"/source-dispatcher
+strip "$output"/source-dispatcher
 c++ -std=c++17 -O2 -Wall -Wextra -Werror -Isrc -c src/plugin_storage.cpp -o "$output"/plugin_storage.o
 c++ -std=c++17 -O2 -Wall -Wextra -Werror "$manager_version_flag" -Isrc -c src/backend.cpp -o "$output"/backend.o
 c++ -std=c++17 -O2 -Wall -Wextra -Werror -Isrc -c src/sd_install.cpp -o "$output"/sd_install.o
 c++ -std=c++17 -O2 -Wall -Wextra -Werror -Isrc -c src/manager_update.cpp -o "$output"/manager_update.o
 c++ -std=c++17 -O2 -Wall -Wextra -Werror -Isrc $(pkg-config --cflags libpng) -c src/thumbnail.cpp -o "$output"/thumbnail.o
-c++ -std=c++17 -O2 -Wall -Wextra -Werror "$manager_version_flag" -I/opt/sdl/include/SDL2 $(pkg-config --cflags freetype2) -c src/main.cpp -o "$output"/main.o
-c++ "$output"/backend.o "$output"/plugin_storage.o "$output"/sd_install.o "$output"/manager_update.o "$output"/thumbnail.o "$output"/main.o -o "$output"/manager $(/opt/sdl/bin/sdl2-config --static-libs) $(pkg-config --libs freetype2) -larchive -Wl,-Bstatic -lpng -ljpeg -lz -Wl,-Bdynamic
+c++ -std=c++17 -O2 -Wall -Wextra -Werror "$manager_version_flag" -Isrc -I/opt/sdl/include/SDL2 $(pkg-config --cflags freetype2) -c src/main.cpp -o "$output"/main.o
+c++ "$output"/backend.o "$output"/plugin_storage.o "$output"/sd_install.o "$output"/manager_update.o "$output"/thumbnail.o "$output"/main.o $update_objects -ldl -o "$output"/manager $(/opt/sdl/bin/sdl2-config --static-libs) $(pkg-config --libs freetype2) -larchive -Wl,-Bstatic -lpng -ljpeg -lz -Wl,-Bdynamic
 strip "$output"/manager
-c++ -std=c++17 -O2 -Wall -Wextra -Werror "$manager_version_flag" -Isrc tests/backend_test.cpp "$output"/backend.o "$output"/plugin_storage.o -larchive -pthread -o "$output"/backend-test
-c++ -std=c++17 -O2 -Wall -Wextra -Werror -Isrc tests/architecture_test.cpp "$output"/backend.o "$output"/plugin_storage.o -larchive -pthread -o "$output"/architecture-test
-c++ -std=c++17 -O2 -Wall -Wextra -Werror -Isrc -Itests tests/sd_install_test.cpp "$output"/backend.o "$output"/plugin_storage.o "$output"/sd_install.o -larchive -pthread -o "$output"/sd-install-test
-c++ -std=c++17 -O2 -Wall -Wextra -Werror -Isrc -Itests tests/manager_update_test.cpp "$output"/backend.o "$output"/plugin_storage.o "$output"/manager_update.o -larchive -pthread -o "$output"/manager-update-test
-c++ -std=c++17 -O2 -Wall -Wextra -Werror -Isrc tests/plugin_storage_test.cpp "$output"/backend.o "$output"/plugin_storage.o -larchive -pthread -o "$output"/plugin-storage-test
+c++ -std=c++17 -O2 -Wall -Wextra -Werror "$manager_version_flag" -Isrc tests/backend_test.cpp "$output"/backend.o "$output"/plugin_storage.o $update_objects -ldl -larchive -pthread -o "$output"/backend-test
+c++ -std=c++17 -O2 -Wall -Wextra -Werror -Isrc tests/architecture_test.cpp "$output"/backend.o "$output"/plugin_storage.o $update_objects -ldl -larchive -pthread -o "$output"/architecture-test
+c++ -std=c++17 -O2 -Wall -Wextra -Werror -Isrc -Itests tests/sd_install_test.cpp "$output"/backend.o "$output"/plugin_storage.o "$output"/sd_install.o $update_objects -ldl -larchive -lcrypto -pthread -o "$output"/sd-install-test
+c++ -std=c++17 -O2 -Wall -Wextra -Werror -Isrc -Itests tests/manager_update_test.cpp "$output"/backend.o "$output"/plugin_storage.o "$output"/manager_update.o $update_objects -ldl -larchive -pthread -o "$output"/manager-update-test
+c++ -std=c++17 -O2 -Wall -Wextra -Werror -Isrc tests/plugin_storage_test.cpp "$output"/backend.o "$output"/plugin_storage.o $update_objects -ldl -larchive -pthread -o "$output"/plugin-storage-test
 c++ -std=c++17 -O2 -Wall -Wextra -Werror -Isrc $(pkg-config --cflags libpng) tests/thumbnail_test.cpp "$output"/thumbnail.o -Wl,-Bstatic -lpng -ljpeg -lz -Wl,-Bdynamic -ldl -pthread -o "$output"/thumbnail-test
 c++ -std=c++17 -O2 -Wall -Wextra -Werror -Isrc $(pkg-config --cflags libpng) tests/thumbnail_network_test.cpp "$output"/thumbnail.o -Wl,-Bstatic -lpng -ljpeg -lz -Wl,-Bdynamic -ldl -pthread -o "$output"/thumbnail-network-test
 cp assets/font.ttf "$output"/font.ttf

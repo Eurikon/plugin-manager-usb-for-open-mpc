@@ -8,11 +8,12 @@ struct MigrationPayload {
     std::string authorization;
 };
 struct MigrationSelection {
-    std::string runtime,helper;
+    std::string runtime,helper,previousRuntime={},previousHelper={};
 };
 MigrationSelection activateMigration(const std::filesystem::path& source,
     const std::filesystem::path& helper,const std::string& sourceIdentity,
     const std::string& architecture,const std::string& publisherKey,
     const MigrationPayload& runtime,const std::optional<MigrationPayload>& helperPayload,
-    const UpdateProgress& progress={},const VersionStore::Checkpoint& checkpoint={});
+    const UpdateProgress& progress={},const VersionStore::Checkpoint& checkpoint={},
+    const std::string& expectedCurrent={});
 }

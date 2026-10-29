@@ -38,7 +38,7 @@ static int launches(){std::ifstream file(root/"launches");std::string line;int r
 template<class Predicate> static void until(Predicate predicate){for(int i=0;i<400;++i){if(predicate())return;std::this_thread::sleep_for(std::chrono::milliseconds(25));}throw std::runtime_error("Timed out waiting for supervisor");}
 static void send(const unsigned char* bytes,size_t size){int fd=socket(AF_UNIX,SOCK_DGRAM,0);assert(fd>=0);sockaddr_un address{};address.sun_family=AF_UNIX;strcpy(address.sun_path,(base/"shortcut.sock").c_str());assert(sendto(fd,bytes,size,0,reinterpret_cast<sockaddr*>(&address),sizeof address)==ssize_t(size));close(fd);}
 static void button(unsigned char note,bool down){const unsigned char bytes[]={'B',note,(unsigned char)down};send(bytes,sizeof bytes);}
-static pid_t start(bool armOnly=false){const pid_t parent=getpid();pid_t pid=fork();assert(pid>=0);if(!pid){if(prctl(PR_SET_PDEATHSIG,SIGTERM)!=0||getppid()!=parent)_exit(127);execl((root/"shortcut").c_str(),"shortcut",usb.c_str(),base.c_str(),"acvs","hw:1,0,1",armOnly?"--arm-only":nullptr,nullptr);_exit(127);}return pid;}
+static pid_t start(bool armOnly=false,bool resume=false){const pid_t parent=getpid();pid_t pid=fork();assert(pid>=0);if(!pid){if(prctl(PR_SET_PDEATHSIG,SIGTERM)!=0||getppid()!=parent)_exit(127);execl((root/"shortcut").c_str(),"shortcut",usb.c_str(),base.c_str(),"acvs","hw:1,0,1",resume?"--resume-only":armOnly?"--arm-only":nullptr,nullptr);_exit(127);}return pid;}
 static pid_t cancel(const fs::path& path=base){pid_t pid=fork();assert(pid>=0);if(!pid){execl((root/"shortcut").c_str(),"shortcut","--cancel-prepared",path.c_str(),nullptr);_exit(127);}return pid;}
 static pid_t handoff(){pid_t pid=fork();assert(pid>=0);if(!pid){execl((root/"shortcut").c_str(),"shortcut","--handoff",(base/"shortcut.sock").c_str(),nullptr);_exit(127);}return pid;}
 static void returned(pid_t pid,int expected=0){int status=0;until([&]{return waitpid(pid,&status,WNOHANG)==pid;});assert(WIFEXITED(status)&&WEXITSTATUS(status)==expected);}
@@ -46,12 +46,14 @@ static void exited(pid_t pid,int expected=0){returned(pid,expected);assert(!fs::
 static void prepared(const std::string& original=""){fs::create_directories(usb);std::ofstream(usb/".mpc-manager-id")<<"test\n";fs::create_directories(base);for(const char* name:{"shortcut","shortcut-hook.so","manager","font.ttf","launch.sh"})fs::copy_file(root/name,base/name,fs::copy_options::overwrite_existing);fs::permissions(base/"manager",fs::perms::owner_all);fs::permissions(base/"shortcut",fs::perms::owner_all);fs::permissions(base/"font.ttf",fs::perms::owner_read|fs::perms::owner_write|fs::perms::group_read|fs::perms::others_read);environment(preload(original));write(root/"main-pid","4242\n");write(root/"service-active","1\n");for(const char* name:{"pid-race","pid-queried","fail-reload","fail-show","late-envfile","unset-variable","hold-pid-query","pid-query-entered","hold-environment-check","environment-check-entered","fail-restore-start","unit-environment","source-envfiles"})fs::remove(root/name);}
 static void armed(){until([]{return contents(base/"ready")=="READY\n";});struct stat mode{};assert(lstat((base/"ready").c_str(),&mode)==0&&S_ISREG(mode.st_mode)&&(mode.st_mode&0777)==0600&&mode.st_uid==0&&mode.st_nlink==1);}
 int main(){try{
+    std::cout.setf(std::ios::unitbuf);
     fs::create_directories(dropin.parent_path());write(foreignDropin,foreignDropinText);write(foreignEnvironment,foreignEnvironmentText);
     const std::string addins=(root/"shortcut-addin-first.so").string()+":"+(root/"shortcut-addin-second.so").string(),hook=(base/"shortcut-hook.so").string();
-    prepared(addins);const std::string originalEnvironment=contents(processEnvironment);pid_t pid=start();until([]{return launches()==1&&fs::exists(base/"shortcut.sock");});configured(addins+" "+hook);assert(contents(processEnvironment)==originalEnvironment&&!fs::exists(base/"ready"));std::this_thread::sleep_for(std::chrono::seconds(1));
+    prepared(addins);write(root/"hold-manager","1\n");const std::string originalEnvironment=contents(processEnvironment);pid_t pid=start();until([]{return launches()==1&&fs::exists(base/"shortcut.sock");});configured(addins+" "+hook);assert(contents(processEnvironment)==originalEnvironment&&!fs::exists(base/"ready"));std::this_thread::sleep_for(std::chrono::seconds(1));
     std::cout<<"PASS: captured addin order retained, hook appended last and foreign configuration untouched\n";
     returned(handoff());std::this_thread::sleep_for(std::chrono::milliseconds(100));assert(kill(pid,0)==0);configured(addins+" "+hook);
-    std::cout<<"PASS: handoff leaves non-arm-only supervisor active\n";
+    std::cout<<"PASS: handoff preserves a non-arm-only supervisor while its manager is active\n";
+    fs::remove(root/"hold-manager");until([]{return contents(base/"session.log").find("MPC resumed; SHIFT + MENU hold ready")!=std::string::npos;});
     button(49,true);button(123,true);std::this_thread::sleep_for(std::chrono::milliseconds(400));button(123,false);button(49,false);std::this_thread::sleep_for(std::chrono::milliseconds(2100));assert(launches()==1);
     std::cout<<"PASS: short Browser chord does not reopen manager\n";
     button(49,true);button(123,true);until([]{return launches()==2;});button(123,false);button(49,false);std::this_thread::sleep_for(std::chrono::seconds(1));
@@ -147,6 +149,20 @@ int main(){try{
     kill(pid,SIGTERM);exited(pid);
     std::cout<<"PASS: addins configured after shortcut arming are refreshed before the next opening\n";
     std::cout<<"PASS: changed environment files override the previous snapshot on repeated opening\n";
+    prepared(addins);pid=start();until([]{return launches()==13&&contents(base/"session.log").find("MPC resumed; SHIFT + MENU hold ready")!=std::string::npos;});returned(handoff());exited(pid);
+    std::cout<<"PASS: completed non-arm-only session supports explicit runtime handoff\n";
+    prepared();chmod(base.c_str(),0700);write(base/"preload.snapshot","LD_PRELOAD=\""+addins+" /tmp/mpc-usb-session.previous/shortcut-hook.so\"\n");chmod((base/"preload.snapshot").c_str(),0600);write(root/"main-pid","0\n");fs::remove(root/"service-active");pid=start(true,true);armed();configured((root/"shortcut-addin-first.so").string()+" "+(root/"shortcut-addin-second.so").string()+" "+hook);assert(!fs::exists(root/"service-active")&&launches()==13);
+    write(root/"main-pid","4242\n");write(root/"service-active","1\n");kill(pid,SIGTERM);exited(pid);
+    std::cout<<"PASS: stopped-MPC handover preserves addin order, replaces only the old hook and waits for its caller to resume MPC\n";
+    for(const std::string failure:{"running","missing","permissions","linked"}){
+        prepared();chmod(base.c_str(),0700);write(base/"preload.snapshot","LD_PRELOAD=/preserved.so\n");chmod((base/"preload.snapshot").c_str(),0600);
+        if(failure!="running"){write(root/"main-pid","0\n");fs::remove(root/"service-active");}
+        if(failure=="missing")fs::remove(base/"preload.snapshot");
+        if(failure=="permissions")chmod((base/"preload.snapshot").c_str(),0644);
+        if(failure=="linked"){fs::rename(base/"preload.snapshot",root/"linked-snapshot");fs::create_symlink(root/"linked-snapshot",base/"preload.snapshot");}
+        pid=start(true,true);exited(pid,1);assert(launches()==13&&fs::exists(root/"service-active"));
+        std::cout<<"PASS: invalid resumed "<<failure<<" session refuses activation and recovers MPC where needed\n";
+    }
     fs::remove(foreignDropin);fs::remove(foreignEnvironment);fs::remove_all(processEnvironment.parent_path());
     return 0;
 }catch(const std::exception& error){std::cerr<<"FAIL: "<<error.what()<<'\n';return 1;}}

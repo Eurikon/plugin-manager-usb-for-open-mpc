@@ -11,6 +11,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 import zipfile
+from tools.sign_release import Signer, initialize
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -73,6 +74,74 @@ class StartupPackageTests(unittest.TestCase):
 
     def archive(self):
         return HELPER.build_archive(self.root / "external-MPC", self.project)
+
+    def signed_inputs(self):
+        private = self.root / "signing/release.pem"
+        public = self.root / "src/publisher_key.hpp"
+        initialize(private, public)
+        (self.root / "src/version.hpp").write_text('#define MPC_MANAGER_VERSION "1.3.0"\n')
+        for architecture in ("armv7", "aarch64"):
+            wide = architecture == "aarch64"
+            binary = bytearray(64 if wide else 52)
+            binary[:7] = b"\x7fELF" + bytes((2 if wide else 1, 1, 1))
+            struct.pack_into("<H", binary, 16, 3)
+            struct.pack_into("<H", binary, 18, 183 if wide else 40)
+            struct.pack_into("<H", binary, 52 if wide else 40, len(binary))
+            struct.pack_into("<I", binary, 48 if wide else 36, 0 if wide else 0x05000400)
+            build = self.root / "build" / ("aarch64" if wide else "")
+            (build / "startup").mkdir(parents=True, exist_ok=True)
+            for name in ("manager", "shortcut", "shortcut-hook.so", "source-dispatcher",
+                         "startup/manager-entry.so", "startup/manager-loader.so", "startup/bootstrap-note"):
+                (build / name).write_bytes(binary)
+        return private, Signer(private, public)
+
+    def test_versioned_helper_contains_stable_loaders_and_signed_payload(self):
+        _, signer = self.signed_inputs()
+        data = HELPER.build_versioned_archive(self.root / "external-MPC", self.project, signer,
+                                              "1.3.0", self.root / "external-MPC64")
+        with zipfile.ZipFile(io.BytesIO(data)) as archive:
+            files = {name.removeprefix(HELPER.PREFIX): archive.read(name) for name in archive.namelist()}
+        selection = json.loads(files[".pmu-versions/active.json"])
+        prefix = ".pmu-versions/" + selection["active"] + "/"
+        specification = json.loads(files[prefix + "generation.json"])
+        self.assertEqual(hashlib.sha256(files[prefix + "generation.json"]).hexdigest(), selection["active"])
+        self.assertEqual(set(specification["entrypoints"]), {"helper_armv7", "helper_aarch64", "dispatcher_armv7", "dispatcher_aarch64", "bootstrap"})
+        self.assertIn("manager-entry.so", files)
+        self.assertIn("manager-entry-aarch64.so", files)
+        self.assertNotIn("runtime.sha256", files)
+        self.assertNotIn("bootstrap.sh", files)
+        self.assertEqual(json.loads(json.loads(files[prefix + "authorization.json"])["message"])["kind"], "helper")
+
+    def test_signed_universal_bundle_binds_mutable_payloads_separately(self):
+        private, _ = self.signed_inputs()
+        destination = self.root / "signed-stick"
+        with patch.object(PACKAGE, "validate_mpc_executable", lambda _: (b"autorun fixture", {"arch": "armv7"})):
+            PACKAGE.build_signed_package(self.root / "external-MPC", self.root / "external-MPC310", self.project,
+                                         destination, private, arm64_build=self.root / "build/aarch64",
+                                         firmware_310_arm64=self.root / "external-MPC64")
+        envelope = json.loads((destination / "PMU-UPDATE.json").read_bytes())
+        inventory = envelope["generation"]["files"]
+        self.assertEqual(set(inventory), {path.relative_to(destination).as_posix() for path in destination.rglob("*")
+                                          if path.is_file()} - {"PMU-UPDATE.json"})
+        for name, checksum in inventory.items():
+            self.assertEqual(hashlib.sha256((destination / name).read_bytes()).hexdigest(), checksum)
+        autorun = destination / "autorun"
+        metadata = json.loads((autorun / "autorun.json").read_bytes())["value0"]
+        self.assertEqual(metadata["files"], ["runtime/source-dispatcher-aarch64", "runtime/source-dispatcher-armv7"])
+        checked = ["autorun.json", "open.sh", *metadata["files"]]
+        expected = hashlib.sha256(b"".join((autorun / name).read_bytes() for name in checked) + b"autorun fixture").hexdigest()
+        self.assertEqual((autorun / "autorun.check").read_text(), expected)
+        self.assertFalse(any((destination / "local-plugins").iterdir()))
+        pool = autorun / "runtime/.pmu-versions"
+        self.assertTrue((pool / "active.armv7.json").is_file() and (pool / "active.aarch64.json").is_file())
+        self.assertEqual(json.loads(json.loads(envelope["authorization"])["message"])["kind"], "update")
+
+    def test_versioned_helper_refuses_the_wrong_native_architecture(self):
+        _, signer = self.signed_inputs()
+        shutil.copyfile(self.root / "build/manager", self.root / "build/aarch64/startup/manager-loader.so")
+        with self.assertRaisesRegex(ValueError, "wrong architecture"):
+            HELPER.build_versioned_archive(self.root / "external-MPC", self.project, signer,
+                                           "1.3.0", self.root / "external-MPC64")
 
     def altered_archive(self, name, value, *, extra=False, mode=None):
         original = self.archive()

@@ -1,0 +1,9 @@
+{
+    global:
+        pmu_start_manager;
+        pmu_stop_manager;
+        pmu_launch_confirmed;
+        pmu_prepare_manager;
+        pmu_helper_payload_v1;
+    local: *;
+};

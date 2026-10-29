@@ -1,6 +1,7 @@
 #pragma once
 #include "backend.hpp"
 #include <sys/types.h>
+#include <publisher_key.hpp>
 
 struct SdInstallPaths {
     fs::path media="/media", mountinfo="/proc/self/mountinfo", uuids="/dev/disk/by-uuid";
@@ -10,6 +11,7 @@ struct SdInstallPaths {
     std::vector<fs::path> protectedRoots={"/","/data","/sdcard","/nvme","/storage","/media/az01-internal"};
     std::string firmwareHash=PMU_FIRMWARE_SHA256;
     std::string arch=managerArchitecture();
+    std::string publisher=pmu::publisherKey;
     uid_t owner=0;
     std::function<dev_t(const fs::path&)> fileDevice, blockDevice;
     std::function<uint64_t(const fs::path&)> availableBytes;

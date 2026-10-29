@@ -1,5 +1,9 @@
 #include "manager_update.hpp"
 #include "startup/storage.h"
+#include "source_runtime.hpp"
+#include "runtime_session.hpp"
+#include "update_bundle.hpp"
+#include <publisher_key.hpp>
 #include <archive.h>
 #include <archive_entry.h>
 #include <algorithm>
@@ -415,6 +419,12 @@ namespace {
     }
 }
 Json applyManagerUpdate(const fs::path& source,const fs::path& session,const Json& staged,const std::function<void(const std::string&)>& progress,const std::function<void(float)>& amount){
+    if(fs::is_directory(source/"autorun/runtime/.pmu-versions")){
+        need(geteuid()==0,"Manager updates require the manager service");const auto context=pmu::guiRuntimeContext(session.parent_path());pmu::SourceRuntime runtime(source,managerArchitecture(),pmu::publisherKey);const auto selected=runtime.choose(false,context.at("source_identity").get<std::string>());need(context.at("source")==source.string()&&context.at("generation")==selected.generation.id&&!selected.generation.pending,"Wait for manager startup confirmation before updating");
+        const auto version=staged.at("release").at("latest_version").get<std::string>();const auto bundle=pmu::verifyStagedUpdate(staged.at("bundle_root").get<std::string>(),managerArchitecture(),version,pmu::publisherKey);
+        const auto result=pmu::runIncomingWorker(bundle.worker,session,{{"operation","apply"},{"intent","install-update"},{"source",source.string()},{"helper",context.at("helper")},{"source_identity",selected.identity},{"session",session.string()},{"bundle",bundle.directory.string()},{"version",version}},{progress,amount});need(result.value("handoff_queued",false),"Incoming update did not queue its complete runtime handover");
+        const std::string message="Manager update prepared. Return to MPC; the next shortcut opening uses the updated manager.";if(progress)progress(message);return {{"applied",true},{"source_on_sd",source.parent_path()!=fs::path("/media")},{"activation","on_return"},{"message",message},{"release",staged.at("release")}};
+    }
     return applyManagerUpdate(source,session,staged,ManagerUpdatePaths{
     },progress,amount);
 }

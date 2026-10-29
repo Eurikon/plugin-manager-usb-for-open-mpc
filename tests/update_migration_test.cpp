@@ -40,7 +40,7 @@ struct Fixture {
         else {save(path/"scripts/prepare.sh","new bootstrap");spec.files["scripts/prepare.sh"]=hash(path/"scripts/prepare.sh");spec.entrypoints={{"helper_armv7",program},{"bootstrap","scripts/prepare.sh"}};}
         const auto id=pmu::sha256Text(pmu::generationSpecToJson(spec).dump()+'\n');return {path,spec,key.proof(id,kind)};
     }
-    pmu::VersionStore store(bool isHelper){return {isHelper?helper/".pmu-versions":source/"autorun/runtime/.pmu-versions",geteuid(),hash,{},true,[this,isHelper](const auto& id,const auto&,const auto& proof){pmu::verifyAuthorization(key.publicKey(),isHelper?"helper":"runtime",id,proof);}};}
+    pmu::VersionStore store(bool isHelper){return {isHelper?helper/".pmu-versions":source/"autorun/runtime/.pmu-versions",geteuid(),hash,{},true,[this,isHelper](const auto& id,const auto&,const auto& proof){pmu::verifyAuthorization(key.publicKey(),isHelper?"helper":"runtime",id,proof);},isHelper?"":"armv7"};}
     pmu::MigrationSelection migrate(const pmu::VersionStore::Checkpoint& point={}){return pmu::activateMigration(source,helper,identity,"armv7",key.publicKey(),runtimePayload,helperPayload,{},point);}
     void preserved(){check(read(source/"plugin-history.json")=="history"&&read(source/"local-plugins/keep")=="user package"&&read(helper/"controller.ini")=="controller configuration","migration preserves user inventory, local packages and controller configuration");}
 };

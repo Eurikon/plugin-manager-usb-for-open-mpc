@@ -122,7 +122,9 @@ int serveUpdateWorker(const UpdateHandler& handler){
     std::string requestId;size_t written=0;bool reported=false;
     auto event=[&](Json message){message["protocol"]=1;message["request_id"]=requestId;const auto line=message.dump()+'\n';need(line.size()<=128*1024&&written+line.size()<=responseLimit,"Oversized update-worker response");writeAll(4,line);written+=line.size();};
     try{
-        regular(3,true);need((fcntl(3,F_GETFL)&O_ACCMODE)==O_RDONLY,"Update request must be read-only");const auto response=regular(4,true);need(response.st_size==0&&(fcntl(4,F_GETFL)&O_ACCMODE)!=O_RDONLY,"Update response must be a fresh writable channel");regular(5,true);close(5);need(fcntl(3,F_SETFD,FD_CLOEXEC)==0&&fcntl(4,F_SETFD,FD_CLOEXEC)==0,"Cannot protect update IPC descriptors");
+        regular(3,true);need((fcntl(3,F_GETFL)&O_ACCMODE)==O_RDONLY,"Update request must be read-only");const auto response=regular(4,true);need(response.st_size==0&&(fcntl(4,F_GETFL)&O_ACCMODE)!=O_RDONLY,"Update response must be a fresh writable channel");regular(5,true);need((fcntl(5,F_GETFL)&O_ACCMODE)==O_RDONLY,"Update executable must remain read-only");
+        // Keep the executable pinned while the worker identifies its running image.
+        need(fcntl(3,F_SETFD,FD_CLOEXEC)==0&&fcntl(4,F_SETFD,FD_CLOEXEC)==0&&fcntl(5,F_SETFD,FD_CLOEXEC)==0,"Cannot protect update IPC descriptors");
         const auto request=Json::parse(readAll(3,requestLimit));need(request.is_object()&&request.value("protocol",0)==1&&request.contains("task")&&request.at("task").is_object(),"Unsupported update-worker request");requestId=request.at("request_id").get<std::string>();need(hex(requestId,32),"Invalid update request identifier");const auto task=request.at("task");Json result;
         if(task.value("operation",std::string())=="hello")result={{"product","plugin-manager-usb"},{"protocol",1}};
         else{

@@ -20,20 +20,21 @@
 #define PMU_CONFIRMED 0
 #endif
 
-#if defined(__aarch64__)
 static char directory_path[PATH_MAX] = PMU_HELPER_DIRECTORY;
 static char bootstrap_path[PATH_MAX] = PMU_HELPER_DIRECTORY "/bootstrap.sh";
+#if PMU_CONFIRMED
+static char payload_path[PATH_MAX];
+#endif
 __attribute__((visibility("hidden"))) int pmu_set_helper_directory(const char *path) {
+#if !defined(__aarch64__)
+    if (!path || strcmp(path, PMU_HELPER_DIRECTORY) != 0) return 0;
+#endif
     if (!path || !pmu_helper_directory_valid(path) || strlen(path) + sizeof("/bootstrap.sh") > sizeof bootstrap_path) return 0;
     strcpy(directory_path, path);
     strcpy(bootstrap_path, path);
     strcat(bootstrap_path, "/bootstrap.sh");
     return 1;
 }
-#else
-static const char directory_path[] = PMU_HELPER_DIRECTORY;
-static char bootstrap_path[] = PMU_HELPER_DIRECTORY "/bootstrap.sh";
-#endif
 #if PMU_REUSABLE
 static const char request_name[] = "manager-enabled";
 static const char request_token[] = "open-mpc-manager-reusable-v1\n";
@@ -57,9 +58,44 @@ static char *launch_arguments[] = {
     bootstrap_path,
 #if PMU_CONFIRMED
     "--confirmed", NULL, NULL, NULL,
+    NULL, NULL, NULL,
 #endif
     NULL,
 };
+#if PMU_CONFIRMED
+__attribute__((visibility("hidden"))) int pmu_set_payload_context(
+    const char *root, const char *payload, const char *bootstrap, const char *generation) {
+    char prefix[PATH_MAX];
+    if (!root || !payload || !bootstrap || !generation || strlen(generation) != 64
+        || strspn(generation, "0123456789abcdef") != 64
+        || strlen(root) + sizeof("/.pmu-versions/") + 64 >= sizeof prefix) return 0;
+    strcpy(prefix, root);
+    strcat(prefix, "/.pmu-versions/");
+    strcat(prefix, generation);
+    size_t length = strlen(prefix);
+    if (strcmp(payload, prefix) != 0 || strncmp(bootstrap, prefix, length) != 0
+        || bootstrap[length] != '/' || !bootstrap[length + 1]
+        || strlen(bootstrap) >= sizeof bootstrap_path
+        || strspn(bootstrap + length + 1, "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-/ ") != strlen(bootstrap + length + 1)) return 0;
+    const char *part = bootstrap + length + 1;
+    while (*part) {
+        const char *end = strchr(part, '/');
+        size_t count = end ? (size_t)(end - part) : strlen(part);
+        if (count == 0 || (count == 1 && part[0] == '.')
+            || (count == 2 && part[0] == '.' && part[1] == '.')) return 0;
+        if (!end) break;
+        part = end + 1;
+        if (!*part) return 0;
+    }
+    if (!pmu_set_helper_directory(root)) return 0;
+    strcpy(payload_path, payload);
+    strcpy(bootstrap_path, bootstrap);
+    launch_arguments[16] = "--pmu-helper-v1";
+    launch_arguments[17] = directory_path;
+    launch_arguments[18] = payload_path;
+    return 1;
+}
+#endif
 static char *const launch_environment[] = {
     "PATH=/usr/sbin:/usr/bin:/sbin:/bin", "LANG=C", NULL,
 };
@@ -176,7 +212,7 @@ int pmu_start_manager(void *state) {
         return 0;
     if (fstat(directory, &status) != 0 || !S_ISDIR(status.st_mode)
         || status.st_uid != 0 || ((status.st_mode & 0722) != 0700 && !pmu_helper_exfat(directory))
-        || fstatat(directory, "bootstrap.sh", &status, AT_SYMLINK_NOFOLLOW) != 0
+        || fstatat(directory, bootstrap_path + strlen(directory_path) + 1, &status, AT_SYMLINK_NOFOLLOW) != 0
         || !S_ISREG(status.st_mode) || status.st_uid != 0
         || ((status.st_mode & 0022) != 0 && !pmu_helper_exfat(directory)) || status.st_size <= 0 || status.st_size > 64 * 1024) {
         close(directory);

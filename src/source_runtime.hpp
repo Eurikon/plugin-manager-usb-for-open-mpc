@@ -15,6 +15,7 @@ public:
     SourceRuntime(const SourceRuntime&)=delete;
     SourceRuntime& operator=(const SourceRuntime&)=delete;
     RuntimeChoice choose(bool opening,const std::string& expectedIdentity={});
+    RuntimeChoice retained(const std::string& generation,const std::string& expectedIdentity);
     void confirm(const std::string& generation,const std::string& expectedIdentity);
     RuntimeChoice recover(const std::string& failedGeneration,const std::string& expectedIdentity);
     std::string identity()const;

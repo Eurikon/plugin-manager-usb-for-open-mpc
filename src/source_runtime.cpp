@@ -32,7 +32,7 @@ bool fat(int fd){struct statfs value{};return fstatfs(fd,&value)==0&&(value.f_ty
 struct stat info(int fd){struct stat value{};need(fstat(fd,&value)==0,"Cannot inspect manager source");need(value.st_uid==geteuid()&&(!(value.st_mode&0022)||fat(fd)),"Manager source has unsafe ownership or permissions");return value;}
 bool same(const struct stat& a,const struct stat& b){return a.st_dev==b.st_dev&&a.st_ino==b.st_ino;}
 Fd folder(const fs::path& path){
-    need(path.is_absolute()&&path.lexically_normal()==path&&path!=path.root_path(),"Invalid manager source path");Fd current(open("/",O_RDONLY|O_DIRECTORY|O_CLOEXEC));need(current.value>=0,"Cannot open manager source root");
+    need(path.is_absolute()&&path.lexically_normal()==path&&path!=path.root_path()&&path.native().find('\0')==std::string::npos,"Invalid manager source path");Fd current(open("/",O_RDONLY|O_DIRECTORY|O_CLOEXEC));need(current.value>=0,"Cannot open manager source root");
     for(const auto& part:path.relative_path()){Fd next(openat(current.value,part.c_str(),O_RDONLY|O_DIRECTORY|O_NOFOLLOW|O_CLOEXEC));need(next.value>=0,"Manager source is missing or linked");current=std::move(next);}return current;
 }
 Fd marker(int root){
@@ -47,7 +47,7 @@ struct SourceRuntime::Impl {
     struct stat rootIdentity{},markerIdentity{};
     std::string mount;
     VersionStore store;
-    Impl(fs::path path,std::string arch,std::string publisher):source(std::move(path)),architecture(std::move(arch)),root(folder(source)),markerFile(marker(root.value)),rootIdentity(info(root.value)),markerIdentity(info(markerFile.value)),mount(mountIdentity(root.value)),store(source/"autorun/runtime/.pmu-versions",geteuid(),[](const auto& path){return fileSha256(path);},{},false,[publisher](const auto& id,const auto&,const auto& proof){verifyAuthorization(publisher,"runtime",id,proof);}){
+    Impl(fs::path path,std::string arch,std::string publisher):source(std::move(path)),architecture(std::move(arch)),root(folder(source)),markerFile(marker(root.value)),rootIdentity(info(root.value)),markerIdentity(info(markerFile.value)),mount(mountIdentity(root.value)),store(source/"autorun/runtime/.pmu-versions",geteuid(),[](const auto& path){return fileSha256(path);},{},false,[publisher](const auto& id,const auto&,const auto& proof){verifyAuthorization(publisher,"runtime",id,proof);},architecture){
         need(architecture=="armv7"||architecture=="aarch64","Unsupported manager source architecture");
     }
     std::string identity()const{return pmu::identity(rootIdentity,markerIdentity)+":"+mount;}
@@ -62,6 +62,9 @@ RuntimeChoice SourceRuntime::choose(bool opening,const std::string& expected){
     if(opening)selected=impl->store.boot();
     else{try{selected=impl->store.current();}catch(const std::exception&){selected=impl->store.boot();}if(!selected)selected=impl->store.boot();}
     need(selected.has_value(),"No complete manager version is available on this source");need(selected->spec.architecture==impl->architecture||selected->spec.architecture=="universal","Manager version does not support this device generation");const auto role=selected->spec.entrypoints.find("runtime_worker_"+impl->architecture);need(role!=selected->spec.entrypoints.end(),"Manager version has no native session worker");impl->check(expected);return {*selected,{selected->directory/role->second,selected->spec.files.at(role->second),impl->architecture},impl->identity()};
+}
+RuntimeChoice SourceRuntime::retained(const std::string& generation,const std::string& expected){
+    need(!expected.empty(),"Retained runtime needs its source identity");impl->check(expected);const auto selected=impl->store.inspect(generation);need(selected.spec.architecture==impl->architecture||selected.spec.architecture=="universal","Retained runtime does not support this device");const auto role=selected.spec.entrypoints.at("runtime_worker_"+impl->architecture);impl->check(expected);return {selected,{selected.directory/role,selected.spec.files.at(role),impl->architecture},impl->identity()};
 }
 void SourceRuntime::confirm(const std::string& generation,const std::string& expected){
     need(!expected.empty(),"Missing manager startup source identity");impl->check(expected);const auto selected=impl->store.current();need(selected&&selected->id==generation,"Stale manager startup confirmation");const auto role=selected->spec.entrypoints.find("manager_"+impl->architecture);need(role!=selected->spec.entrypoints.end(),"Manager generation lacks its GUI startup role");Fd running(open("/proc/self/exe",O_RDONLY|O_CLOEXEC));need(running.value>=0,"Cannot identify the running manager");

@@ -1,5 +1,23 @@
 # Changelog
 
+## 1.3.0 — 29-10-2026
+
+- Add publisher-authorized complete manager and helper updates, with staged activation, startup confirmation and a retained working version for recovery.
+- Keep USB and SD versions independent, with separate startup health for Gen1 and Gen2 on a universal stick.
+- Replace the running supervisor and shortcut hook only after the manager closes, preserving existing addin order and independent application recovery.
+- Migrate existing SD installations to complete version storage while preserving preferences, history, local ZIPs and modified files.
+- Add RAM-only plugin thumbnails, compact installed-version badges and a small indicator for newer available versions.
+- Align shared page frames, remove repeated page subtitles, place manager updates above welcome preferences in SETUP, and align Hide message to the right.
+- Offer OpenMPC Plugin Manager G2 from the welcome screen in place of the earlier poloq offer.
+- Fix first-open cache creation and retain the verified worker executable throughout its task.
+
+**Updating from 1.2.x or earlier:** copy the complete migration bundle onto USB, preserving saved data.
+On OS 3.10, reimport its helper and shut down normally before switching the MPC back on.
+Then update any SD copy from the new USB session.
+The older built-in updater does not install this migration bundle.
+
+The redesigned updater and interface have offline validation; no new hardware-test result is claimed for 1.3.0.
+
 ## 1.2.2 — 28-10-2026
 
 - Fix a Gen2 startup crash caused by large saved settings, without recursive regular-expression matching.

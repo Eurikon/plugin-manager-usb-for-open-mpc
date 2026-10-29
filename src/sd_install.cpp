@@ -1,6 +1,8 @@
 #include "sd_install.hpp"
 #include "startup/storage.h"
 #include "display.hpp"
+#include "source_runtime.hpp"
+#include "crypto.hpp"
 #include <algorithm>
 #include <array>
 #include <cerrno>
@@ -203,17 +205,19 @@ bool ownedName(const std::string& name) {
 }
 Json receipt(const fs::path& target,const std::string& uuid) {
     plainPath(target);const auto value=Json::parse(readFile(target/ownerFile,128*1024));
-    need(value.is_object()&&value.value("schema",0)==1&&value.value("owner","")=="plugin-manager-usb"
+    need(value.is_object()&&(value.value("schema",0)==1||(value.value("schema",0)==2&&value.value("layout","")=="generations-v1"))&&value.value("owner","")=="plugin-manager-usb"
         &&value.value("uuid","")==uuid&&value.contains("installed")&&value["installed"].is_boolean()
         &&value.contains("files")&&value["files"].is_object()&&value["files"].size()<=256,"Unrecognized SD installation folder");
     for(const auto& item:value["files"].items())need(ownedName(item.key())&&item.value().is_string()&&digestValid(item.value().get<std::string>()),"Invalid SD ownership manifest");
     return value;
 }
-void safeRuntimeTree(const fs::path& target,const Json& owner) {
+void safeRuntimeTree(const fs::path& target,const Json& owner,bool versioned=false) {
     const auto runtime=target/"autorun/runtime";if(!present(runtime))return;plainPath(runtime);
-    for(const auto& entry:fs::recursive_directory_iterator(runtime)){
+    for(auto iterator=fs::recursive_directory_iterator(runtime);iterator!=fs::recursive_directory_iterator();++iterator){
+        const auto& entry=*iterator;
         const auto relative=entry.path().lexically_relative(target).generic_string();
         need(!fs::is_symlink(entry.symlink_status()),"SD runtime contains a link");
+        if(versioned&&entry.path()==runtime/".pmu-versions"){need(entry.is_directory(),"SD version storage is occupied by a file");iterator.disable_recursion_pending();continue;}
         if(entry.is_directory())continue;
         need(entry.is_regular_file()&&owner["files"].contains(relative),"SD runtime contains unowned files; preserved without updating");
         need(sha256(entry.path())==owner["files"][relative].get<std::string>(),"SD runtime was modified; preserved without updating");
@@ -239,6 +243,46 @@ fs::path stageDirectory(const fs::path& parent) {
 }
 void removeEmptyParents(const fs::path& target,const fs::path& relative) {
     auto path=(target/relative).parent_path();while(path!=target&&path.string().size()>target.string().size()) {std::error_code error;const bool removed=fs::remove(path,error);if(error||!removed)break;path=path.parent_path();}
+}
+pmu::VersionStore versionStore(const fs::path& target,const SdInstallPaths& paths,const std::string& profile,bool create=true){
+    return {target/"autorun/runtime/.pmu-versions",paths.owner,[](const auto& file){return sha256(file);},{},create,[key=paths.publisher](const auto& id,const auto&,const auto& proof){pmu::verifyAuthorization(key,"runtime",id,proof);},profile};
+}
+unsigned clearFlatRuntime(const SdInstallPaths& paths,const fs::path& target,const Volume& volume,const fs::path& source,const Json& files){
+    unsigned preserved=0;for(const auto& item:files.items()){
+        if(item.key()==".mpc-manager-id")continue;
+        unchanged(paths,source,volume,false);const auto file=target/item.key();if(!present(file))continue;
+        try{plainPath(file);if(fs::is_regular_file(file)&&sha256(file)==item.value().get<std::string>()){fs::remove(file);removeEmptyParents(target,item.key());}else ++preserved;}catch(const std::exception&){++preserved;}
+    }return preserved;
+}
+void installVersioned(const SdInstallPaths& paths,const fs::path& source,const Volume& volume,const std::function<void(const std::string&)>& progress,const std::function<void(float)>& amount){
+    pmu::SourceRuntime runtime(source,paths.arch,paths.publisher);const auto selected=runtime.choose(false);need(!selected.generation.pending,"Wait for manager startup confirmation before installing to SD");uint64_t bytes=0;for(const auto& file:selected.generation.spec.files)bytes+=fs::file_size(selected.generation.directory/file.first);need(bytes<=128ULL*1024*1024&&volume.freeBytes>=bytes+1024*1024,"Insufficient space on the selected SD card");
+    const auto target=volume.root/installedFolder;const bool existing=present(target);bool previouslyInstalled=false;Json oldFiles=Json::object();if(existing){const auto owner=receipt(target,volume.uuid);previouslyInstalled=owner.at("installed").get<bool>();if(owner.value("schema",0)==1){if(previouslyInstalled)safeRuntimeTree(target,owner,true);oldFiles=owner.at("files");previouslyInstalled=false;}if(present(target/".mpc-manager-id"))need(readFile(target/".mpc-manager-id",64)==marker,"Modified SD marker was preserved");}
+    const auto stage=stageDirectory(volume.root);const auto destination=existing?target:stage;bool published=false;
+    try{
+        if(progress)progress("Verifying and copying the complete manager to SD...");
+        if(amount)amount(0);
+        makeParents(destination,"autorun/runtime");
+        auto selectedStore=versionStore(destination,paths,paths.arch);const auto id=selectedStore.stage(selected.generation.directory,selected.generation.spec,selected.generation.authorization);runtime.choose(false,selected.identity);unchanged(paths,source,volume);
+        if(existing){
+            if(selectedStore.current())selectedStore.offer(id);else{need(!previouslyInstalled,"The installed SD manager needs recovery before updating");selectedStore.seed(id);}
+            for(const auto& architecture:{std::string("armv7"),std::string("aarch64")})if(architecture!=paths.arch&&selected.generation.spec.entrypoints.count("manager_"+architecture)&&selected.generation.spec.entrypoints.count("runtime_worker_"+architecture)){auto other=versionStore(destination,paths,architecture);if(other.current())other.offer(id);else{need(!previouslyInstalled,"The installed SD manager profile needs recovery");other.seed(id);}}
+            if(!present(target/".mpc-manager-id"))saveExclusive(target/".mpc-manager-id",marker);
+            auto owner=receipt(target,volume.uuid);owner["schema"]=2;owner["layout"]="generations-v1";owner["installed"]=true;if(oldFiles.empty())oldFiles=owner.at("files");oldFiles[".mpc-manager-id"]=sha256(target/".mpc-manager-id");owner["files"]=oldFiles;saveExclusive(stage/ownerFile,owner.dump(2)+'\n');fs::rename(stage/ownerFile,target/ownerFile);syncDirectory(target);
+        }
+        else{
+            selectedStore.seed(id);for(const auto& architecture:{std::string("armv7"),std::string("aarch64")})if(architecture!=paths.arch&&selected.generation.spec.entrypoints.count("manager_"+architecture)&&selected.generation.spec.entrypoints.count("runtime_worker_"+architecture)){auto other=versionStore(destination,paths,architecture);other.seed(id);}
+            saveExclusive(destination/".mpc-manager-id",marker);saveExclusive(destination/ownerFile,Json({{"schema",2},{"layout","generations-v1"},{"owner","plugin-manager-usb"},{"uuid",volume.uuid},{"installed",true},{"files",{{".mpc-manager-id",sha256(destination/".mpc-manager-id")}}}}).dump()+'\n');makeDirectory(destination/"local-plugins");
+            for(const auto* name:{"manager-preferences.json","plugin-history.json"})if(present(source/name)){const auto text=readFile(source/name,8*1024*1024);need(Json::parse(text).is_object(),"Invalid saved manager data");saveExclusive(destination/name,text);}
+            if(present(source/"display-rotation.txt")){std::string note;const bool flipped=displayFlipFromFile((source/"display-rotation.txt").string(),note);if(note.empty())saveExclusive(destination/"display-rotation.txt",flipped?"180\n":"0\n");}
+            syncDirectory(destination);unchanged(paths,source,volume);fs::rename(stage,target);published=true;syncDirectory(target.parent_path());
+        }
+        unchanged(paths,source,volume);saveConfiguration(paths,volume.uuid);const auto preserved=clearFlatRuntime(paths,target,volume,source,oldFiles);if(existing)fs::remove_all(stage);if(amount)amount(1);if(progress)progress(preserved?"Manager installed on SD. Changed old files were preserved. Return to MPC to finish setup.":"Manager installed on SD. Return to MPC to finish setup.");
+    }catch(...){if(existing||!published){std::error_code ignored;fs::remove_all(stage,ignored);}throw;}
+}
+void removeVersioned(const SdInstallPaths& paths,const fs::path& target,const Volume& volume,const fs::path& source,const std::function<void(const std::string&)>& progress,const std::function<void(float)>& amount){
+    unchanged(paths,source,volume,false);if(progress)progress("Removing the verified manager versions from SD...");saveConfiguration(paths,volume.uuid,"installed-storage.removing");fs::remove(paths.helper/"installed-storage");syncDirectory(paths.helper);const auto markerPath=target/".mpc-manager-id";if(present(markerPath)){need(readFile(markerPath,64)==marker,"Modified SD marker was preserved");fs::remove(markerPath);syncDirectory(target);}
+    unsigned preserved=clearFlatRuntime(paths,target,volume,source,receipt(target,volume.uuid).at("files"));const auto pool=target/"autorun/runtime/.pmu-versions";if(present(pool)){{auto versions=versionStore(target,paths,paths.arch,false);preserved+=versions.erase();}const auto lock=pool/"update.lock";if(present(lock)){const auto text=readFile(lock,0,true,paths.owner);need(text.empty(),"Unexpected generation lock content");fs::remove(lock);}std::error_code ignored;fs::remove(pool,ignored);fs::remove(target/"autorun/runtime",ignored);fs::remove(target/"autorun",ignored);}
+    auto owner=receipt(target,volume.uuid);owner["installed"]=false;owner["files"]=Json::object();const auto temporary=target/".manager-install.tmp";saveExclusive(temporary,owner.dump(2)+'\n');fs::rename(temporary,target/ownerFile);syncDirectory(target);unchanged(paths,source,volume,false);fs::remove(paths.helper/"installed-storage.removing");syncDirectory(paths.helper);if(amount)amount(1);if(progress)progress(preserved?"SD manager removed. Modified files and saved data were preserved.":"SD manager removed. Saved settings, history and local packages were preserved.");
 }
 SdInstallPaths defaults() {
     SdInstallPaths paths;
@@ -281,7 +325,8 @@ Json SdInstaller::inspect() {
     for(const auto& volume:volumes(paths,source,true,false))if(volume.uuid==uuid){
         const auto target=volume.root/installedFolder;const auto owned=receipt(target,uuid);
         value["label"]=volume.label;value["path"]=target.string();value["current"]=source==target;value["can_remove"]=true;
-        value["installed"]=owned["installed"].get<bool>()&&present(target/".mpc-manager-id")&&present(target/"autorun/runtime"/managerRuntimePath("manager",paths.arch));
+        if(owned.value("schema",0)==2){bool complete=false;try{pmu::SourceRuntime runtime(target,paths.arch,paths.publisher);complete=runtime.choose(false).generation.spec.entrypoints.count("manager_"+paths.arch);}catch(const std::exception&){}value["installed"]=owned["installed"].get<bool>()&&complete;}
+        else value["installed"]=owned["installed"].get<bool>()&&present(target/".mpc-manager-id")&&present(target/"autorun/runtime"/managerRuntimePath("manager",paths.arch));
         if(!pending.empty()){value["installed"]=false;value["reason"]="SD removal was interrupted. Select Remove to finish.";}
         else if(!value["installed"].get<bool>())value["reason"]="SD installation is incomplete. Reinstall or remove it.";
         return value;
@@ -295,6 +340,7 @@ void SdInstaller::install(const std::string& uuid,const std::function<void(const
     need(prior.empty()||prior==uuid,"Remove the existing SD installation before selecting another card");
     const auto volume=selectVolume(paths,source,uuid,true);const auto target=volume.root/installedFolder;
     need(volume.device!=paths.fileDevice(source)||source==target,"Choose the SD card, not the installation USB");
+    if(present(source/"autorun/runtime/.pmu-versions")){installVersioned(paths,source,volume,progress,amount);return;}
     const auto expected=runtimeManifest(paths);const auto runtime=source/"autorun/runtime";plainPath(runtime);
     need(readFile(source/".mpc-manager-id",64)==marker,"Invalid manager source");
     std::map<std::string,std::string> files;uint64_t bytes=0;
@@ -355,6 +401,7 @@ void SdInstaller::remove(const std::function<void(const std::string&)>& progress
     need(active.empty()||pending.empty()||active==pending,"Conflicting saved SD selections");const auto uuid=pending.empty()?active:pending;
     if(uuid.empty()){if(amount)amount(1);if(progress)progress("SD manager is already removed.");return;}
     const auto volume=selectVolume(paths,source,uuid,true,false);const auto target=volume.root/installedFolder;auto owned=receipt(target,uuid);
+    if(owned.value("schema",0)==2){removeVersioned(paths,target,volume,source,progress,amount);return;}
     if(progress)progress("Removing manager from SD...");
     unchanged(paths,source,volume,false);
     if(pending.empty())saveConfiguration(paths,uuid,"installed-storage.removing");

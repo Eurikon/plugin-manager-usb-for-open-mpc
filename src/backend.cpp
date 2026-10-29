@@ -1,5 +1,7 @@
 #include "backend.hpp"
 #include "version.hpp"
+#include "update_bundle.hpp"
+#include <publisher_key.hpp>
 #include <archive.h>
 #include <gnu/libc-version.h>
 #include <algorithm>
@@ -328,6 +330,10 @@ Json Manager::stageManagerUpdate(const Json& checkedRelease,const std::function<
         require(status==0,"Manager download failed; check your connection and retry");
         require(fs::is_regular_file(zip)&&fs::file_size(zip)==size&&sha256(zip)==asset.at("sha256"),"Manager download size or checksum mismatch");
         if(progress)progress("Verifying the manager bundle...");
+        if(fs::is_directory(usb/"autorun/runtime/.pmu-versions")){
+            const auto verified=pmu::unpackUpdateBundle(zip,asset.at("sha256").get<std::string>(),size,bundle,arch,release.at("latest_version").get<std::string>(),pmu::publisherKey,{progress,amount});
+            fs::remove(zip);if(amount)amount(1);return {{"bundle_root",bundle.string()},{"release",release},{"files",verified.spec.files},{"generation",pmu::generationSpecToJson(verified.spec)}};
+        }
         const auto files=unpackManagerBundle(zip,bundle);
         require(arch!="aarch64"||fs::is_regular_file(bundle/"autorun/runtime/aarch64/manager"),"Manager update has no Gen 2 runtime");
         fs::remove(zip);if(amount)amount(1);

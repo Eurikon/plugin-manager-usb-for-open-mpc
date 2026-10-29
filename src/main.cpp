@@ -1,9 +1,16 @@
 #include "backend.hpp"
+#include "version.hpp"
 #include "sd_install.hpp"
 #include "manager_update.hpp"
 #include "display.hpp"
 #include "thumbnail.hpp"
 #include "plugin_manager_option.hpp"
+#include "source_runtime.hpp"
+#include "runtime_worker.hpp"
+#include "runtime_handoff.hpp"
+#include "runtime_session.hpp"
+#include "session_handoff.hpp"
+#include <publisher_key.hpp>
 #ifdef MPC_MANAGER_PLUGIN_STORAGE_FIXTURE
 #include "../tests/plugin_storage_fixture.hpp"
 #endif
@@ -25,6 +32,8 @@
 #include <sstream>
 #include <map>
 #include <iomanip>
+#include <cerrno>
+#include <sys/stat.h>
 
 namespace Theme {
 uint32_t background=0xffe9e7e2,panel=0xfff7f6f3,line=0xffcdcac2,ink=0xff1b1c1f,muted=0xff64666d,red=0xffd63a30,amber=0xff7a5600,warning=0xfff5ead1;
@@ -128,7 +137,15 @@ struct Screen {
     void updateLed(int x,int y){
         for(int row=-6;row<=6;++row)for(int col=-6;col<=6;++col){const int radius=row*row+col*col;if(radius>36)continue;const unsigned alpha=radius<=9?255:unsigned((36-radius)*5);auto& target=pixels[(y+row)*1280+x+col];uint32_t result=0xff000000;for(int shift:{0,8,16})result|=((((Theme::red>>shift)&255)*alpha+((target>>shift)&255)*(255-alpha))/255)<<shift;target=result;}
     }
-    void present(){SDL_UpdateTexture(texture,nullptr,pixels.data(),1280*4);SDL_RenderClear(renderer);if(geometry.portrait){SDL_Rect destination{-240,240,1280,800};SDL_RenderCopyEx(renderer,texture,nullptr,&destination,geometry.flipped?90:270,nullptr,SDL_FLIP_NONE);}else if(geometry.flipped)SDL_RenderCopyEx(renderer,texture,nullptr,nullptr,180,nullptr,SDL_FLIP_NONE);else SDL_RenderCopy(renderer,texture,nullptr,nullptr);SDL_RenderPresent(renderer);}
+    void present(){
+        if(SDL_UpdateTexture(texture,nullptr,pixels.data(),1280*4)!=0||SDL_RenderClear(renderer)!=0)throw std::runtime_error(SDL_GetError());
+        int copied;
+        if(geometry.portrait){SDL_Rect destination{-240,240,1280,800};copied=SDL_RenderCopyEx(renderer,texture,nullptr,&destination,geometry.flipped?90:270,nullptr,SDL_FLIP_NONE);}
+        else if(geometry.flipped)copied=SDL_RenderCopyEx(renderer,texture,nullptr,nullptr,180,nullptr,SDL_FLIP_NONE);
+        else copied=SDL_RenderCopy(renderer,texture,nullptr,nullptr);
+        if(copied!=0)throw std::runtime_error(SDL_GetError());
+        SDL_RenderPresent(renderer);
+    }
 };
 static std::string storageSize(uint64_t bytes) {
     std::ostringstream value;const bool gigabytes=bytes>=1024ULL*1024*1024;
@@ -136,6 +153,11 @@ static std::string storageSize(uint64_t bytes) {
 }
 static int app(int argc,char**argv) {
     if(argc!=6)throw std::runtime_error("Usage: manager USB SESSION SYNTHS SETTINGS FONT");
+    const char *generation=std::getenv("MPC_MANAGER_GENERATION"),*sourceIdentity=std::getenv("MPC_MANAGER_SOURCE_ID");
+    if((generation==nullptr)!=(sourceIdentity==nullptr)||(generation&&(!*generation||!*sourceIdentity)))throw std::runtime_error("Incomplete manager startup identity");
+    const std::string startupGeneration=generation?generation:"",startupSourceId=sourceIdentity?sourceIdentity:"",startupSource=argv[1];
+    std::future<void> startupHealth;
+    bool startupPresented=false;
     PluginStoragePaths storagePaths;
 #ifdef MPC_MANAGER_PLUGIN_STORAGE_FIXTURE
     storagePaths=pluginStorageFixture(argv[2],argv[4],std::getenv("MPC_MANAGER_UI_TEST")&&std::string(std::getenv("MPC_MANAGER_UI_TEST"))=="plugin-location-blocked");
@@ -218,6 +240,7 @@ static int app(int argc,char**argv) {
     const auto testStarted=SDL_GetTicks();
     auto capture=[&](const char* name){SDL_Surface* surface=SDL_CreateRGBSurfaceWithFormatFrom(screen.pixels.data(),1280,800,32,1280*4,SDL_PIXELFORMAT_ARGB8888);if(!surface)throw std::runtime_error(SDL_GetError());const int result=SDL_SaveBMP(surface,(manager.session/name).c_str());SDL_FreeSurface(surface);if(result!=0)throw std::runtime_error(SDL_GetError());};
     while(!quitting) {
+        if(startupHealth.valid()&&startupHealth.wait_for(std::chrono::milliseconds(0))==std::future_status::ready){startupHealth.get();dirty=true;}
         if(pluginLocationTest&&SDL_GetTicks()-testStarted>15000)throw std::runtime_error("Plugin location UI test timed out at step "+std::to_string(step)+": "+status);
         if(!sdSourceRemoval&&!fs::is_regular_file(manager.usb/".mpc-manager-id")) {status=sourceOnSd?"SD card removed. Returning to MPC.":"USB removed. Returning to MPC.";quitting=1;}
         if(busy&&mutating){std::lock_guard<std::mutex> lock(progressMutex);if(!progressText.empty()){status=progressText;progressText.clear();dirty=true;}}
@@ -303,7 +326,7 @@ static int app(int argc,char**argv) {
                 screen.text(52,205,remove?"Remove this manager from SD?":"Install this manager on "+label+"?",Theme::ink,34,1150);
                 screen.wrapped(52,268,remove?"Your plugins, installation history, preferences and local packages stay on the card.":sourceOnSd?"After updating, return to MPC. Keep the SD card inserted.":"After installation, return to MPC and safely eject the USB. Keep the SD card inserted; hold SHIFT + MENU for two seconds to open the manager.",1150,2,Theme::muted,22);
                 screen.text(52,359,remove?"Plugin Manager folder: Plugin Manager USB":sourceOnSd?"The current session remains available until you return to MPC.":"This USB session remains available until you return to MPC.",Theme::muted,22,1150);
-                screen.button(28,605,340,remove?"Confirm removal":"Confirm install",true,!busy,remove?Icon::Trash:Icon::Download);
+                screen.button(28,605,340,remove?"Confirm removal":"Confirm install",true,!busy&&!startupHealth.valid(),remove?Icon::Trash:Icon::Download);
                 screen.button(380,605,220,"Cancel",false,!mutating);
             }else if(sdPicker){
                 if(!sdReady)screen.wrapped(28,186,failed?status:"Checking available SD cards...",1150,3,failed?Theme::amber:Theme::muted,22);
@@ -400,6 +423,13 @@ static int app(int argc,char**argv) {
         if((!welcome&&(busy||progressFading))||(welcome&&(mutating||progressFading))){float value;{std::lock_guard<std::mutex> lock(progressMutex);value=progressValue;}const bool working=welcome?mutating:busy;const float t=working?1.0f:1.0f-float(fadeElapsed)/600;const float opacity=t*t*(3-2*t);const auto background=Theme::lcd;const int x=46,y=770,width=1180;auto faded=[&](uint32_t color){uint32_t result=0xff000000;for(int shift:{0,8,16})result|=uint32_t(((color>>shift)&255)*opacity+((background>>shift)&255)*(1-opacity))<<shift;return result;};screen.rect(x,y,width,8,faded(Theme::line));if(!working&&completed)screen.rect(x,y,width,8,faded(Theme::red));else if(value>=0)screen.rect(x,y,int(width*std::clamp(value,0.0f,1.0f)),8,faded(Theme::red));else screen.rect(x+int(((working?SDL_GetTicks():progressEnded)/4)%(width-140)),y,140,8,faded(Theme::red));}
         if(flow&&!welcome&&!progressFading){const auto pixel=screen.pixels[777*1280+46];if(busy?(pixel!=Theme::line&&pixel!=Theme::red):pixel!=Theme::lcd)throw std::runtime_error("Progress bar height or cleanup failed");}
         screen.present();++presents;dirty=false;
+        if(!startupPresented){
+            startupPresented=true;
+            if(!startupGeneration.empty())startupHealth=std::async(std::launch::async,[startupSource,startupGeneration,startupSourceId]{
+                pmu::SourceRuntime runtime(startupSource,managerArchitecture(),pmu::publisherKey);
+                runtime.confirm(startupGeneration,startupSourceId);
+            });
+        }
         }
         if(flow&&welcome&&!busy&&!returning){
             if(welcomeStep==0){click(1070,565);++welcomeStep;}
@@ -601,7 +631,7 @@ static int app(int argc,char**argv) {
                 }
                 if(managerUpdateConfirm){
                     if(y>=605&&y<663&&x>=380&&x<600){managerUpdateConfirm=false;continue;}
-                    if(y>=605&&y<663&&x>=28&&x<368&&!busy&&!managerUpdated){
+                    if(y>=605&&y<663&&x>=28&&x<368&&!busy&&!managerUpdated&&!startupHealth.valid()){
                         const Json checkedRelease=managerUpdate;busy=mutating=true;work=Work::ManagerUpdate;failed=completed=managerCheckFailed=false;progressFading=false;amount(-1);status="Preparing the manager update...";
                         job=std::async(std::launch::async,[&,checkedRelease]{
                             const auto staged=manager.stageManagerUpdate(checkedRelease,progress,[&](float value){amount(value<0?value:0.55f*value);});Result result;
@@ -619,7 +649,7 @@ static int app(int argc,char**argv) {
                 }
                 if(sdConfirm){
                     if(y>=605&&y<663&&x>=380&&x<600){sdConfirm=false;continue;}
-                    if(y>=605&&y<663&&x>=28&&x<368&&!busy){const bool remove=sdOperation=="Remove";const std::string uuid=sdSelected;sdSourceRemoval=remove&&sdState.value("current",false);busy=mutating=true;work=remove?Work::SdRemove:Work::SdInstall;failed=completed=false;progressFading=false;amount(-1);status=remove?"Removing the SD installation...":"Checking the selected SD card...";job=std::async(std::launch::async,[&,remove,uuid]{if(remove)sdInstaller.remove(progress,amount);else sdInstaller.install(uuid,progress,amount);Result result;result.storage=sdInstaller.inspect();return result;});}
+                    if(y>=605&&y<663&&x>=28&&x<368&&!busy&&!startupHealth.valid()){const bool remove=sdOperation=="Remove";const std::string uuid=sdSelected;sdSourceRemoval=remove&&sdState.value("current",false);busy=mutating=true;work=remove?Work::SdRemove:Work::SdInstall;failed=completed=false;progressFading=false;amount(-1);status=remove?"Removing the SD installation...":"Checking the selected SD card...";job=std::async(std::launch::async,[&,remove,uuid]{if(remove)sdInstaller.remove(progress,amount);else sdInstaller.install(uuid,progress,amount);Result result;result.storage=sdInstaller.inspect();return result;});}
                     continue;
                 }
                 if(!sdPicker){
@@ -669,6 +699,7 @@ static int app(int argc,char**argv) {
         SDL_Delay(30);
     }
     if(busy)job.get();
+    if(startupHealth.valid())startupHealth.get();
 #ifdef MPC_MANAGER_SD_FIXTURE
     if(sdTest&&std::string(testMode)=="sd-remove-current"){if(step!=99||failed||!returning||!sdSourceRemoval||status!="Returning to MPC...")throw std::runtime_error("Current SD removal was mistaken for USB removal");std::fprintf(stderr,"PASS: current SD source removal returns to MPC without a USB removal error\n");step=100;}
 #endif
@@ -679,4 +710,22 @@ static int app(int argc,char**argv) {
     if(responsive){if(step!=18)throw std::runtime_error("Responsiveness test did not finish");std::fprintf(stderr,"PASS: welcome preferences, delayed ZIP navigation, latest-tab precedence, theme input, idle redraw suspension and safe Return during read\n");}
     return 0;
 }
-int main(int argc,char**argv){try{return app(argc,argv);}catch(const std::exception&e){std::fprintf(stderr,"Manager error: %s\n",e.what());return 1;}}
+static bool completeHandoff(const fs::path& cache){
+    const auto path=pmu::queuedSessionHandoff(cache);if(path.empty())return false;const auto item=pmu::readSessionHandoff(path);pmu::SourceRuntime source(item.source,managerArchitecture(),pmu::publisherKey);const auto current=source.choose(false,item.sourceIdentity);
+    const auto result=pmu::runIncomingWorker(current.worker,cache,{{"operation","apply"},{"intent","finish-update"},{"source",item.source.string()},{"helper",item.helper.string()},{"source_identity",item.sourceIdentity},{"handoff",path.string()}});if(!result.value("handoff_started",false))throw std::runtime_error("The updated runtime did not accept handover");return true;
+}
+int main(int argc,char**argv){try{
+    if(argc==2&&std::string(argv[1])=="--pmu-info-v1"){std::puts(Json({{"product","plugin-manager-usb"},{"version",MPC_MANAGER_VERSION},{"architecture",managerArchitecture()},{"update_protocol",1}}).dump().c_str());return 0;}
+    if(argc==2&&std::string(argv[1])=="--pmu-update-v1")return pmu::serveUpdateWorker([](const auto& task,const auto& progress){return pmu::handleRuntimeTask(task,pmu::publisherKey,progress,MPC_MANAGER_VERSION);});
+    if(argc==3&&std::string(argv[1])=="--pmu-finalize-v1"){pmu::finalizeRuntimeHandoff(argv[2],pmu::publisherKey);return 0;}
+    if(argc==3&&std::string(argv[1])=="--pmu-recover-v1"){pmu::recoverRuntimeHandoff(argv[2],pmu::publisherKey);return 0;}
+    if(argc==3&&std::string(argv[1])=="--pmu-complete-v1")return completeHandoff(argv[2])?0:1;
+    if(argc==7&&std::string(argv[1])=="--pmu-gui-v1"){
+        const fs::path source=argv[2],cache=argv[3];const auto context=pmu::guiRuntimeContext(cache.parent_path());if(context.at("source")!=source.string()||cache.filename()!="cache")throw std::runtime_error("GUI source changed before opening");if(mkdir(cache.c_str(),0700)!=0&&errno!=EEXIST)throw std::runtime_error("Cannot create private manager cache");if(completeHandoff(cache))return 75;
+        const auto cookie=context.at("source_identity").get<std::string>(),previous=context.at("generation").get<std::string>();pmu::SourceRuntime runtime(source,managerArchitecture(),pmu::publisherKey);auto selected=runtime.choose(false,cookie);if(selected.generation.id==previous)selected=runtime.choose(true,cookie);
+        if(selected.generation.id!=previous){const auto result=pmu::runIncomingWorker(selected.worker,cache,{{"operation","apply"},{"intent","refresh-runtime"},{"source",source.string()},{"helper",context.at("helper")},{"source_identity",cookie},{"session",cache.string()}});if(!result.value("handoff_started",false))throw std::runtime_error("Runtime did not accept recovery handover");return 75;}
+        if(setenv("MPC_MANAGER_GENERATION",selected.generation.id.c_str(),1)||setenv("MPC_MANAGER_SOURCE_ID",cookie.c_str(),1))throw std::runtime_error("Cannot bind GUI startup health");
+        return app(6,argv+1);
+    }
+    return app(argc,argv);
+}catch(const std::exception&e){std::fprintf(stderr,"Manager error: %s\n",e.what());return 1;}}

@@ -37,7 +37,7 @@ bool same(const struct stat& a,const struct stat& b){return a.st_dev==b.st_dev&&
 bool unchanged(const struct stat& a,const struct stat& b){return same(a,b)&&a.st_size==b.st_size&&a.st_mtim.tv_sec==b.st_mtim.tv_sec&&a.st_mtim.tv_nsec==b.st_mtim.tv_nsec&&a.st_ctim.tv_sec==b.st_ctim.tv_sec&&a.st_ctim.tv_nsec==b.st_ctim.tv_nsec;}
 std::string descriptor(int fd){return "/proc/"+std::to_string(getpid())+"/fd/"+std::to_string(fd);}
 Fd folder(const fs::path& path){
-    need(path.is_absolute()&&path.lexically_normal()==path,"Unsafe update staging path");Fd current(open("/",O_RDONLY|O_DIRECTORY|O_CLOEXEC));need(current.value>=0,"Cannot inspect update staging path");
+    need(path.is_absolute()&&path.lexically_normal()==path&&path.native().find('\0')==std::string::npos,"Unsafe update staging path");Fd current(open("/",O_RDONLY|O_DIRECTORY|O_CLOEXEC));need(current.value>=0,"Cannot inspect update staging path");
     for(const auto& part:path.relative_path()){Fd next(openat(current.value,part.c_str(),O_RDONLY|O_DIRECTORY|O_CLOEXEC|O_NOFOLLOW));need(next.value>=0,"Update staging path is missing or linked");current=std::move(next);}return current;
 }
 struct Archive {
@@ -112,8 +112,31 @@ struct Staging {
     }
 };
 void writeAll(int fd,const char* data,size_t bytes){size_t at=0;while(at<bytes){const auto n=write(fd,data+at,bytes-at);if(n<0&&errno==EINTR)continue;need(n>0,"Cannot write staged update file");at+=size_t(n);}}
+Fd member(int root,const std::string& name){
+    const fs::path relative(name);Fd parent(dup(root));need(parent.value>=0,"Cannot pin staged update folder");
+    for(const auto& part:relative.parent_path()){
+        Fd next(openat(parent.value,part.c_str(),O_RDONLY|O_DIRECTORY|O_NOFOLLOW|O_CLOEXEC));need(next.value>=0,"Missing or linked staged update folder");parent=std::move(next);
+    }
+    Fd result(openat(parent.value,relative.filename().c_str(),O_RDONLY|O_NONBLOCK|O_NOFOLLOW|O_CLOEXEC));need(result.value>=0,"Missing or linked staged update file");const auto value=information(result.value);
+    need(S_ISREG(value.st_mode)&&value.st_uid==geteuid()&&!(value.st_mode&0022)&&value.st_nlink==1&&value.st_size>=0&&uint64_t(value.st_size)<=fileLimit,"Unsafe staged update file");return result;
+}
 }
 Json updateEnvelope(const GenerationSpec& spec,const std::string& authorization){Json result={{"protocol",1},{"product","plugin-manager-usb"},{"generation",generationSpecToJson(spec)},{"authorization",authorization}};(void)specification(result);return result;}
+std::string readUpdateFile(const UpdateBundle& bundle,const std::string& name,size_t maximum){
+    GenerationSpec probe{"path-check","universal",{{name,std::string(64,'0')}}};(void)generationSpecToJson(probe);
+    need(maximum>0&&maximum<=128*1024&&bundle.spec.files.count(name),"Update metadata is not inventoried");auto root=folder(bundle.directory);auto file=member(root.value,name);const auto before=information(file.value);need(uint64_t(before.st_size)<=maximum,"Oversized update instruction file");std::string text(size_t(before.st_size),'\0');size_t at=0;
+    while(at<text.size()){const auto count=read(file.value,text.data()+at,text.size()-at);if(count<0&&errno==EINTR)continue;need(count>0,"Cannot read update instructions");at+=size_t(count);}
+    need(unchanged(before,information(file.value))&&sha256Text(text)==bundle.spec.files.at(name),"Update instructions changed after verification");return text;
+}
+UpdateBundle verifyStagedUpdate(const fs::path& directory,const std::string& architecture,const std::string& version,const std::string& publisher){
+    auto root=folder(directory);const auto identity=information(root.value);need(identity.st_uid==geteuid()&&!(identity.st_mode&0022),"Unsafe staged update root");auto metadata=member(root.value,envelopeName);const auto before=information(metadata.value);need(before.st_size<=128*1024,"Oversized staged update envelope");std::string text(size_t(before.st_size),'\0');size_t at=0;
+    while(at<text.size()){const auto count=read(metadata.value,text.data()+at,text.size()-at);if(count<0&&errno==EINTR)continue;need(count>0,"Cannot read staged update envelope");at+=size_t(count);}
+    need(unchanged(before,information(metadata.value)),"Staged update envelope changed while reading");const auto envelope=parseMetadata(text);const auto spec=specification(envelope);
+    need((architecture=="armv7"||architecture=="aarch64")&&(spec.architecture==architecture||spec.architecture=="universal")&&spec.version==version,"Staged update does not match the selected release and device");verifyAuthorization(publisher,"update",sha256Text(generationSpecToJson(spec).dump()+'\n'),envelope.at("authorization").get<std::string>());
+    uint64_t bytes=0;
+    for(const auto& item:spec.files){auto file=member(root.value,item.first);const auto expected=information(file.value);bytes+=uint64_t(expected.st_size);need(bytes<=totalLimit,"Staged update exceeds its size limit");need(fileSha256(descriptor(file.value))==item.second&&unchanged(expected,information(file.value)),"Staged update checksum mismatch");}
+    auto named=folder(directory);need(same(identity,information(named.value)),"Staged update folder was replaced");const auto role=spec.entrypoints.at("update_worker_"+architecture);return {directory,spec,{directory/role,spec.files.at(role),architecture}};
+}
 UpdateBundle unpackUpdateBundle(const fs::path& zip,const std::string& sha,uint64_t bytes,const fs::path& destination,const std::string& architecture,const std::string& version,const std::string& publisherKey,const UpdateProgress& progress){
     need(bytes>0&&bytes<=totalLimit&&sha.size()==64&&sha.find_first_not_of("0123456789abcdef")==std::string::npos,"Invalid expected update ZIP identity");auto zipParent=folder(zip.parent_path());Fd input(openat(zipParent.value,zip.filename().c_str(),O_RDONLY|O_NONBLOCK|O_NOFOLLOW|O_CLOEXEC));need(input.value>=0,"Cannot pin update ZIP");const auto before=information(input.value);
     need(S_ISREG(before.st_mode)&&before.st_nlink==1&&before.st_uid==geteuid()&&!(before.st_mode&0022)&&before.st_size>=0&&uint64_t(before.st_size)==bytes,"Unsafe or incomplete update ZIP");need(fileSha256(descriptor(input.value))==sha&&unchanged(before,information(input.value)),"Update ZIP checksum mismatch");

@@ -5,6 +5,7 @@
 #include "platform.hpp"
 #include "storage.h"
 #include "panel_input.h"
+#include "helper_payload.h"
 #include <algorithm>
 #include <atomic>
 #include <chrono>
@@ -38,10 +39,13 @@
 extern "C" int pmu_prepare_manager(const char *, const char *, const char *);
 
 namespace {
-#if defined(__aarch64__)
 char source[PATH_MAX] = PMU_HELPER_DIRECTORY;
+const PmuHelperHostV1 *payloadHost = nullptr;
+extern "C" int pmu_set_payload_context(const char *, const char *, const char *, const char *);
 extern "C" int pmu_set_helper_directory(const char *);
+#if defined(__aarch64__)
 bool selectSource() {
+    if (payloadHost) return true;
     Dl_info module{};
     char path[PATH_MAX];
     if (!dladdr(reinterpret_cast<void *>(&selectSource), &module) || !module.dli_fname
@@ -53,8 +57,6 @@ bool selectSource() {
     strcpy(source, path);
     return true;
 }
-#else
-constexpr const char *source = PMU_HELPER_DIRECTORY;
 #endif
 constexpr const char *statePath = "/run/mpc-usb-manager-session";
 constexpr const char marker[] = "mpc-usb-manager-v1\n";
@@ -751,6 +753,7 @@ void *observe(void *data) {
             IN_DELETE_SELF | IN_MOVE_SELF | IN_DELETE | IN_MOVED_FROM | IN_MOVED_TO | IN_CLOSE_WRITE);
         if (mounts < 0 || events < 0 || sourceWatch < 0 || s->timer < 0
             || s->loadingTimer < 0 || s->preparationTimer < 0) throw 1;
+        if (payloadHost && baseline.valid) payloadHost->ready(payloadHost->userdata);
         Mount current;
         bool scan = true, force = false, waitForCancellation = false;
         bool preparationChanged = false, cancellationChanged = false;
@@ -1078,7 +1081,7 @@ int mainImage(dl_phdr_info *info, size_t, void *result) {
 }
 }
 
-extern "C" int pmu_start_manager(void *lua) {
+static int startManager(void *lua) {
     try {
         if (session || geteuid() != 0) return 0;
 #if defined(__aarch64__)
@@ -1116,7 +1119,7 @@ extern "C" int pmu_start_manager(void *lua) {
     return 0;
 }
 
-extern "C" int pmu_stop_manager(void *) {
+static int stopManager() {
     auto *s = session;
     if (!s) return 0;
     s->unloading = true;
@@ -1132,4 +1135,29 @@ extern "C" int pmu_stop_manager(void *) {
     wake(s);
     if (s->started) { pthread_join(s->thread, nullptr); s->started = false; }
     return 0;
+}
+extern "C" int pmu_start_manager(void *lua) { return startManager(lua); }
+extern "C" int pmu_stop_manager(void *) { return stopManager(); }
+
+namespace {
+int startPayload(const PmuHelperHostV1 *host, void *binding) {
+    if (session || !host || host->abi_version != 1 || host->struct_size < sizeof(PmuHelperHostV1)
+        || !host->ready || !host->architecture || strcmp(host->architecture, managerArchitecture()) != 0
+        || !pmu_set_payload_context(host->helper_directory, host->payload_directory,
+            host->bootstrap_script, host->generation_id)) return 0;
+    strcpy(source, host->helper_directory);
+    payloadHost = host;
+    startManager(binding);
+    if (session && session->started) return 1;
+    payloadHost = nullptr;
+    return 0;
+}
+void stopPayload() {
+    stopManager();
+    payloadHost = nullptr;
+}
+}
+extern "C" const PmuHelperPayloadV1 *pmu_helper_payload_v1() {
+    static const PmuHelperPayloadV1 api{1, sizeof(PmuHelperPayloadV1), startPayload, stopPayload};
+    return &api;
 }

@@ -219,6 +219,96 @@ def build_universal_package(binary: Path, firmware_310: Path, setup_project: Pat
     return destination
 
 
+def build_signed_package(binary: Path, firmware_310: Path, setup_project: Path,
+                         destination: Path, signing_key: Path, *, arm64_build: Path | None = None,
+                         firmware_310_arm64: Path | None = None) -> Path:
+    from tools.payload_package import encode, envelope, generation, store
+    from tools.sign_release import Signer
+    import io
+    import re
+    if destination.exists() or destination.is_symlink():
+        raise FileExistsError("Destination already exists")
+    if (arm64_build is None) != (firmware_310_arm64 is None):
+        raise ValueError("Supply both ARM64 outputs and the Gen 2 OS 3.10 executable")
+    salt, facts = validate_mpc_executable(binary)
+    if facts["arch"] != "armv7":
+        raise ValueError("The universal stick uses the stock Gen 1 autorun format")
+    match = re.search(r'^#define MPC_MANAGER_VERSION "([A-Za-z0-9_.-]+)"$',
+                      (PROJECT / "src/version.hpp").read_text(), re.M)
+    if match is None:
+        raise ValueError("Missing manager release version")
+    version = match.group(1)
+    signer = Signer(signing_key, PROJECT / "src/publisher_key.hpp")
+    packager = _helper()
+    helper = packager.build_versioned_archive(firmware_310, setup_project, signer, version, firmware_310_arm64)
+    payload = {"font.ttf": packager.read_file(PROJECT / "build/font.ttf", 4 * 1024 * 1024),
+               "launch.sh": (PROJECT / "launch.sh").read_bytes(), "setup.sh": (PROJECT / "setup.sh").read_bytes(),
+               "resources/Plugin Manager helper.xpa": helper}
+    roles = {"font": "font.ttf", "launch": "launch.sh", "setup": "setup.sh",
+             "helper_archive": "resources/Plugin Manager helper.xpa"}
+    files = {".mpc-manager-id": b"mpc-usb-manager-v1\n", "Plugin Manager helper.xpa": helper,
+             "autorun/open.sh": (PROJECT / "open.sh").read_bytes()}
+    architectures = ("armv7", "aarch64") if arm64_build is not None else ("armv7",)
+    for arch in architectures:
+        build = arm64_build if arch == "aarch64" else PROJECT / "build"
+        for name, role in (("manager", "manager"), ("shortcut", "supervisor"), ("shortcut-hook.so", "hook")):
+            relative = "bin/" + arch + "/" + name
+            payload[relative] = packager.native_file(build / name, arch, 64 * 1024 * 1024)
+            roles[role + "_" + arch] = relative
+        roles["runtime_worker_" + arch] = roles["manager_" + arch]
+        files["autorun/runtime/source-dispatcher-" + arch] = packager.native_file(build / "source-dispatcher", arch, 2 * 1024 * 1024)
+    for path in sorted((PROJECT / "licenses").glob("*")):
+        if path.is_file() and path.name != "TitilliumWeb.txt":
+            payload["licenses/" + path.name] = path.read_bytes()
+    payload["licenses/plugin-manager-usb.txt"] = (PROJECT / "LICENSE").read_bytes()
+    for name in ("font-license.txt", "json-license.txt"):
+        payload["licenses/" + name] = (PROJECT / "build" / name).read_bytes()
+    architecture = "universal" if len(architectures) == 2 else "armv7"
+    identifier, _, signed = generation(payload, roles, version, architecture, "runtime", signer)
+    files.update({"autorun/runtime/" + name: data for name, data in store(identifier, signed, architectures).items()})
+    helper_payload = {}
+    with zipfile.ZipFile(io.BytesIO(helper)) as archive:
+        for name in archive.namelist():
+            relative = name.removeprefix(packager.PREFIX)
+            if relative.startswith(".pmu-versions/") and len(relative.split("/")) >= 3:
+                helper_payload[relative.split("/", 2)[2]] = archive.read(name)
+    if "generation.json" not in helper_payload or "authorization.json" not in helper_payload:
+        raise ValueError("Helper has no complete signed generation")
+    files.update({"updates/helper/" + name: data for name, data in helper_payload.items()})
+    runtime_directory = "autorun/runtime/.pmu-versions/" + identifier
+    recipe = {"schema": 1, "product": "plugin-manager-usb",
+              "runtime": {"directory": runtime_directory, "manifest": runtime_directory + "/generation.json",
+                          "approval": runtime_directory + "/authorization.json"},
+              "helper": {"directory": "updates/helper", "manifest": "updates/helper/generation.json",
+                         "approval": "updates/helper/authorization.json"}}
+    files["updates/deployment.json"] = encode(recipe)
+    declared = sorted("runtime/source-dispatcher-" + arch for arch in architectures)
+    files["autorun/autorun.json"] = (json.dumps({"value0": {"files": declared, "scripts": [{
+        "path": "open.sh", "askQuestion": True,
+        "message": "MPC PLUGIN INSTALLER\n\nHave you saved your project?",
+        "yesButtonText": "Open", "noButtonText": "Cancel"}]}}, indent=2) + "\n").encode()
+    checked = ["autorun.json", "open.sh", *declared]
+    files["autorun/autorun.check"] = hashlib.sha256(b"".join(files["autorun/" + name] for name in checked) + salt).hexdigest().encode()
+    files["USB-SHA256.json"] = encode({name: hashlib.sha256(data).hexdigest() for name, data in files.items()})
+    outer_roles = {"deployment": "updates/deployment.json"}
+    for arch in architectures:
+        outer_roles["update_worker_" + arch] = runtime_directory + "/" + roles["runtime_worker_" + arch]
+    files["PMU-UPDATE.json"] = envelope(files, outer_roles, version, architecture, signer)
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix=".manager-signed-", dir=destination.parent) as temporary:
+        staged = Path(temporary) / "bundle"
+        staged.mkdir()
+        for name, data in files.items():
+            target = staged / name
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(data)
+        (staged / "local-plugins").mkdir()
+        if destination.exists() or destination.is_symlink():
+            raise FileExistsError("Destination appeared during signing")
+        staged.rename(destination)
+    return destination
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Build a legacy or universal manager USB bundle from local ARM outputs")
     parser.add_argument("firmware_executable", type=Path)
@@ -228,13 +318,21 @@ def main() -> None:
     parser.add_argument("--arm64-build", type=Path, help="Additional ARM64 runtime build directory for Gen 2")
     parser.add_argument("--mpc-310", type=Path, help="Stock Gen1 OS 3.10 MPC executable for the controller helper")
     parser.add_argument("--setup-project", type=Path, help="Blank standalone MPC project for the one-time helper import")
+    parser.add_argument("--signing-key", type=Path, help="Private Ed25519 key matching the compiled publisher header")
+    parser.add_argument("--legacy-layout", action="store_true", help="Explicitly build the older unsigned layout for compatibility testing")
     args = parser.parse_args()
+    if bool(args.signing_key) == args.legacy_layout:
+        parser.error("Supply --signing-key for a signed bundle, or --legacy-layout for compatibility testing")
     if args.mpc_310_arm64 is not None and args.mpc_310 is None:
         parser.error("--mpc-310-arm64 requires --mpc-310 and --setup-project")
     if (args.mpc_310 is None) != (args.setup_project is None):
         parser.error("Supply both --mpc-310 and --setup-project for a universal bundle")
     try:
-        if args.mpc_310 is not None:
+        if args.signing_key is not None:
+            if args.mpc_310 is None or args.setup_project is None or args.plugin is not None:
+                parser.error("Signed distribution needs --mpc-310, --setup-project and no bundled plugin")
+            build_signed_package(args.firmware_executable, args.mpc_310, args.setup_project, args.destination, args.signing_key, arm64_build=args.arm64_build, firmware_310_arm64=args.mpc_310_arm64)
+        elif args.mpc_310 is not None:
             build_universal_package(args.firmware_executable, args.mpc_310, args.setup_project,
                                     args.destination, args.plugin, arm64_build=args.arm64_build, firmware_310_arm64=args.mpc_310_arm64)
         else:

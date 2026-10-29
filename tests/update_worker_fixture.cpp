@@ -19,6 +19,6 @@ int main(int argc,char** argv){
         if(mode=="flood")for(int i=0;i<10000;++i)progress.message("progress message");
         progress.message("Applying the complete verified version");progress.fraction(0.5f);progress.fraction(1);
         const int inherited=task.value("inherited_fd",-1);
-        return nlohmann::json{{"applied",true},{"message","Update prepared; return to MPC to activate."},{"activation","next_open"},{"echo",task.value("echo",std::string())},{"environment_clean",getenv("LD_PRELOAD")==nullptr},{"extra_fd_closed",inherited<0||(fcntl(inherited,F_GETFD)==-1&&errno==EBADF)}};
+        return nlohmann::json{{"applied",true},{"message","Update prepared; return to MPC to activate."},{"activation","next_open"},{"echo",task.value("echo",std::string())},{"environment_clean",getenv("LD_PRELOAD")==nullptr},{"pinned_image_retained",fcntl(5,F_GETFD)==FD_CLOEXEC&&(fcntl(5,F_GETFL)&O_ACCMODE)==O_RDONLY},{"extra_fd_closed",inherited<0||(fcntl(inherited,F_GETFD)==-1&&errno==EBADF)}};
     });
 }

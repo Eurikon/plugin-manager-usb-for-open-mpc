@@ -3,7 +3,7 @@ set -eu
 usb=$1
 work=$2
 trap 'rm -rf "$work"' EXIT
-case "$#:${3-}" in 2:) ;; 3:--arm-only) ;; *) echo 'Expected USB RAM_SESSION [--arm-only]'; exit 1 ;; esac
+case "$#:${3-}" in 2:) ;; 3:--arm-only|3:--resume-only) ;; *) echo 'Expected USB RAM_SESSION [--arm-only|--resume-only]'; exit 1 ;; esac
 service=acvs
 [ "$(id -u)" = 0 ] || exit 1
 systemctl cat acvs >/dev/null 2>&1 || service=inmusic-mpc
@@ -15,7 +15,7 @@ port=$(printf '%s\n' "$ports" | awk '
     }
     END { if (count == 1) print port; else exit 1 }
 ') || { echo 'Private MIDI input port not found or ambiguous'; exit 1; }
-if [ "$#" -eq 3 ]; then arm=--arm-only; else arm=''; fi
+if [ "$#" -eq 3 ]; then arm=$3; else arm=''; fi
 set -- "$work/shortcut" "$usb" "$work" "$service" "$port"
 [ -z "$arm" ] || set -- "$@" "$arm"
 case "${MPC_MANAGER_SD_HELPER-}" in

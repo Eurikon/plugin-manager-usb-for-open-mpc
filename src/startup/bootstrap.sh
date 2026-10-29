@@ -21,13 +21,29 @@ POLL_DELAY=1
 FILES='manager font.ttf launch.sh setup.sh shortcut shortcut-hook.so'
 PROJECT_BYTES=48697
 PROJECT_SHA256='b8182372a271cc8b3d5c9e50af8c84012fc142d6894b516abc4f7bdd9f0fa830'
+PAYLOAD=''
+ARCH=armv7
+if [ "$#" = 7 ]; then
+    [ "$5" = --pmu-helper-v1 ] || exit 10
+    SOURCE=$6 PAYLOAD=$7
+    case "$SOURCE" in
+        '/sdcard/MPC Documents/Devices/Plugin Manager helper'|'/nvme/MPC Documents/Devices/Plugin Manager helper'|'/storage/MPC Documents/Devices/Plugin Manager helper'|'/data/UserData/MPC Documents/Devices/Plugin Manager helper') ;;
+        *) exit 11 ;;
+    esac
+    case "$PAYLOAD" in "$SOURCE"/.pmu-versions/*) ;; *) exit 11 ;; esac
+    generation=${PAYLOAD#"$SOURCE"/.pmu-versions/}
+    [ "${#generation}" = 64 ] || exit 11
+    case "$generation" in *[!0-9a-f]*) exit 11 ;; esac
+    set -- "$1" "$2" "$3" "$4"
+fi
 
 MANIFEST=runtime.sha256
 NOTE_WRITER=bootstrap-note
 SOURCE_EXFAT=0
 case "$(uname -m)" in
     aarch64)
-        SOURCE=$(CDPATH= cd "$(dirname "$0")" && pwd -P)
+        ARCH=aarch64
+        [ -n "$PAYLOAD" ] || SOURCE=$(CDPATH= cd "$(dirname "$0")" && pwd -P)
         case "$SOURCE" in
             '/nvme/MPC Documents/Devices/Plugin Manager helper'|'/sdcard/MPC Documents/Devices/Plugin Manager helper'|'/storage/MPC Documents/Devices/Plugin Manager helper'|'/data/UserData/MPC Documents/Devices/Plugin Manager helper') ;;
             *) printf '%s\n' 'unsupported helper location' >&2; exit 11 ;;
@@ -39,6 +55,7 @@ case "$(uname -m)" in
         FILES='aarch64/manager font.ttf launch.sh setup.sh aarch64/shortcut aarch64/shortcut-hook.so'
         ;;
 esac
+if [ -n "$PAYLOAD" ] && [ "$ARCH" = armv7 ] && [ "$SOURCE" != '/sdcard/MPC Documents/Devices/Plugin Manager helper' ]; then exit 11; fi
 
 failure_note() {
     [ -n "${confirmed_usb-}" ] && [ -d "$SOURCE" ] && [ ! -L "$SOURCE" ] || return 0
@@ -224,12 +241,13 @@ cleanup() {
         (set -C; printf 'failed\n' > "$preparation_directory/failed") 2>/dev/null || true
     fi
     release_permission
+    [ -z "$transport" ] || rm -rf "$transport"
     exit "$status"
 }
 
 confirmed_usb='' confirmed_identity='' confirmed_permit=''
 preparation_directory='' preparation_directory_identity='' preparation_request_identity=''
-work='' prepared_supervisor=0 preparation_published=0
+work='' transport='' prepared_supervisor=0 preparation_published=0
 case "$#:${1-}" in
     0:) ;;
     4:--confirmed|4:--prepare)
@@ -275,6 +293,9 @@ case "$mode" in ''|*[!0-7]*) fail 'invalid source permissions' 11 ;; esac
 if [ "$MANIFEST" = runtime-aarch64.sha256 ] && [ "$(stat -f -c %t "$SOURCE")" = 2011bab0 ] \
     && [ "$(stat -c %d "$SOURCE")" = "$(stat -c %d "$INTERNAL")" ]; then SOURCE_EXFAT=1; fi
 [ "${#mode}" -le 3 ] && { [ "$((0$mode & 0722))" = 448 ] || [ "$SOURCE_EXFAT" = 1 ]; } || fail 'unsafe source permissions' 11
+if [ -n "$PAYLOAD" ]; then
+    regular_source "$PAYLOAD/bootstrap.sh" && regular_source "$PAYLOAD/source-dispatcher-$ARCH" || fail 'invalid selected helper payload' 11
+else
 regular_source "$SOURCE/bootstrap.sh" && regular_source "$SOURCE/$MANIFEST" || fail 'invalid source file' 11
 [ "$(wc -c < "$SOURCE/$MANIFEST")" -le 512 ] || fail 'manifest exceeds size bound' 11
 bytes=0
@@ -290,10 +311,11 @@ done
 ! IFS= read -r entry <&3 || fail 'extra manifest entry' 11
 exec 3<&-
 [ "$(wc -c < "$SOURCE/$MANIFEST")" = "$bytes" ] || fail 'extra manifest content' 11
+fi
 firmware=$(running_mpc) || firmware=$MPC
 actual=$(sha256sum "$firmware" 2>/dev/null) || fail 'firmware unavailable' 10
 [ "${actual%% *}" = "$EXPECTED" ] || fail 'unsupported firmware' 10
-idle_session
+[ -n "$PAYLOAD" ] || idle_session
 [ -r "$MOUNTS" ] || fail 'mount inventory unavailable' 13
 attempt=0
 while :; do
@@ -338,6 +360,35 @@ while :; do
 done
 confirmed_mount || fail 'confirmed USB changed' 13
 confirmed_permission || fail 'approval expired' 13
+if [ -n "$PAYLOAD" ]; then
+    trap cleanup EXIT
+    trap 'exit 143' TERM
+    trap 'exit 130' INT
+    trap 'exit 129' HUP
+    transport=$(mktemp -d /tmp/pmu-helper-dispatch.XXXXXX) || fail 'dispatcher staging unavailable' 12
+    chmod 700 "$transport"
+    cp "$PAYLOAD/source-dispatcher-$ARCH" "$transport/dispatcher"
+    expected_dispatcher=$(sha256sum "$PAYLOAD/source-dispatcher-$ARCH")
+    actual_dispatcher=$(sha256sum "$transport/dispatcher")
+    [ "${expected_dispatcher%% *}" = "${actual_dispatcher%% *}" ] || fail 'dispatcher RAM checksum mismatch' 12
+    chmod 700 "$transport/dispatcher"
+    mode=open
+    [ -z "$preparation_directory" ] || mode=prepare
+    work=$("$transport/dispatcher" "$usb" "$SOURCE" "$mode") || fail 'verified manager preparation failed' 12
+    case "$work" in /tmp/mpc-usb-session.*) ;; *) work=''; fail 'invalid prepared manager cohort' 12 ;; esac
+    [ -d "$work" ] && [ ! -L "$work" ] && [ "$(stat -c %u "$work")" = "$OWNER_UID" ] \
+        && [ "$(stat -c %a "$work")" = 700 ] || { work=''; fail 'unsafe prepared manager cohort' 12; }
+    prepared_supervisor=1
+    confirmed_mount || fail 'confirmed USB changed' 13
+    confirmed_permission || fail 'approval expired' 13
+    if [ -n "$preparation_directory" ]; then
+        (set -C; printf '%s\n' "$work" > "$preparation_directory/session") || fail 'preparation session unavailable' 12
+        (set -C; printf '%s\n' "$work" > "$preparation_directory/ready") || fail 'preparation result unavailable' 12
+    fi
+    preparation_published=1
+    remove_import_project
+    exit 0
+fi
 runtime="$usb/autorun/runtime"
 [ -d "$runtime" ] && [ ! -L "$runtime" ] || fail 'invalid USB runtime' 11
 [ "$(CDPATH= cd "$runtime" && pwd -P)" = "$runtime" ] || fail 'runtime path contains a symlink' 11

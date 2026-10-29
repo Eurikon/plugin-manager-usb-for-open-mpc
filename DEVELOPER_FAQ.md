@@ -1,7 +1,7 @@
 # Developer FAQ
 
 This guide describes the current source and the validation recorded on
-**27-10-2026**.
+**29-10-2026**.
 Start with [README.md](README.md) for USB use, build prerequisites,
 tested platforms and setup. Firmware, plugin packages
 and private device data are external inputs; none belongs in this repository.
@@ -45,8 +45,8 @@ make arm
 ```
 
 `syntax` checks Python and shell syntax.
-`arm` builds the manager, its supporting ARM executables and the 3.10 controller helper.
-`make arm-helper` rebuilds only `build/startup/manager-entry.so` using the existing image.
+`arm` builds the manager, its supporting ARM executables and the stable 3.10 loader plus its native helper payload.
+`make arm-helper` rebuilds the stable controller loader and versioned native helper using the existing image.
 
 For Gen 2, also run `make arm64`; Docker must support `linux/arm64`.
 The same Dockerfile uses GCC 12/Bookworm for this variant and writes to `build/aarch64/`.
@@ -55,7 +55,7 @@ Run `make test-arm64` for architecture, SD install/removal, manager-update rollb
 These use temporary manager fixtures and do not require or install a plugin package.
 
 For a universal bundle, supply the extracted official OS 3.9.1 and Gen1 OS 3.10 executables and a blank standalone project saved on your MPC.
-Use `package.py` with both `--mpc-310` and `--setup-project`; the complete image-extraction recipe is in [the README](README.md#building-a-usb-bundle-without-redistributing-firmware).
+Use `package.py` with `--signing-key`, `--mpc-310` and `--setup-project`; the complete image-extraction recipe is in [the README](README.md#building-a-usb-bundle-without-redistributing-firmware).
 The project must contain no samples or saved sequences.
 It is an external build input, not a bundled example project in this repository.
 Only its unchanged setup copy is eligible for automatic cleanup.
@@ -75,10 +75,9 @@ An exFAT permission exception applies only to that internal helper source; RAM l
 The manager uses `pluginList-arm-64bit`, ARM64 catalog assets and registered executable plugin storage.
 No 32-bit compatibility libraries are required on the device.
 
-Updating from 1.1.0 or a 1.2.0 beta requires copying the complete 1.2.0 bundle and reimporting its helper on OS 3.10.
-The older stable updater refuses the changed helper/layout rather than partially applying it.
-The beta builds already report internal version 1.2.0, so their newer-version check does not offer stable 1.2.0 as an upgrade.
-Testing releases are excluded from the normal stable-update lookup.
+Versions through 1.2.x require the complete-bundle migration described in the README.
+Import the new helper on OS 3.10 and cold boot normally before opening the new USB copy.
+Subsequent compatible releases use the signed update mechanism below.
 
 
 [Dockerfile](Dockerfile) uses GCC 11/Bullseye and SDL2 2.30.12, plus FreeType,
@@ -112,7 +111,12 @@ Keep the socket permission checks enabled.
 | [src/startup/entry.c](src/startup/entry.c), [src/startup/hotplug.cpp](src/startup/hotplug.cpp) | Controller entry, USB/SD observation, native dialogs/loading, panel input and RAM bootstrap for OS 3.10. |
 | [build_helper.sh](build_helper.sh) | Compiles the controller helper with the shared ARM build image. |
 | [tools/helper_package.py](tools/helper_package.py) | Validates the 3.10 profile/setup project and builds the helper XPA with its runtime binding. |
-| [package.py](package.py) | Constructs legacy or universal USB bundles and their checksums. |
+| [package.py](package.py), [tools/payload_package.py](tools/payload_package.py) | Construct signed complete runtime/helper generations and universal bundles. |
+| [src/version_store.cpp](src/version_store.cpp), [src/source_runtime.cpp](src/source_runtime.cpp) | Immutable generations, per-source/per-architecture selection, health confirmation and recovery. |
+| [src/startup/controller.cpp](src/startup/controller.cpp), [src/helper_loader.cpp](src/helper_loader.cpp) | Stable controller boundary and verified native payload selection. |
+| [src/update_worker.cpp](src/update_worker.cpp), [src/runtime_worker.cpp](src/runtime_worker.cpp) | Frozen incoming-worker transport and release-owned migrations. |
+| [src/runtime_handoff.cpp](src/runtime_handoff.cpp), [src/session_handoff.cpp](src/session_handoff.cpp) | Deferred supervisor replacement and independent recovery. |
+| [tools/sign_release.py](tools/sign_release.py), [src/crypto.cpp](src/crypto.cpp) | Publisher authorization and stock-library verification. |
 | [tools/extract_firmware.py](tools/extract_firmware.py) | Bounded extraction of an external official update image for packaging/tests. |
 | [tools/saltscan.py](tools/saltscan.py) | Bounded automatic search for a consistent autorun salt. |
 | [tools/deploy.cpp](tools/deploy.cpp) | Separate development deployment transaction; absent from the default USB bundle. |
@@ -132,8 +136,7 @@ by its USB script reader.
 Broader offline tests also need the extracted filesystem's ARM libraries and
 BusyBox.
 
-[package.py](package.py) validates an ELF32 little-endian ARM executable with
-EABI5 hard-float, valid loaded segments and an executable entry point.
+[package.py](package.py) validates a little-endian ARMv7 hard-float or AArch64 executable with valid loaded segments and an executable entry point.
 [tools/saltscan.py](tools/saltscan.py) then finds the autorun salt automatically
 across the XOR alignments instead of reading a fixed offset.
 At least one complete salt must lie in readable loaded executable content.
@@ -189,8 +192,7 @@ establish support for another release.
 
 On the legacy USB route:
 
-1. `open.sh` copies our runtime to `/tmp/mpc-usb-session.*`, or sends an open
-   request to an existing session's socket.
+1. `open.sh` runs the fixed native source dispatcher from RAM. It validates the selected signed generation, stages its complete runtime into `/tmp/mpc-usb-session.*`, or reuses its existing supervisor.
 2. `setup.sh` detects `acvs` or, if absent, `inmusic-mpc`; it finds the
    single input/bidirectional MIDI port whose name ends in `Private`, then
    starts a transient `mpc-usb-manager` systemd unit.
@@ -267,13 +269,15 @@ The user measured a 30-second return from an SD session on the Gen 1 test unit; 
 | Autorun salt fingerprint | Rejects a different salt after bounded scanning and executable validation. |
 | `autorun.check` | Matches the configured launch files to the stock reader's integrity calculation. |
 | Controller profile checksum | Matches the helper's generated profile to the supported 3.10 controller reader. It is separate from legacy autorun validation. |
-| `USB-SHA256.json` | Generated inventory for external bundle verification; the current manager does not read it at runtime. |
+| `USB-SHA256.json` | Initial factory inventory for external bundle verification, not the mutable runtime selection. |
+| Signed generation receipt | Authorizes a complete runtime or helper inventory against the compiled publisher key. |
+| `PMU-UPDATE.json` | Frozen signed update envelope covering the incoming worker and deployment description. |
 | Plugin ZIP hash | Catalog downloads must match the catalog's hash; local ZIPs must match the file selected in that session. |
 | Package `SHA256SUMS` | Checks extracted package files before installation scripts run. |
 
-Regenerate the bundle after changing any packaged binary, font, script or
-notice. Checksums establish consistency, **not publisher identity or script
-safety**. Package installers and uninstallers run as root without a sandbox.
+Regenerate and sign the bundle after changing packaged content.
+Manager release signatures establish publisher authorization; hashes alone establish consistency.
+Plugin checksums do not establish publisher identity or script safety. Package installers and uninstallers run as root without a sandbox.
 
 ## Packages, settings and saved data
 
@@ -407,17 +411,65 @@ Removal can end the active SD supervisor.
 
 ### How do manager updates work?
 
-SETUP's **Check for updates** queries GitHub Releases; it does not install anything.
-An eligible newer release enables **Install update**, followed by a separate download/install confirmation.
-`src/manager_update.cpp` checks the release asset, bundle inventory, supported runtime/helper contract and existing managed copies before publication.
-An accepted update covers connected managed media while preserving user data.
-Changed helper bindings, launcher/supervisor contracts or modified owned files can require a manual update instead.
-The running process uses its existing code until the user returns to MPC and reopens the manager.
-Version 1.2.2 changes the helper package and needs a manual update; follow [Updating an existing installation](README.md#updating-an-existing-installation).
+SETUP’s **Check for updates** queries stable GitHub Releases without installing anything.
+After confirmation, download URL, tag, size and SHA-256 are checked, then the frozen v1 envelope and complete signed inventory are verified before the release’s native worker runs.
+The worker rechecks the bundle, source mount identity and current GUI context.
+It stages complete runtime and helper generations alongside the last working versions and activates their selection with recovery records.
 
-The real GitHub release check and isolated update/rollback fixtures have passed.
-Applying a genuinely newer public release on hardware remains pending because there was no newer published release during these checks.
-Do not describe that application step as a completed hardware test.
+The current session keeps its existing executables.
+After it closes, an independent transient handover unit retires the old supervisor, prepares the new hook with the existing addin order, and restarts the MPC application.
+Its recovery command runs from a separately retained old cohort if handover fails.
+The stable controller loader confirms native-helper startup; the GUI confirms its generation only after the first rendered frame.
+An attempted but unconfirmed generation falls back on the next opening.
+
+USB and SD have independent selections and saved data.
+A universal source also has separate ARMv7 and ARM64 health records, so success on one device generation cannot confirm the other.
+SD installation copies the selected complete generation and retains the card’s previous working version.
+Absent secondary storage does not prevent updating the current source.
+Return to the updated USB copy and use **Update manager** to reconcile an older SD copy.
+
+Automatic recovery requires readable original media and a supported functioning controller loader.
+Physical media failure and firmware that stops that loader from running still need recovery from the complete bundle.
+No new hardware update validation is claimed for this redesign.
+
+### How are manager updates authorized?
+
+`src/publisher_key.hpp` contains the public Ed25519 verification key.
+`tools/sign_release.py` signs canonical scoped approvals for runtime, helper and outer update inventories.
+Verification loads the stock OpenSSL library dynamically; no additional crypto library is shipped on the MPC.
+Use OpenSSL 3 for signing; the ARM64 build image includes it.
+
+The private key is an external release input, never a source, Docker image or downloadable asset.
+Keep it private, preserve an owner-controlled backup, and use the same key for later releases.
+The signer refuses key/header mismatches and exposed or linked private keys.
+
+For an independent fork, generate a new key before building its loader and executables:
+
+```sh
+python3 tools/sign_release.py --private private/signing/fork-release.pem \
+  --public build/fork-publisher-key.hpp initialize
+cp build/fork-publisher-key.hpp src/publisher_key.hpp
+```
+
+`initialize` refuses to overwrite existing files.
+Never replace this project’s existing release key when preparing another release.
+A fork with another publisher key requires its own first-install helper; an existing official loader will refuse its signatures.
+
+### Which update contracts must remain compatible?
+
+Keep `PMU-UPDATE.json` protocol 1 and product `plugin-manager-usb` unchanged.
+Its four fields are `protocol`, `product`, `generation` and `authorization`; future metadata belongs in signed inventoried files.
+The incoming worker is the verified architecture-specific `update_worker_<arch>` entrypoint.
+It runs with `--pmu-update-v1`, reads its bounded JSON request from descriptor 3 and writes correlated JSONL progress/results to descriptor 4.
+The verified executable remains pinned through descriptor 5.
+A capability handshake precedes application; process groups, clean environment and deadlines bound execution.
+
+The stable controller filename and C payload ABI v1 remain outside routine replacement.
+Mutable helper/bootstrap/runtime files are selected through signed manifests rather than a fixed legacy filename whitelist.
+Keep factory selection records distinct from live update state, and preserve other architectures’ working generations during pruning.
+`tests/run_update_core.py` exercises activation, forced process interruption, recovery, media identity, worker transport and handover.
+Use `make test-update-core UPDATE_ARCH=aarch64`, repeat with `armv7`, and add `UPDATE_CORE_ARGS=--sanitize` for fatal ASan/UBSan.
+
 
 ### How does the welcome-screen Plugin Manager offer work?
 
@@ -571,7 +623,7 @@ paths = list(root.rglob("*"))
 if any(path.is_symlink() for path in paths):
     raise SystemExit("Bundle contains a symlink")
 files = {str(path.relative_to(root)) for path in paths if path.is_file()}
-if files != set(manifest) | {"USB-SHA256.json"}:
+if files != set(manifest) | {"USB-SHA256.json", "PMU-UPDATE.json"}:
     raise SystemExit("Bundle contains missing or unlisted files")
 if any((root / "local-plugins").iterdir()):
     raise SystemExit("Public bundle must not include plugins")
@@ -586,7 +638,8 @@ print(hashlib.sha256(archive.read_bytes()).hexdigest(), archive.name)
 PY
 ```
 
-This verifies the generated inventory and preserves the hidden marker and
+Before archiving, also verify `PMU-UPDATE.json` and its complete inventory using the native update probe against the compiled publisher key.
+The snippet verifies the factory inventory and preserves the hidden marker and
 empty `local-plugins/` folder. Extracting the ZIP puts the launch files at the
 USB root, without an extra enclosing folder. Use it only on fresh packager
 output: an inventory is not a secret scan or proof of publisher identity.

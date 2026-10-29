@@ -54,6 +54,13 @@ int main(){
             const auto c=store.stage(f.input,f.spec("3.0.0",{{"other/program","third release"}}));store.activate(c);store.boot();store.confirm(c);save(f.store/"user-file","keep");store.prune();
             check(!fs::exists(f.store/a)&&fs::exists(f.store/b)&&fs::exists(f.store/c),"retirement keeps current and one previous generation");check(read(f.store/"user-file")=="keep","retirement preserves unrelated files");
         }
+        {
+            Fixture f(root/"architecture-health");pmu::VersionStore first(f.store,geteuid(),hash,{},true,{},"armv7"),second(f.store,geteuid(),hash,{},true,{},"aarch64");
+            const auto a=first.stage(f.input,f.spec("1.0.0"));first.seed(a);second.seed(a);const auto b=first.stage(f.input,f.spec("2.0.0",{{"program","new release"}}));first.activate(b);second.activate(b);first.boot();first.confirm(b);
+            check(!first.current()->pending&&second.current()->pending,"confirming Gen 1 cannot confirm the Gen 2 startup");check(second.boot()->id==b&&second.boot()->id==a,"an unconfirmed Gen 2 start falls back independently");check(first.current()->id==b&&!first.current()->pending,"Gen 2 recovery preserves the successful Gen 1 version");
+            const auto c=first.stage(f.input,f.spec("3.0.0",{{"program","third release"}}));first.activate(c);first.boot();first.confirm(c);first.prune();check(fs::exists(f.store/a)&&fs::exists(f.store/b)&&fs::exists(f.store/c),"retirement retains the other architecture's working fallback");rejects([&]{pmu::VersionStore bad(f.store,geteuid(),hash,{},true,{},"../outside");},"selection profiles cannot escape the store");
+            check(second.offer(b)&&second.offer(c),"an unused profile may skip pending offers while retaining its working fallback");check(!second.offer(b),"a stale update cannot downgrade the other device profile");check(second.boot()->id==c&&second.boot()->id==a,"skipped offers still recover the last version confirmed on that architecture");check(first.current()->id==c&&!first.current()->pending,"secondary-profile failure cannot undo the primary-profile success");
+        }
         for(const std::string damage:{"no-confirm","payload","receipt","extra","link","active-metadata","missing-selection"}){
             Fixture f(root/("fallback-"+damage));auto store=f.open();const auto a=store.stage(f.input,f.spec("1.0.0"));store.seed(a);const auto b=store.stage(f.input,f.spec("2.0.0",{{"program","second"}}));store.activate(b);
             if(damage=="no-confirm")store.boot();
@@ -67,6 +74,9 @@ int main(){
         }
         {
             Fixture f(root/"healthy-damage");auto store=f.open();const auto a=store.stage(f.input,f.spec("1.0.0"));store.seed(a);const auto b=store.stage(f.input,f.spec("2.0.0",{{"program","second"}}));store.activate(b);store.boot();store.confirm(b);save(f.store/b/"program","damaged");check(store.boot()->id==a,"damaged confirmed release falls back to the retained previous version");save(f.store/"active.json","{}");check(store.boot()->id==a,"restored health record survives subsequent selection damage");
+        }
+        {
+            Fixture f(root/"explicit-recovery");auto store=f.open();const auto a=store.stage(f.input,f.spec("1.0.0"));store.seed(a);const auto b=store.stage(f.input,f.spec("2.0.0",{{"program","second"}}));store.activate(b);store.boot();store.confirm(b);store.restore(a,b);check(store.current()->id==a&&!store.current()->pending,"startup guardian can restore the prior working version after a later component fails");rejects([&]{store.restore(b,b);},"stale recovery cannot overwrite a different selected version");
         }
         for(const std::string path:{"../outside","/tmp/outside","a/../../outside","a//b","generation.json/child","a\\b","a\nb"}){
             Fixture f(root/("bad-path-"+std::to_string(checks)));auto store=f.open();auto spec=f.spec("1.0.0");spec.files={{path,std::string(64,'a')}};rejects([&]{store.stage(f.input,spec);},"unsafe generation path is rejected");
@@ -86,13 +96,16 @@ int main(){
             Fixture f(root/"unowned-retirement");auto store=f.open();const auto a=store.stage(f.input,f.spec("1.0.0"));store.seed(a);const auto b=store.stage(f.input,f.spec("2.0.0",{{"program","second"}}));store.activate(b);store.boot();store.confirm(b);const auto c=store.stage(f.input,f.spec("3.0.0",{{"program","third"}}));store.activate(c);store.boot();store.confirm(c);save(f.store/a/"foreign","preserve");rejects([&]{store.prune();},"retirement refuses unexpected files before deleting anything");check(read(f.store/a/"program")=="payload"&&read(f.store/a/"foreign")=="preserve","unowned collision preserves the entire old generation");
         }
         const std::vector<std::string> metadataPoints={"selection-synced:healthy.json","selection-published:healthy.json","selection-durable:healthy.json","selection-synced:active.json","selection-published:active.json","selection-durable:active.json"};
+        {
+            Fixture f(root/"uninstall");auto store=f.open();const auto a=store.stage(f.input,f.spec("1.0.0"));store.seed(a);const auto b=store.stage(f.input,f.spec("2.0.0",{{"program","new"}}));store.activate(b);store.boot();store.confirm(b);save(f.store/a/"program","modified user copy");save(f.store/"user-data","preserved");check(store.erase()==1,"uninstall records a modified generation as preserved");check(fs::exists(f.store/a)&&!fs::exists(f.store/b)&&read(f.store/"user-data")=="preserved","uninstall removes verified owned versions and preserves modified or unrelated data");check(!fs::exists(f.store/"active.json")&&!fs::exists(f.store/"healthy.json"),"uninstall removes owned selection records");
+        }
         for(const auto& point:metadataPoints){
             Fixture f(root/("activate-kill-"+std::to_string(checks)));auto store=f.open();const auto a=store.stage(f.input,f.spec("1.0.0"));store.seed(a);const auto b=store.stage(f.input,f.spec("2.0.0",{{"program","second"}}));interrupted(f,point,[&](auto& child){child.activate(b);});auto restarted=f.open();const auto chosen=restarted.boot();check(chosen&&(chosen->id==a||chosen->id==b),"interrupted activation selects only a complete verified generation");if(chosen->pending)check(restarted.boot()->id==a,"unconfirmed post-interruption candidate falls back on next boot");
         }
-        for(const std::string operation:{"boot","confirm","reject"})for(const auto& point:metadataPoints){
+        for(const std::string operation:{"boot","confirm","reject","restore"})for(const auto& point:metadataPoints){
             if(operation=="boot"&&point.find("healthy.json")!=std::string::npos)continue;
             Fixture f(root/(operation+"-kill-"+std::to_string(checks)));auto store=f.open();const auto a=store.stage(f.input,f.spec("1.0.0"));store.seed(a);const auto b=store.stage(f.input,f.spec("2.0.0",{{"program","second"}}));store.activate(b);if(operation=="confirm")store.boot();
-            interrupted(f,point,[&](auto& child){if(operation=="boot")child.boot();else if(operation=="confirm")child.confirm(b);else child.reject(b);});auto restarted=f.open();const auto chosen=restarted.boot();check(chosen&&(chosen->id==a||chosen->id==b),"interrupted boot, health or rejection recovers a complete generation");
+            interrupted(f,point,[&](auto& child){if(operation=="boot")child.boot();else if(operation=="confirm")child.confirm(b);else if(operation=="restore")child.restore(a,b);else child.reject(b);});auto restarted=f.open();const auto chosen=restarted.boot();check(chosen&&(chosen->id==a||chosen->id==b),"interrupted startup, confirmation or recovery selects a complete generation");
         }
         for(const std::string point:{"generation-staging","copy:program","copy-durable:program","generation-ready","generation-durable"}){
             Fixture f(root/("stage-kill-"+std::to_string(checks)));auto store=f.open();const auto a=store.stage(f.input,f.spec("1.0.0"));store.seed(a);const auto next=f.spec("2.0.0",{{"program","second"}});interrupted(f,point,[&](auto& child){child.stage(f.input,next);});auto restarted=f.open();check(restarted.boot()->id==a,"interrupted staging never changes the working version");const auto b=restarted.stage(f.input,next);restarted.activate(b);check(restarted.boot()->id==b,"retry after interrupted staging can activate the complete update");for(const auto& entry:fs::directory_iterator(f.store))check(entry.path().filename().string().rfind(".stage-",0)!=0,"retry clears only its interrupted staging data");

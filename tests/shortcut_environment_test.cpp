@@ -34,6 +34,10 @@ int main(){
         applyEnvironmentFiles((root/"missing.env").string()+" (ignore_errors=yes)",value);assert(value=="/last.so /final.so");++checks;
         bool failed=false;try{applyEnvironmentFiles((root/"missing.env").string()+" (ignore_errors=no)",value);}catch(const std::runtime_error&){failed=true;}assert(failed);++checks;
         fs::create_directory(root/"directory.env");failed=false;try{applyEnvironmentFiles((root/"directory.env").string()+" (ignore_errors=no)",value);}catch(const std::runtime_error&){failed=true;}assert(failed);++checks;
+        const auto snapshot=root/"snapshot";writeEnvironment(snapshot,"LD_PRELOAD=/preserved.so\n");assert(readEnvironmentFile(snapshot,true)=="LD_PRELOAD=/preserved.so\n");++checks;
+        chmod(snapshot.c_str(),0644);failed=false;try{readEnvironmentFile(snapshot,true);}catch(const std::runtime_error&){failed=true;}assert(failed);++checks;chmod(snapshot.c_str(),0600);
+        fs::create_symlink(snapshot,root/"linked-snapshot");failed=false;try{readEnvironmentFile((root/"linked-snapshot").string(),true);}catch(const std::runtime_error&){failed=true;}assert(failed);++checks;
+        fs::create_hard_link(snapshot,root/"hard-snapshot");failed=false;try{readEnvironmentFile(snapshot,true);}catch(const std::runtime_error&){failed=true;}assert(failed);++checks;
     }catch(...){fs::remove_all(root);throw;}
     fs::remove_all(root);std::cout<<"PASS: "<<checks<<" environment parsing, precedence, literal-value and file validation checks\n";
 }

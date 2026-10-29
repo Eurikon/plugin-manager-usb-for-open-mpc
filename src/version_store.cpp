@@ -12,6 +12,7 @@
 #include <dirent.h>
 #include <fcntl.h>
 #include <set>
+#include <sstream>
 #include <stdexcept>
 #include <sys/file.h>
 #include <sys/stat.h>
@@ -43,6 +44,9 @@ std::unique_ptr<DIR,CloseDirectory> listing(int directory){
 }
 dirent* nextEntry(DIR* directory){errno=0;auto* entry=readdir(directory);if(!entry&&errno)throw std::runtime_error("Cannot read generation inventory: "+std::string(std::strerror(errno)));return entry;}
 bool hex(const std::string& text,size_t count=64){return text.size()==count&&text.find_first_not_of("0123456789abcdef")==std::string::npos;}
+std::array<unsigned long,3> releaseVersion(const std::string& value){
+    std::array<unsigned long,3> result{};std::istringstream input(value);std::string part;for(size_t i=0;i<3;++i){need(bool(std::getline(input,part,'.'))&&!part.empty()&&part.size()<=9&&part.find_first_not_of("0123456789")==std::string::npos&&(part.size()==1||part.front()!='0'),"Invalid stable release version");result[i]=std::stoul(part);}need(input.eof(),"Invalid stable release version");return result;
+}
 bool relative(const std::string& text){
     const fs::path path(text);
     if(text.empty()||text.size()>240||path.is_absolute()||path.generic_string()!=text||path.lexically_normal()!=path)return false;
@@ -62,7 +66,7 @@ Fd descend(int parent,const fs::path& path,bool create=false,bool optional=false
     return current;
 }
 Fd tree(const fs::path& path){
-    need(path.is_absolute()&&path.lexically_normal()==path,"Version store needs a normalized absolute path");
+    need(path.is_absolute()&&path.lexically_normal()==path&&path.native().find('\0')==std::string::npos,"Version store needs a normalized absolute path");
     Fd root(open("/",O_RDONLY|O_DIRECTORY|O_CLOEXEC));need(root.value>=0,"Cannot inspect version root");
     return descend(root.value,path.relative_path());
 }
@@ -113,7 +117,9 @@ struct VersionStore::Impl {
     Fd root;
     struct stat identity{};
     std::string mount;
-    Impl(fs::path location,uid_t user,Hash digest,Checkpoint hook,bool create,Trust approve):path(std::move(location)),owner(user),hash(std::move(digest)),checkpoint(std::move(hook)),trust(std::move(approve)){
+    std::string profile;
+    Impl(fs::path location,uid_t user,Hash digest,Checkpoint hook,bool create,Trust approve,std::string selectedProfile):path(std::move(location)),owner(user),hash(std::move(digest)),checkpoint(std::move(hook)),trust(std::move(approve)),profile(std::move(selectedProfile)){
+        need(profile.empty()||profile=="armv7"||profile=="aarch64","Unsupported version selection profile");
         need(bool(hash),"Version store requires a hash provider");
         need(path.is_absolute()&&path.lexically_normal()==path&&path!=path.root_path(),"Invalid version store root");
         if(create){auto parent=tree(path.parent_path());need(mkdirat(parent.value,path.filename().c_str(),0700)==0||errno==EEXIST,"Cannot create version store");sync(parent.value);}
@@ -146,13 +152,16 @@ struct VersionStore::Impl {
         Fd output(openat(parent.value,fs::path(name).filename().c_str(),O_WRONLY|O_CREAT|O_EXCL|O_NOFOLLOW|O_CLOEXEC,0600));need(output.value>=0,"Cannot create generation file");
         size_t at=0;while(at<bytes.size()){const auto n=write(output.value,bytes.data()+at,bytes.size()-at);if(n<0&&errno==EINTR)continue;need(n>0,"Cannot write generation file");at+=size_t(n);}sync(output.value);sync(parent.value);
     }
-    void record(const std::string& name,const Selection& value){
+    std::string recordName(const std::string& name)const{return profile.empty()?name:name.substr(0,name.size()-5)+"."+profile+".json";}
+    void record(const std::string& logicalName,const Selection& value){
+        const auto name=recordName(logicalName);
         if(present(root.value,name)){auto previous=file(root.value,name);(void)previous;}
         const auto fresh=".record-"+randomName();
-        try{save(root.value,fresh,selectionJson(value).dump()+'\n');point("selection-synced:"+name);need(renameat(root.value,fresh.c_str(),root.value,name.c_str())==0,"Cannot activate generation");point("selection-published:"+name);sync(root.value);point("selection-durable:"+name);}
+        try{save(root.value,fresh,selectionJson(value).dump()+'\n');point("selection-synced:"+logicalName);need(renameat(root.value,fresh.c_str(),root.value,name.c_str())==0,"Cannot activate generation");point("selection-published:"+logicalName);sync(root.value);point("selection-durable:"+logicalName);}
         catch(...){unlinkat(root.value,fresh.c_str(),0);throw;}
     }
-    std::optional<Selection> state(const std::string& name){if(!present(root.value,name))return {};return selection(parseMetadata(readAt(root.value,name,1024)));}
+    std::optional<Selection> namedState(const std::string& name){if(!present(root.value,name))return {};return selection(parseMetadata(readAt(root.value,name,1024)));}
+    std::optional<Selection> state(const std::string& name){return namedState(recordName(name));}
     void inventory(int directory,const GenerationSpec& spec,const std::string& prefix={}){
         auto entries=listing(directory);
         while(auto* entry=nextEntry(entries.get())){
@@ -195,7 +204,7 @@ struct VersionStore::Impl {
             auto folder=descend(root.value,name);checkOwner(folder.value,true);const auto entries=names(folder.value);
             if(entries.empty()){need(unlinkat(root.value,name.c_str(),AT_REMOVEDIR)==0,"Cannot clear empty staging directory");sync(root.value);continue;}
             if(entries.size()==1&&entries[0]==receipt){auto metadata=file(folder.value,receipt);need(info(metadata.value).st_size<=128*1024,"Oversized interrupted generation inventory");need(unlinkat(folder.value,receipt,0)==0,"Cannot clear interrupted generation inventory");sync(folder.value);need(unlinkat(root.value,name.c_str(),AT_REMOVEDIR)==0,"Cannot clear interrupted generation directory");sync(root.value);continue;}
-            const auto spec=specification(parseMetadata(readAt(folder.value,receipt,128*1024)));if(retired){auto metadata=file(folder.value,receipt);need(digest(metadata.value)==name.substr(9),"Retired generation identity changed");}
+            const auto spec=specification(parseMetadata(readAt(folder.value,receipt,128*1024)));if(retired){auto metadata=file(folder.value,receipt);need(digest(metadata.value)==name.substr(9),"Retired generation identity changed");for(const auto& item:spec.files){auto parent=descend(folder.value,fs::path(item.first).parent_path(),false,true);if(parent.value<0||!present(parent.value,fs::path(item.first).filename().string()))continue;auto remaining=file(parent.value,fs::path(item.first).filename().string());need(digest(remaining.value)==item.second,"Modified retired generation file was preserved");}}
             removeGeneration(name,spec);
         }
     }
@@ -203,7 +212,7 @@ struct VersionStore::Impl {
 
 GenerationSpec generationSpecFromJson(const Json& value){return specification(value);}
 Json generationSpecToJson(const GenerationSpec& spec){validate(spec);return specificationJson(spec);}
-VersionStore::VersionStore(fs::path root,uid_t owner,Hash hash,Checkpoint checkpoint,bool create,Trust trust):impl(std::make_unique<Impl>(std::move(root),owner,std::move(hash),std::move(checkpoint),create,std::move(trust))){}
+VersionStore::VersionStore(fs::path root,uid_t owner,Hash hash,Checkpoint checkpoint,bool create,Trust trust,std::string profile):impl(std::make_unique<Impl>(std::move(root),owner,std::move(hash),std::move(checkpoint),create,std::move(trust),std::move(profile))){}
 VersionStore::~VersionStore()=default;
 std::string VersionStore::stage(const fs::path& source,const GenerationSpec& spec,const std::string& authorization){
     validate(spec);need(authorization.size()<=8192,"Oversized generation authorization");auto guard=impl->lock();impl->recoverStaging();auto input=tree(source);const auto temporary=".stage-"+randomName();
@@ -231,6 +240,12 @@ void VersionStore::activate(const std::string& id,const std::string& expected){
     impl->record("healthy.json",{before->active,"",false,false});impl->record("active.json",{id,before->active,true,false});
 }
 std::optional<Generation> VersionStore::current(){auto guard=impl->lock();const auto value=impl->state("active.json");if(!value)return {};return impl->generation(value->active,value->pending);}
+Generation VersionStore::inspect(const std::string& id){auto guard=impl->lock();return impl->generation(id);}
+bool VersionStore::offer(const std::string& id){
+    auto guard=impl->lock();need(!impl->profile.empty(),"A universal update offer requires a device profile");const auto candidate=impl->generation(id);need(candidate.spec.architecture=="universal"||candidate.spec.architecture==impl->profile,"Update offer does not support this device profile");const auto before=impl->state("active.json");need(before.has_value(),"A universal update offer needs an initialized profile");const auto selected=impl->generation(before->active);
+    if(id==before->active||releaseVersion(candidate.spec.version)<=releaseVersion(selected.spec.version)||before->attempted)return false;
+    const auto working=before->pending?impl->state("healthy.json"):before;need(working&&!working->pending,"Update offer lacks a verified fallback");impl->generation(working->active);impl->record("healthy.json",{working->active,"",false,false});impl->record("active.json",{id,working->active,true,false});return true;
+}
 std::optional<Generation> VersionStore::boot(){
     auto guard=impl->lock();std::optional<Selection> selected;
     try{selected=impl->state("active.json");}catch(const std::exception&){selected=impl->state("healthy.json");if(selected)impl->record("active.json",*selected);else throw;}
@@ -249,9 +264,25 @@ void VersionStore::reject(const std::string& id){
     if(!current->attempted){current->attempted=true;impl->record("active.json",*current);}
     impl->record("healthy.json",{current->previous,"",false,false});impl->record("active.json",{current->previous,"",false,false});
 }
+void VersionStore::restore(const std::string& knownWorking,const std::string& expected){
+    auto guard=impl->lock();const auto current=impl->state("active.json");need(current&&current->active==expected,"Selected version changed before recovery");impl->generation(knownWorking);if(current->active==knownWorking)return;
+    impl->record("active.json",{expected,knownWorking,true,true});impl->record("healthy.json",{knownWorking,"",false,false});impl->record("active.json",{knownWorking,"",false,false});
+}
 void VersionStore::prune(){
     auto guard=impl->lock();impl->recoverStaging();const auto current=impl->state("active.json");need(current&&!current->pending,"Unconfirmed generations cannot be retired");impl->generation(current->active);if(!current->previous.empty())impl->generation(current->previous);
-    auto entries=listing(impl->root.value);std::vector<std::string> names;while(auto* entry=nextEntry(entries.get()))if(hex(entry->d_name)&&entry->d_name!=current->active&&entry->d_name!=current->previous)names.emplace_back(entry->d_name);
+    std::set<std::string> retained;
+    for(const auto& name:{"active.json","healthy.json","active.armv7.json","healthy.armv7.json","active.aarch64.json","healthy.aarch64.json"}){const auto state=impl->namedState(name);if(state){retained.insert(state->active);if(!state->previous.empty())retained.insert(state->previous);}}
+    auto entries=listing(impl->root.value);std::vector<std::string> names;while(auto* entry=nextEntry(entries.get()))if(hex(entry->d_name)&&!retained.count(entry->d_name))names.emplace_back(entry->d_name);
     for(const auto& name:names){impl->recheck();const auto old=impl->generation(name);const auto retired=".retired-"+name;need(!present(impl->root.value,retired)&&renameat(impl->root.value,name.c_str(),impl->root.value,retired.c_str())==0,"Cannot retire old generation");sync(impl->root.value);impl->point("retirement-started");impl->removeGeneration(retired,old.spec);}
+}
+unsigned VersionStore::erase(){
+    auto guard=impl->lock();unsigned preserved=0;
+    try{impl->recoverStaging();}catch(const std::exception&){++preserved;}
+    for(const auto& name:impl->names(impl->root.value)){
+        if(!hex(name))continue;
+        try{const auto old=impl->generation(name);const auto retired=".retired-"+name;need(!present(impl->root.value,retired)&&renameat(impl->root.value,name.c_str(),impl->root.value,retired.c_str())==0,"Cannot retire removed generation");sync(impl->root.value);impl->removeGeneration(retired,old.spec);}catch(const std::exception&){++preserved;}
+    }
+    for(const auto& name:{"active.json","healthy.json","active.armv7.json","healthy.armv7.json","active.aarch64.json","healthy.aarch64.json"})try{if(impl->namedState(name)){need(unlinkat(impl->root.value,name,0)==0,"Cannot remove version selection");sync(impl->root.value);}}catch(const std::exception&){++preserved;}
+    return preserved;
 }
 }

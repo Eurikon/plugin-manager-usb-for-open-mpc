@@ -21,6 +21,8 @@
 #include <unistd.h>
 #include <fcntl.h>
 #include <glob.h>
+#include <linux/fs.h>
+#include <sys/syscall.h>
 
 namespace fs=std::filesystem;
 static void require(bool condition,const std::string& message){if(!condition)throw std::runtime_error(message+": "+strerror(errno));}
@@ -104,11 +106,12 @@ static void applyEnvironmentFile(const std::string& text,std::string& preload){
         if(key=="LD_PRELOAD")preload=value;
     }
 }
-static std::string readEnvironmentFile(const std::string& path){
-    const int fd=open(path.c_str(),O_RDONLY|O_NONBLOCK|O_CLOEXEC);
+static std::string readEnvironmentFile(const std::string& path,bool privateSnapshot=false){
+    const int fd=open(path.c_str(),O_RDONLY|O_NONBLOCK|O_CLOEXEC|(privateSnapshot?O_NOFOLLOW:0));
     require(fd>=0,"Read configured MPC environment file");
     struct stat before{},after{};std::string text;char buffer[4096];ssize_t size;
-    bool valid=fstat(fd,&before)==0&&S_ISREG(before.st_mode)&&before.st_size<=1024*1024;
+    bool valid=fstat(fd,&before)==0&&S_ISREG(before.st_mode)&&before.st_size<=1024*1024
+        &&(!privateSnapshot||(before.st_uid==geteuid()&&(before.st_mode&0777)==0600&&before.st_nlink==1));
     while(valid&&(size=read(fd,buffer,sizeof buffer))!=0){
         if(size<0){if(errno==EINTR)continue;valid=false;break;}
         if(text.size()+size>1024*1024){valid=false;break;}text.append(buffer,size);
@@ -150,18 +153,24 @@ static void applyEnvironmentFiles(const std::string& files,std::string& preload,
         while(position<files.size()&&horizontalSpace(files[position]))++position;
     }
 }
-static std::string existingPreload(const std::string& service,const fs::path& ignored={}){
-    const std::string pid=mainPid(service);int fd=open(("/proc/"+pid+"/environ").c_str(),O_RDONLY|O_CLOEXEC|O_NOFOLLOW);require(fd>=0,"Read MPC process environment");
+static std::string existingPreload(const std::string& service,const fs::path& ignored={},const fs::path& snapshot={}){
+    const std::string pid=snapshot.empty()?mainPid(service):serviceProperty(service,"MainPID",64);
+    if(!snapshot.empty()&&pid!="0")throw std::runtime_error("MPC must remain stopped during runtime handover");
+    std::string preload;
+    if(!snapshot.empty())applyEnvironmentFile(readEnvironmentFile(snapshot,true),preload);
+    else {
+    int fd=open(("/proc/"+pid+"/environ").c_str(),O_RDONLY|O_CLOEXEC|O_NOFOLLOW);require(fd>=0,"Read MPC process environment");
     std::string environment;char buffer[4096];bool valid=true;ssize_t size;
     while((size=read(fd,buffer,sizeof buffer))!=0){if(size<0){if(errno==EINTR)continue;valid=false;break;}if(environment.size()+size>1024*1024){valid=false;break;}environment.append(buffer,size);}
     close(fd);if(!valid||(!environment.empty()&&environment.back()!=0))throw std::runtime_error("Invalid or oversized MPC process environment");
-    std::string preload;bool found=false;
+    bool found=false;
     for(size_t start=0;start<environment.size();){const size_t end=environment.find('\0',start);const std::string entry=environment.substr(start,end-start);start=end+1;if(entry.rfind("LD_PRELOAD=",0)!=0)continue;if(found)throw std::runtime_error("Duplicate MPC preload environment");found=true;preload=entry.substr(11);}
+    }
     const std::string configured=serviceProperty(service,"Environment"),files=serviceProperty(service,"EnvironmentFiles");
     for(const auto& assignment:propertyWords(configured))if(assignment.rfind("LD_PRELOAD=",0)==0)preload=assignment.substr(11);
     // A later drop-in may describe the next start rather than the process still running.
     applyEnvironmentFiles(files,preload,ignored);
-    if(mainPid(service)!=pid||configured!=serviceProperty(service,"Environment")||files!=serviceProperty(service,"EnvironmentFiles"))
+    if((snapshot.empty()?mainPid(service):serviceProperty(service,"MainPID",64))!=pid||configured!=serviceProperty(service,"Environment")||files!=serviceProperty(service,"EnvironmentFiles"))
         throw std::runtime_error("MPC service changed while reading its environment; retry opening the manager");
     if(preload.find_first_of("\r\n")!=std::string::npos)throw std::runtime_error("Unsupported newline in MPC preload environment");
     std::vector<std::string> libraries;bool stale=false;
@@ -197,21 +206,22 @@ struct Session {
     std::string service,port;
     int lockFd=-1,socketFd=-1,notifyFd=-1,timerFd=-1,signalFd=-1;
     pid_t child=0;
-    bool configured=false,ownsState=false,ownsBase=false,armOnly=false,opened=false;
+    bool configured=false,ownsState=false,ownsBase=false,armOnly=false,opened=false,resuming=false,stoppedHandoff=false;
     HoldShortcut hold;
-    Session(char** argv,bool arm):usb(argv[1]),base(argv[2]),service(argv[3]),port(argv[4]),armOnly(arm){
+    Session(char** argv,bool arm,bool resume=false):usb(argv[1]),base(argv[2]),service(argv[3]),port(argv[4]),armOnly(arm),resuming(resume){
         require(getuid()==0,"Root required");require(service=="acvs"||service=="inmusic-mpc","Invalid MPC service");
         require(base.parent_path()=="/tmp"&&base.filename().string().rfind("mpc-usb-session.",0)==0,"Invalid session folder");
         require(base.filename().string().find_first_not_of("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-")==std::string::npos,"Invalid session folder characters");
         require(port.size()<32&&port.rfind("hw:",0)==0&&port.find_first_not_of("hw:0123456789,")==std::string::npos,"Invalid panel port");
+        if(resuming){struct stat folder{};require(lstat(base.c_str(),&folder)==0&&S_ISDIR(folder.st_mode)&&folder.st_uid==0&&(folder.st_mode&0777)==0700,"Unsafe resumed session folder");}
     }
     ~Session(){cleanup();}
     void checkpoint() noexcept {std::error_code ec;if(fs::is_regular_file(usb/".mpc-manager-id",ec))fs::copy_file(base/"session.log",usb/"shortcut-result.txt",fs::copy_options::overwrite_existing,ec);}
     void cleanup() noexcept {
         try {
             if(configured){fs::remove(dropin);std::error_code ec;fs::remove(dropin.parent_path(),ec);command({"systemctl","daemon-reload"});configured=false;}
-            if(child){
-                kill(child,SIGTERM);while(waitpid(child,nullptr,0)<0&&errno==EINTR){}child=0;
+            if(child||(resuming&&ownsBase)){
+                if(child){kill(child,SIGTERM);while(waitpid(child,nullptr,0)<0&&errno==EINTR){}child=0;}
                 if(command({"systemctl","is-active","--quiet",service})!=0
                     &&command({"systemctl","start","--no-block",service})!=0)
                     std::cerr<<"MPC application recovery request failed\n";
@@ -229,7 +239,8 @@ struct Session {
     }
     void refreshEnvironment(){
         if(configured){require(command({"systemctl","daemon-reload"})==0,"Reload MPC service");environmentLast();}
-        std::string preload=existingPreload(service,configured?base/"shortcut.env":fs::path{});
+        if(stoppedHandoff&&serviceProperty(service,"MainPID",64)!="0")stoppedHandoff=false;
+        std::string preload=existingPreload(service,configured?base/"shortcut.env":fs::path{},resuming||stoppedHandoff?base/"preload.snapshot":fs::path{});
         if(!preload.empty())preload+=' ';
         preload+=(base/"shortcut-hook.so").string();
         const std::vector<std::string> assignments={"LD_PRELOAD="+preload,"MPC_PANEL_PORT="+port,"MPC_SHORTCUT_SOCKET="+(base/"shortcut.sock").string()};
@@ -243,7 +254,7 @@ struct Session {
         refreshEnvironment();
         hold={};timer();
         std::string templatePath="/tmp/mpc-usb-manager.XXXXXX";std::vector<char> pattern(templatePath.begin(),templatePath.end());pattern.push_back(0);char* made=mkdtemp(pattern.data());require(made!=nullptr,"Create manager session");fs::path work=made;
-        try{for(const char* name:{"manager","font.ttf"})fs::copy_file(base/name,work/name);require(chmod((work/"manager").c_str(),0755)==0&&chmod((work/"font.ttf").c_str(),0644)==0,"Set manager file permissions");std::ofstream(work/"session.log");
+        try{require(mkdir((work/"cache").c_str(),0700)==0,"Create private manager cache");for(const char* name:{"manager","font.ttf"})fs::copy_file(base/name,work/name);if(fs::exists(base/"runtime-context.json"))fs::copy_file(base/"runtime-context.json",work/"runtime-context.json");require(chmod((work/"manager").c_str(),0755)==0&&chmod((work/"font.ttf").c_str(),0644)==0,"Set manager file permissions");std::ofstream(work/"session.log");
             const pid_t pid=fork();require(pid>=0,"Start manager");child=pid;opened=true;if(!child){sigset_t empty;sigemptyset(&empty);sigprocmask(SIG_SETMASK,&empty,nullptr);execl("/bin/sh","sh",(base/"launch.sh").c_str(),usb.c_str(),work.c_str(),nullptr);_exit(127);}
         }catch(...){fs::remove_all(work);throw;}
         std::cerr<<"Opening USB manager\n";checkpoint();
@@ -259,12 +270,13 @@ struct Session {
         timerFd=timerfd_create(CLOCK_MONOTONIC,TFD_CLOEXEC|TFD_NONBLOCK);require(timerFd>=0,"Create hold timer");
         notifyFd=inotify_init1(IN_CLOEXEC|IN_NONBLOCK);require(notifyFd>=0&&inotify_add_watch(notifyFd,usb.c_str(),IN_UNMOUNT|IN_DELETE_SELF|IN_MOVE_SELF|IN_DELETE)>=0,"Watch USB removal");
         require(fs::is_regular_file(usb/".mpc-manager-id"),"USB removed before startup");
-        {std::ofstream file(state);file<<base.string()<<'\n'<<usb.string()<<'\n';require(bool(file),"Write manager session state");}chmod(state.c_str(),0600);ownsState=true;
+        const fs::path pendingState=state.string()+".next."+std::to_string(getpid());writeEnvironment(pendingState,base.string()+'\n'+usb.string()+'\n');if(syscall(SYS_renameat2,AT_FDCWD,pendingState.c_str(),AT_FDCWD,state.c_str(),RENAME_NOREPLACE)!=0){fs::remove(pendingState);throw std::runtime_error("Cannot publish manager session state");}ownsState=true;
         dropin=fs::path("/run/systemd/system")/(service+".service.d")/"99-mpc-usb-shortcut.conf";require(!fs::exists(dropin),"Shortcut drop-in already exists");fs::create_directories(dropin.parent_path());configured=true;
         {std::ofstream file(dropin);file<<"[Service]\nEnvironmentFile="<<(base/"shortcut.env").string()<<"\n";require(bool(file),"Write shortcut startup setting");}
         require(command({"systemctl","daemon-reload"})==0,"Reload MPC service");
         environmentLast();
         if(armOnly)writeEnvironment(base/"ready","READY\n");
+        stoppedHandoff=resuming;resuming=false;
         if(!armOnly)launch();
         pollfd descriptors[]={{socketFd,POLLIN,0},{timerFd,POLLIN,0},{notifyFd,POLLIN,0},{signalFd,POLLIN,0}};
         bool stopping=false;
@@ -274,11 +286,11 @@ struct Session {
             if(stopping)break;
             if(descriptors[3].revents){signalfd_siginfo event{};while(read(signalFd,&event,sizeof event)==sizeof event){if(event.ssi_signo==SIGCHLD){if(child&&waitpid(child,nullptr,WNOHANG)==child){child=0;hold={};timer();std::cerr<<"MPC resumed; SHIFT + MENU hold ready\n";checkpoint();}}else stopping=true;}}
             if(stopping)break;
-            if(descriptors[0].revents){unsigned char message[4];ssize_t count;while((count=recv(socketFd,message,sizeof message,0))>=0){if(count==1&&message[0]=='Q'&&armOnly&&!opened&&!child){stopping=true;break;}else if(count==1&&message[0]=='H'&&armOnly&&!child){stopping=true;break;}else if(count==1&&message[0]=='O'){launch();}else if(count==1&&message[0]=='R'){hold={};timer();}else if(count==3&&message[0]=='B'&&message[2]<=1&&!child){hold.button(message[1],message[2]!=0,nowMs());timer();}}}
+            if(descriptors[0].revents){unsigned char message[4];ssize_t count;while((count=recv(socketFd,message,sizeof message,0))>=0){if(count==1&&message[0]=='Q'&&armOnly&&!opened&&!child){stopping=true;break;}else if(count==1&&message[0]=='H'&&!child){stopping=true;break;}else if(count==1&&message[0]=='O'){launch();}else if(count==1&&message[0]=='R'){hold={};timer();}else if(count==3&&message[0]=='B'&&message[2]<=1&&!child){hold.button(message[1],message[2]!=0,nowMs());timer();}}}
             if(stopping)break;
             if(descriptors[1].revents){uint64_t expirations;if(read(timerFd,&expirations,sizeof expirations)==sizeof expirations&&hold.expire(nowMs())){launch();}}
         }
         std::cerr<<"USB shortcut session closing\n";
     }
 };
-int main(int argc,char** argv){try{if(argc==3&&strcmp(argv[1],"--request")==0)return request(argv[2]);if(argc==3&&strcmp(argv[1],"--handoff")==0)return request(argv[2],'H');if(argc==3&&strcmp(argv[1],"--cancel-prepared")==0)return cancelPrepared(argv[2]);if(argc!=5&&(argc!=6||strcmp(argv[5],"--arm-only")!=0))throw std::runtime_error("Usage: shortcut USB RAM_SESSION SERVICE PANEL_PORT [--arm-only]");Session session(argv,argc==6);try{session.run();}catch(const std::exception& error){std::cerr<<"Shortcut error: "<<error.what()<<'\n';return 1;}return 0;}catch(const std::exception& error){std::cerr<<"Shortcut error: "<<error.what()<<'\n';return 1;}}
+int main(int argc,char** argv){try{if(argc==3&&strcmp(argv[1],"--request")==0)return request(argv[2]);if(argc==3&&strcmp(argv[1],"--handoff")==0)return request(argv[2],'H');if(argc==3&&strcmp(argv[1],"--cancel-prepared")==0)return cancelPrepared(argv[2]);if(argc!=5&&(argc!=6||(strcmp(argv[5],"--arm-only")!=0&&strcmp(argv[5],"--resume-only")!=0)))throw std::runtime_error("Usage: shortcut USB RAM_SESSION SERVICE PANEL_PORT [--arm-only|--resume-only]");Session session(argv,argc==6,argc==6&&strcmp(argv[5],"--resume-only")==0);try{session.run();}catch(const std::exception& error){std::cerr<<"Shortcut error: "<<error.what()<<'\n';return 1;}return 0;}catch(const std::exception& error){std::cerr<<"Shortcut error: "<<error.what()<<'\n';return 1;}}

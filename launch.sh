@@ -4,6 +4,7 @@ usb=$1
 work=$2
 service=acvs
 child=''
+handoff=0
 restore() {
     result=$?
     trap - EXIT INT TERM HUP
@@ -12,7 +13,7 @@ restore() {
     if ! rm -rf "$work"; then
         if [ -f "$usb/.mpc-manager-id" ]; then echo 'RAM cleanup failed' >> "$usb/manager-result.txt"; fi
     fi
-    systemctl start "$service" || true
+    [ "$handoff" = 1 ] || systemctl start "$service" || true
     exit "$result"
 }
 trap restore EXIT
@@ -36,12 +37,18 @@ if pidof MPC >/dev/null; then echo 'MPC did not stop'; exit 1; fi
 export SDL_VIDEODRIVER=kmsdrm
 export SDL_KMSDRM_REQUIRE_DRM_MASTER=1
 export SDL_TOUCH_MOUSE_EVENTS=0
-"$work/manager" "$usb" "$work/cache" "$target" "$settings" "$work/font.ttf" &
+set -- "$usb" "$work/cache" "$target" "$settings" "$work/font.ttf"
+if [ -f "$work/runtime-context.json" ]; then set -- --pmu-gui-v1 "$@"; fi
+"$work/manager" "$@" &
 child=$!
 if wait "$child"; then result=0; else result=$?; fi
 child=''
+if [ "$result" = 75 ]; then handoff=1; exit 0; fi
 if [ "$result" -ne 0 ]; then
     echo "Manager exited unexpectedly (status $result); restarting MPC immediately"
     exit "$result"
+fi
+if [ -f "$work/cache/manager-update.pending" ]; then
+    if "$work/manager" --pmu-complete-v1 "$work/cache"; then handoff=1; else echo 'Update handover failed; restoring MPC'; exit 1; fi
 fi
 echo 'Manager closed; RAM catalog and downloads discarded'

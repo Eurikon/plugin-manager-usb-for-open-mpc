@@ -7,6 +7,14 @@ case "$(uname -m)" in
     aarch64) arch=aarch64 ;;
     *) echo 'Unsupported MPC architecture'; exit 1 ;;
 esac
+if [ -f "$here/runtime/source-dispatcher-$arch" ]; then
+    work=$(mktemp -d /tmp/pmu-usb-dispatch.XXXXXX)
+    trap 'rm -rf "$work"' EXIT
+    cp "$here/runtime/source-dispatcher-$arch" "$work/dispatcher"
+    chmod 700 "$work/dispatcher"
+    "$work/dispatcher" "$usb" '' open
+    exit 0
+fi
 if [ "$arch" = aarch64 ] && [ ! -d "$here/runtime/aarch64" ]; then
     echo 'This bundle has no Gen 2 runtime'; exit 1
 fi

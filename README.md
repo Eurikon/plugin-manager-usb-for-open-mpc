@@ -1,6 +1,6 @@
 # Plugin Manager USB for OPEN MPC
 
-[![Download installer](https://img.shields.io/badge/Download-1.2.2-brightgreen?logo=github)](https://github.com/Eurikon/plugin-manager-usb-for-open-mpc/releases/download/v1.2.2/plugin-manager-usb-v1.2.2.zip)
+[![Download installer](https://img.shields.io/badge/Download-1.3.0-brightgreen?logo=github)](https://github.com/Eurikon/plugin-manager-usb-for-open-mpc/releases/download/v1.3.0/plugin-manager-usb-v1.3.0-migration.zip)
 [![Latest release](https://img.shields.io/github/v/release/Eurikon/plugin-manager-usb-for-open-mpc?logo=github&label=Release)](https://github.com/Eurikon/plugin-manager-usb-for-open-mpc/releases/latest)
 [![Changelog](https://img.shields.io/badge/Changelog-History-blue?logo=github)](CHANGELOG.md)
 [![User guide](https://img.shields.io/badge/Guide-Website-blue?logo=githubpages)](https://eurikon.github.io/plugin-manager-usb-for-open-mpc/guide.html)
@@ -15,6 +15,7 @@ The bundle includes the manager, without plugins or Akai firmware files.
 
 **Additional hardware checks:** Akai Force — OS 3.9.1; MPC Live III (Gen2) — OS 3.10 over OS 3.9.1.<br>
 Beta 2 was tested and approved on these configurations.<br>
+The 1.3.0 updater and interface changes have offline validation; no new device-test result is claimed.<br>
 Stock Gen2 OS 3.9.1 and 3.10 have also passed offline firmware checks; stock Gen2 OS 3.10 has not been hardware-tested.<br>
 
 One USB bundle selects the Gen1 or Gen2 runtime automatically.<br>
@@ -22,12 +23,12 @@ Use ARM64 plugin packages on Gen2; ARMv7 packages are rejected before installati
 
 ### Updating an existing installation
 
-Version 1.2.2 changes the helper package; older built-in updaters cannot install this change.
-Use the complete-bundle procedure, including when updating from 1.1.0 or a beta.
+The new signed updater needs one complete-bundle migration from 1.2.x or earlier.
+Later compatible releases can update the manager and its helper together through SETUP.
 
 1. Save your project and safely eject the drive before connecting it to your computer.
 2. Extract the new archive onto the USB root, replacing matching application files and including `.mpc-manager-id`. Preserve `plugin-history.json`, `manager-preferences.json`, `display-rotation.txt` if present, and `local-plugins/`.
-3. On OS 3.10, reimport `Plugin Manager helper.xpa` into internal MPC Documents, then restart the MPC application.
+3. On OS 3.10, reimport `Plugin Manager helper.xpa` into internal MPC Documents, then shut down normally and switch the MPC back on. This clears the previous RAM session.
 4. If you use the SD copy, open the updated USB manager and choose **SETUP → Update manager** before removing the stick.
 
 ![Plugin Manager catalog on the MPC touchscreen](site/assets/manager-catalog.png)
@@ -130,12 +131,13 @@ The same interface is used for both sources; each source keeps its own preferenc
 ![Plugin Manager SETUP page on the MPC](site/assets/manager-setup.png)
 
 - **Plugin Manager installation:** install, update/reinstall or uninstall the SD copy. **Update manager** copies the current session's manager onto SD; it is separate from downloading a new release.
-- **Welcome message:** enable **Show on opening** to restore the welcome screen for this source.
 - **Plugin Manager updates:** choose **Check for updates** to check GitHub Releases. If a supported newer release is available, **Install update** opens a confirmation before downloading and installing it.
+- **Welcome message:** enable **Show on opening** to restore the welcome screen for this source.
 
-An accepted release updates the connected managed copies while preserving plugins, history, preferences and local ZIPs.<br>
-Keep the drives connected, then return to MPC and reopen the manager to use the update.<br>
-If the update requires a different helper or launch mechanism, follow the reported manual-update instructions instead.
+An accepted release updates the manager you opened, together with its helper, while preserving plugins, history, preferences and local ZIPs.<br>
+Keep its drive connected, return to MPC and reopen the manager to use the update.<br>
+The previous working version is retained for recovery if the new version cannot start.<br>
+USB and SD keep independent versions; use the updated USB copy’s **Update manager** action to bring an older SD copy up to date.
 
 ### Remove the SD copy
 
@@ -163,6 +165,10 @@ These logs can be read on your computer without SSH.
 | <picture><img src="site/assets/tab-local.svg" width="16" height="16" alt=""></picture> **Local** | Install plugin ZIPs you copied into `local-plugins/`. |
 | <picture><img src="site/assets/tab-installed.svg" width="16" height="16" alt=""></picture> **On MPC** | See plugins actually present on the device and select available update/removal actions. |
 | <picture><img src="site/assets/tab-history.svg" width="16" height="16" alt=""></picture> **History** | Compare this stick's saved installation record with the current device and available packages. |
+
+The top-right version is the package offered in that tab.<br>
+A floppy symbol and version beside the MPC OS badge identify the installed copy; a small light beside the offered version indicates a newer update.<br>
+Thumbnails load into RAM and are discarded when the manager closes.
 
 Uninstall removes the managed plugin and its registration, while keeping its history entry.<br>
 History helps identify previous installations after wiping or changing a device; it does not back up projects or plugin files.
@@ -254,6 +260,7 @@ make arm64
 Creating the image downloads dependencies; compilation runs with networking disabled.<br>
 Outputs stay in ignored `build/`.<br>
 No sibling project is needed.<br>
+Signed releases also need OpenSSL 3 and the matching publisher signing key; see the [Developer FAQ](DEVELOPER_FAQ.md#how-are-manager-updates-authorized).
 The build includes `build/startup/manager-entry.so`, compiled from `src/startup/`.<br>
 Use `make arm-helper` to rebuild only that helper with the existing build image.
 
@@ -266,25 +273,28 @@ Supply official Gen1 update images for OS 3.9.1 and OS 3.10, plus a blank standa
 The setup project must have no samples or saved sequences.<br>
 It is used only for the one-time 3.10 helper import; its unchanged copy is removed after setup.
 
-After `make arm`, run from this checkout, using absolute paths for the three inputs:
+After building both architectures, run from this checkout using absolute input paths:
 
 ```sh
 UPDATE_39="/path/to/MPC-3.9.1-Gen1-update.img"
 UPDATE_310="/path/to/MPC-3.10-Gen1-update.img"
 SETUP_PROJECT="/path/to/Blank.xpj"
+SIGNING_KEY="/path/to/private/pmu-release.pem"
 OUTPUT_DIR="$PWD/build/universal-package"
 mkdir -p "$OUTPUT_DIR"
-docker run --rm --pull never --platform linux/arm/v7 --network none \
+docker run --rm --pull never --platform linux/arm64 --network none \
   --mount "type=bind,src=$PWD,dst=/work,readonly" \
   --mount "type=bind,src=$UPDATE_39,dst=/input/update39.img,readonly" \
   --mount "type=bind,src=$UPDATE_310,dst=/input/update310.img,readonly" \
   --mount "type=bind,src=$SETUP_PROJECT,dst=/input/Blank.xpj,readonly" \
+  --mount "type=bind,src=$SIGNING_KEY,dst=/input/release.pem,readonly" \
   --mount "type=bind,src=$OUTPUT_DIR,dst=/output" \
-  -w /work mpc-usb-plugin-installer-build-tools sh -ec '
+  -w /work mpc-usb-plugin-installer-build-tools:aarch64 sh -ec '
     python3 tools/extract_firmware.py /input/update39.img /tmp/mpc39
     python3 tools/extract_firmware.py /input/update310.img /tmp/mpc310 --controller-helper
     python3 package.py /tmp/mpc39/usr/bin/MPC /output/usb \
-      --mpc-310 /tmp/mpc310/usr/bin/MPC --setup-project /input/Blank.xpj
+      --mpc-310 /tmp/mpc310/usr/bin/MPC --setup-project /input/Blank.xpj \
+      --signing-key /input/release.pem
   '
 ```
 
@@ -296,10 +306,11 @@ If you already have the extracted executables, the packaging command is:
 
 ```sh
 python3 package.py /path/to/MPC39 build/universal-usb \
-  --mpc-310 /path/to/MPC310 --setup-project /path/to/Blank.xpj
+  --mpc-310 /path/to/MPC310 --setup-project /path/to/Blank.xpj \
+  --signing-key /path/to/private/pmu-release.pem
 ```
 
-Omit both options to build only the legacy USB route.<br>
+`--legacy-layout` explicitly selects the older unsigned packaging route for compatibility tests; it is not the release format.<br>
 The legacy checksum uses bounded automatic salt scanning.<br>
 The controller helper requires each generation's verified stock OS 3.10 executable because its native UI bindings are specific to that build.<br>
 Unknown or mismatched inputs stop packaging.<br>
@@ -315,12 +326,14 @@ Package both runtimes with:
 ```sh
 python3 package.py /path/to/Gen1-MPC39 build/universal-gen2-usb \
   --mpc-310 /path/to/Gen1-MPC310 --setup-project /path/to/Blank.xpj \
-  --arm64-build build/aarch64 --mpc-310-arm64 /path/to/Gen2-MPC310
+  --arm64-build build/aarch64 --mpc-310-arm64 /path/to/Gen2-MPC310 \
+  --signing-key /path/to/private/pmu-release.pem
 ```
 
-The ARM64 executables live in `autorun/runtime/aarch64/` alongside the shared assets.<br>
+Signed complete versions live under `autorun/runtime/.pmu-versions/`; each version includes both native runtimes and shared assets.<br>
+The fixed source dispatchers select and verify the appropriate version before copying it to RAM.<br>
 The helper XPA contains both native modules and selects one using Lua's native pointer size.<br>
-Gen 2 reads settings from `/data/Settings/MPC/MPC.settings` and selects a registered, writable, executable plugin content location, preferring `/nvme/Synths` when available.<br>
+Gen 2 reads settings from `/data/Settings/MPC/MPC.settings` and uses the firmware-selected content drive or an explicitly chosen writable, executable plugin folder.<br>
 Installing the manager itself remains restricted to a removable SD card.
 
 ## Broader Offline Tests

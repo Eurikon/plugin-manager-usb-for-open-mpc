@@ -85,6 +85,9 @@ exit "${SETUP_DISPATCH_STATUS-0}"
     def test_stock_mpc_bidirectional_port(self):
         self.assert_dispatch(self.run_setup())
 
+    def test_stopped_mpc_resume_dispatch(self):
+        self.assert_dispatch(self.run_setup("--resume-only"),extra=("--resume-only",))
+
     def test_force_input_port(self):
         self.ports.write_text("Dir Device Name\nI hw:2,3,4 Akai Pro Force Private\n")
         self.assert_dispatch(self.run_setup(), port="hw:2,3,4")

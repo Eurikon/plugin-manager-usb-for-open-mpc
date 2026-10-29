@@ -70,6 +70,22 @@ def profile_seed(path: Path) -> bytes:
     return seed
 
 
+def native_file(path: Path, architecture: str, maximum: int) -> bytes:
+    data = read_file(path, maximum)
+    wide = architecture == "aarch64"
+    width = 64 if wide else 52
+    if (architecture not in ("armv7", "aarch64") or len(data) < width
+            or data[:7] != b"\x7fELF" + bytes((2 if wide else 1, 1, 1))
+            or struct.unpack_from("<H", data, 16)[0] not in (2, 3)
+            or struct.unpack_from("<H", data, 18)[0] != (183 if wide else 40)
+            or struct.unpack_from("<H", data, 52 if wide else 40)[0] != width):
+        raise ValueError("Native build input has the wrong architecture or ELF header: " + path.name)
+    flags = struct.unpack_from("<I", data, 48 if wide else 36)[0]
+    if (wide and flags != 0) or (not wide and (flags & 0xff000000 != 0x05000000 or not flags & 0x400 or flags & 0x200)):
+        raise ValueError("Native build input has an unsupported ARM ABI: " + path.name)
+    return data
+
+
 def setup_project(data: bytes) -> bytes:
     if not 0 < len(data) <= 1024 * 1024:
         raise ValueError("Setup project exceeds the compressed size limit")
@@ -187,6 +203,65 @@ def build_archive(firmware: Path, project: Path, firmware64: Path | None = None)
             archive.writestr(entry, files[name])
     data = output.getvalue()
     validate_archive(data, runtime, runtime64)
+    return data
+
+
+def build_versioned_archive(firmware: Path, project: Path, signer, version: str,
+                            firmware64: Path | None = None) -> bytes:
+    from tools.payload_package import generation, store
+    seed = profile_seed(firmware)
+    if firmware64 is not None and profile_seed(firmware64) != seed:
+        raise ValueError("Controller checksum initialization differs between generations")
+    project_data = setup_project(read_file(project, 1024 * 1024))
+    lua = read_file(SOURCE / "plugin_manager.lua", 64 * 1024)
+    if lua.count(b"local ENABLED = false\n") != 1:
+        raise ValueError("Unexpected controller activation template")
+    lua = lua.replace(b"local ENABLED = false\n", b"local ENABLED = true\n", 1)
+    bootstrap = read_file(SOURCE / "bootstrap.sh", 64 * 1024).decode()
+    for pattern, replacement in ((r"^PROJECT_BYTES=\d+$", "PROJECT_BYTES=" + str(len(project_data))),
+                                 (r"^PROJECT_SHA256='[0-9a-f]{64}'$", "PROJECT_SHA256='" + digest(project_data) + "'")):
+        bootstrap, count = re.subn(pattern, replacement, bootstrap, flags=re.M)
+        if count != 1:
+            raise ValueError("Missing setup-project cleanup template")
+    payload = {"bootstrap.sh": bootstrap.encode()}
+    roles = {"bootstrap": "bootstrap.sh"}
+    files = {"PluginManager.xpj": project_data, "plugin_manager.lua": lua,
+             "controller.ini": ("[info]\ndevice=Plugin Manager helper\nscript=plugin_manager.lua\n"
+                                "scriptVersion=1.0\nchecksum=" + digest(lua + seed) + "\n").encode(),
+             "manager-enabled": b"open-mpc-manager-reusable-v1\n",
+             "sd-install-capability": b"open-mpc-manager-sd-v1\n"}
+    for arch in ("armv7", "aarch64") if firmware64 is not None else ("armv7",):
+        build = PROJECT / "build" / ("aarch64" if arch == "aarch64" else "")
+        module = "bin/helper-" + arch + ".so"
+        dispatcher = "source-dispatcher-" + arch
+        payload[module] = native_file(build / "startup/manager-entry.so", arch, 1024 * 1024)
+        payload[dispatcher] = native_file(build / "source-dispatcher", arch, 2 * 1024 * 1024)
+        roles["helper_" + arch] = module
+        roles["dispatcher_" + arch] = dispatcher
+        suffix = "-aarch64" if arch == "aarch64" else ""
+        files["manager-entry" + suffix + ".so"] = native_file(build / "startup/manager-loader.so", arch, 2 * 1024 * 1024)
+        files["bootstrap-note" + suffix] = native_file(build / "startup/bootstrap-note", arch, 1024 * 1024)
+    identifier, _, signed = generation(payload, roles, version,
+                                       "universal" if firmware64 is not None else "armv7", "helper", signer)
+    roots = sorted(files)
+    files[".owner"] = ("open-mpc-plugin-manager-helper-v2\n" + "\n".join(roots + [".pmu-versions", "installed-storage", "installed-storage.removing"]) + "\n").encode()
+    files.update(store(identifier, signed))
+    output = io.BytesIO()
+    with zipfile.ZipFile(output, "w") as archive:
+        for name in ["PluginManager.xpj", *sorted(set(files) - {"PluginManager.xpj"})]:
+            entry = zipfile.ZipInfo(PREFIX + name)
+            entry.create_system = 3
+            entry.external_attr = (stat.S_IFREG | 0o600) << 16
+            entry.compress_type = zipfile.ZIP_DEFLATED
+            archive.writestr(entry, files[name])
+    data = output.getvalue()
+    if len(data) > 8 * 1024 * 1024:
+        raise ValueError("Versioned helper archive exceeds its size limit")
+    with zipfile.ZipFile(io.BytesIO(data)) as archive:
+        if archive.testzip() is not None or len(archive.infolist()) != len(files):
+            raise ValueError("Versioned helper archive verification failed")
+        if any(archive.read(PREFIX + name) != content for name, content in files.items()):
+            raise ValueError("Versioned helper archive content changed")
     return data
 
 

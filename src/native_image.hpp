@@ -21,4 +21,5 @@ public:
     int descriptor()const{return value;}
 };
 PinnedNativeImage pinNativeImage(const NativeImageSpec& image,const std::filesystem::path& scratch);
+void validateNativeImage(const NativeImageSpec& image);
 }

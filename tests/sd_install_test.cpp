@@ -1,4 +1,7 @@
 #include "sd_install_fixture.hpp"
+#include "signing_fixture.hpp"
+#include "source_runtime.hpp"
+#include "crypto.hpp"
 #include <iostream>
 #include <stdexcept>
 
@@ -42,6 +45,12 @@ int main(){
             check(fs::exists(t.data.target/"manager-preferences.json")&&fs::exists(t.data.target/"plugin-history.json")&&fs::exists(t.data.target/"local-plugins/user.zip")&&fs::exists(t.data.target/"user.txt"),"removal preserves settings history local packages and unrelated files");
             check(sd_fixture::text(t.data.target/"display-rotation.txt")=="0\n","SD removal preserves the display preference");
             t.installer.install("1234-ABCD");check(t.installer.inspect()["installed"].get<bool>(),"removed SD installation can be reinstalled");
+        }
+        for(const unsigned migration:{0U,1U,2U,3U,4U}){
+            Test t(base/("signed-generations-"+std::to_string(migration)));if(migration){t.installer.install("1234-ABCD");if(migration==4)sd_fixture::save(t.data.target/"autorun/runtime/manager","modified legacy manager");if(migration==1||migration==4)t.installer.remove();}pmu::test::SigningFixture key;t.data.paths.publisher=key.publicKey();const auto architecture=t.data.paths.arch;const auto input=t.root/"input";sd_fixture::save(input/"program","versioned native fixture");const auto location=t.data.source/"autorun/runtime/.pmu-versions";pmu::VersionStore sourceStore(location,geteuid(),[](const auto& file){return sha256(file);},{},true,{},architecture);
+            pmu::GenerationSpec spec{"2.0.0","universal",{{"program",sha256(input/"program")}},{{"manager_armv7","program"},{"runtime_worker_armv7","program"},{"manager_aarch64","program"},{"runtime_worker_aarch64","program"}}};auto stage=[&]{return sourceStore.stage(input,spec,key.proof(pmu::sha256Text(pmu::generationSpecToJson(spec).dump()+'\n'),"runtime"));};const auto first=stage();sourceStore.seed(first);if(migration==3){pmu::VersionStore interrupted(t.data.target/"autorun/runtime/.pmu-versions",geteuid(),[](const auto& file){return sha256(file);},{},true,{},architecture);interrupted.stage(input,spec,key.proof(first,"runtime"));}SdInstaller installer(t.data.source,t.data.session,t.data.paths);installer.install("1234-ABCD");check(installer.inspect().at("installed").get<bool>(),"signed generation installation is detected on SD");if(migration==4)check(sd_fixture::text(t.data.target/"autorun/runtime/manager")=="modified legacy manager","legacy migration preserves changed files retained by uninstall");
+            const auto targetPool=t.data.target/"autorun/runtime/.pmu-versions";check(fs::exists(targetPool/"active.armv7.json")&&fs::exists(targetPool/"active.aarch64.json"),"universal SD installation records both device generations independently");sd_fixture::save(t.data.target/"local-plugins/user-data.txt","preserved local data");sd_fixture::save(t.data.target/"plugin-history.json","{\"saved\":true}\n");
+            spec.version="3.0.0";const auto next=stage();sourceStore.activate(next);sourceStore.boot();sourceStore.confirm(next);installer.install("1234-ABCD");pmu::VersionStore target(targetPool,geteuid(),[](const auto& file){return sha256(file);},{},false,{},architecture);check(target.current()->id==next&&target.current()->pending&&fs::exists(targetPool/first),"SD updates select the signed complete generation while retaining the last working copy");target.boot();target.confirm(next);sd_fixture::save(targetPool/first/"program","modified preserved copy");installer.remove();check(!fs::exists(t.data.target/".mpc-manager-id")&&!fs::exists(targetPool/next)&&fs::exists(targetPool/first/"program"),"versioned uninstall disables launch and preserves modified owned files");check(fs::exists(t.data.target/"plugin-history.json")&&fs::exists(t.data.target/"local-plugins/user-data.txt"),"versioned uninstall preserves history and local data");installer.install("1234-ABCD");check(installer.inspect().at("installed").get<bool>(),"a removed versioned SD installation can be restored without discarding saved data");
         }
         {
             Test t(base/"aarch64");t.data.paths.arch="aarch64";

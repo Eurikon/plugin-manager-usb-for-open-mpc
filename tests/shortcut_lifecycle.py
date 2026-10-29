@@ -18,7 +18,7 @@ shutil.copyfile(source/'setup.sh',test/'setup.sh')
 (test/'usb/autorun/runtime/aarch64').mkdir(parents=True)
 shutil.copyfile(source/'open.sh',test/'usb/autorun/open.sh')
 shutil.copyfile(build/'font.ttf',test/'font.ttf')
-(test/'manager').write_text('#!/bin/sh\necho opened >> /tmp/shortcut-test/launches\nwhile [ -e /tmp/shortcut-test/hold-manager ]; do sleep 0.025; done\nsleep 0.5\n')
+(test/'manager').write_text('#!/bin/sh\n[ -d "$2" ] && [ "$(stat -c %a "$2")" = 700 ] || exit 91\necho opened >> /tmp/shortcut-test/launches\nwhile [ -e /tmp/shortcut-test/hold-manager ]; do sleep 0.025; done\nsleep 0.5\n')
 (test/'manager').chmod(0o755)
 (bin_dir/'pidof').write_text('#!/bin/sh\nexit 1\n')
 (bin_dir/'systemctl').write_text('''#!/bin/sh
@@ -86,20 +86,20 @@ environment=run('/tmp/shortcut-test/shortcut-environment-test')
 print(environment.stdout,end='');assert environment.returncode==0,environment.stderr
 result=run('PATH=/tmp/shortcut-test/bin:$PATH /tmp/shortcut-test/shortcut-state-test && PATH=/tmp/shortcut-test/bin:$PATH /tmp/shortcut-test/shortcut-integration')
 print(result.stdout,end='');assert result.returncode==0,result.stderr
-calls=(test/'services').read_text().splitlines();assert calls.count('stop')==12 and calls.count('start')==13,calls
-assert (test/'service-starts').read_text().splitlines()==['started']*12
-assert (test/'recovery-requests').read_text().splitlines()==['recovery']
+calls=(test/'services').read_text().splitlines();assert calls.count('stop')==13 and calls.count('start')==17,calls
+assert (test/'service-starts').read_text().splitlines()==['started']*16
+assert (test/'recovery-requests').read_text().splitlines()==['recovery']*4
 assert not list((root/'tmp').glob('mpc-usb-manager.*')),'Manager RAM session left behind'
 print('PASS: one successful MPC start per opening; failed return recovered; all GUI RAM sessions deleted')
-for case in ['preload','envfile','normal','arm-only','unknown-option']:
+for case in ['preload','envfile','normal','arm-only','resume-only','unknown-option']:
     work=root/f'tmp/mpc-usb-session.setup-{case}';work.mkdir()
-    option=' --arm-only' if case=='arm-only' else ' --unknown' if case=='unknown-option' else ''
+    option=' --'+case if case in ('arm-only','resume-only') else ' --unknown' if case=='unknown-option' else ''
     result=run(f'PATH=/tmp/shortcut-test/bin:$PATH SHORTCUT_CASE={case} sh /tmp/shortcut-test/setup.sh /tmp/shortcut-test/usb /tmp/mpc-usb-session.setup-{case}{option}')
     assert result.returncode==(1 if case=='unknown-option' else 0),(case,result.stdout,result.stderr)
     if case!='unknown-option':shutil.rmtree(work)
     else:assert not work.exists()
     print('PASS: bootstrap',case,'configuration handling')
-dispatch=(test/'dispatch').read_text().splitlines();assert dispatch.count('--arm-only')==1,dispatch
+dispatch=(test/'dispatch').read_text().splitlines();assert dispatch.count('--arm-only')==1 and dispatch.count('--resume-only')==1,dispatch
 invalid=run('PATH=/tmp/shortcut-test/bin:$PATH /tmp/shortcut-test/shortcut /tmp/shortcut-test/usb /tmp/mpc-usb-session.invalid acvs hw:1,0,1 --unknown')
 assert invalid.returncode==1 and not (root/'tmp/mpc-usb-session.invalid').exists(),invalid.stderr
 print('PASS: unknown supervisor option rejected before session setup')
