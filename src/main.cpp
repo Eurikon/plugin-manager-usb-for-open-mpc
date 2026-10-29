@@ -715,7 +715,7 @@ static bool completeHandoff(const fs::path& cache){
     const auto result=pmu::runIncomingWorker(current.worker,cache,{{"operation","apply"},{"intent","finish-update"},{"source",item.source.string()},{"helper",item.helper.string()},{"source_identity",item.sourceIdentity},{"handoff",path.string()}});if(!result.value("handoff_started",false))throw std::runtime_error("The updated runtime did not accept handover");return true;
 }
 int main(int argc,char**argv){try{
-    if(argc==2&&std::string(argv[1])=="--pmu-info-v1"){std::puts(Json({{"product","plugin-manager-usb"},{"version",MPC_MANAGER_VERSION},{"architecture",managerArchitecture()},{"update_protocol",1}}).dump().c_str());return 0;}
+    if(argc==2&&std::string(argv[1])=="--pmu-info-v1"){std::puts(Json({{"product","plugin-manager-usb"},{"version",MPC_MANAGER_VERSION},{"development",bool(MPC_MANAGER_DEVELOPMENT)},{"architecture",managerArchitecture()},{"update_protocol",1}}).dump().c_str());return 0;}
     if(argc==2&&std::string(argv[1])=="--pmu-update-v1")return pmu::serveUpdateWorker([](const auto& task,const auto& progress){return pmu::handleRuntimeTask(task,pmu::publisherKey,progress,MPC_MANAGER_VERSION);});
     if(argc==3&&std::string(argv[1])=="--pmu-finalize-v1"){pmu::finalizeRuntimeHandoff(argv[2],pmu::publisherKey);return 0;}
     if(argc==3&&std::string(argv[1])=="--pmu-recover-v1"){pmu::recoverRuntimeHandoff(argv[2],pmu::publisherKey);return 0;}

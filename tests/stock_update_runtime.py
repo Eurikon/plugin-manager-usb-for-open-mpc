@@ -162,6 +162,11 @@ echo "$!" > /tmp/pmu-runtime-audit/supervisor-pid
         if base.parent != Path("/tmp") or not base.name.startswith("mpc-usb-session."):
             raise RuntimeError("The dispatcher returned an invalid RAM cohort")
         cohort = root / base.relative_to("/")
+        information = json.loads(run([*chroot, str(base / "manager"), "--pmu-info-v1"]).stdout)
+        expected_version = json.loads((source / "PMU-UPDATE.json").read_text())["generation"]["version"]
+        if information.get("version") != expected_version or information.get("architecture") != args.arch or information.get("development") is not False:
+            raise RuntimeError("The release binary has a mismatched version, architecture or development identity")
+        report["native_identity"] = information
         if (cohort / "ready").read_text() != "READY\n":
             raise RuntimeError("The native supervisor did not report readiness")
         environment = (cohort / "shortcut.env").read_text()

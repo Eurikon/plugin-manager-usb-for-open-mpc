@@ -649,6 +649,8 @@ USB root, without an extra enclosing folder. Use it only on fresh packager
 output: an inventory is not a secret scan or proof of publisher identity.
 
 Record the source commit, tested target and final ZIP checksum in release notes.
+Build from a clean, matching release tag.
+Both native managers must report the release version and `development: false` from `--pmu-info-v1` before packaging.
 Normal stable updates use tag `v<version>` and asset `plugin-manager-usb-v<version>.zip`.
 The one-time 1.3.0 migration uses `plugin-manager-usb-v1.3.0-migration.zip`, deliberately outside the old updater's asset match.
 Do not publish a normal-name alias for that migration bundle.
