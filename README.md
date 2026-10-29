@@ -209,8 +209,18 @@ On Gen 2, **SETUP → Plugin location** opens **Plugin installation location**.
 
 Selecting a location does not install anything or change MPC's content-drive preference.<br>
 After you confirm a plugin installation and its package passes validation, the manager creates the standard `Synths` folder if needed and registers the chosen content folder, preserving a backup of MPC settings.<br>
-A missing, disconnected, read-only or non-executable drive stops installation with an explanation; the manager does not silently switch drives.<br>
+A missing, disconnected or read-only drive stops installation with an explanation; the manager does not silently switch drives.<br>
 Plugins installed on removable storage require that storage to remain available when MPC loads them.
+
+Some drives can store samples and projects but are blocked from running plugins.<br>
+This restriction is called `noexec` and can affect an SSD, SD card or USB drive.
+
+On Gen 2, these drives do not appear in **SETUP → Plugin location**.<br>
+If MPC's selected content drive is blocked, **Automatic** is unavailable and the page explains which drive cannot run plugins.<br>
+If no usable drive is connected, the list is empty and shows **“No writable, executable plugin drive is available.”**<br>
+The location-selection buttons are disabled, and no plugin is installed.<br>
+Connect another drive and tap **Refresh**.<br>
+When a usable location appears, select it to continue.
 
 ## Opening and Recovery
 
