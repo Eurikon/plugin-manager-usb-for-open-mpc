@@ -98,7 +98,7 @@ Wait for MPC to finish reopening; **do not turn off your device during this tran
 | **Return to MPC** | Closes the manager and restarts the MPC application. |
 | **Sun / moon** | Switches between light and dark themes. The label names the theme you will switch to. |
 
-The welcome screen also offers **OpenMPC Plugin Manager G2**, an optional manager that runs on an MPC plugin track (Gen 1 and Gen 2). It is poloq's Plugin Manager (MIT) with Gen 2 support, installed from the catalog; the manager finds its release by the tag `plugin-manager-g2-v<version>` and the file `Plugin-Manager-G2-<version>-mpc-<armv7|aarch64>.zip`, not by the repository's latest release, and checks the size and SHA-256 against the catalog.<br>
+The welcome screen also offers **OpenMPC Plugin Manager G2**, which runs on an MPC track and supports Gen 1 and Gen 2.<br>
 Its button offers **Install** when absent, or **Update** when an older, known release is installed in the selected plugin location.<br>
 **Installed** is disabled for equal, newer or unknown versions and installations outside that location.<br>
 The regular catalog still allows deliberate reinstallation.<br>

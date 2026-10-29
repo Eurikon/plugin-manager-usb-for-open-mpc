@@ -229,7 +229,7 @@ static int app(int argc,char**argv) {
                 if(success){managerUpdated=true;managerCheckPending=false;managerCheckFailed=false;completed=true;failed=false;managerUpdateStatus=result.managerUpdate.at("message").get<std::string>();status=managerUpdateStatus;sourceOnSd=result.managerUpdate.value("source_on_sd",sourceOnSd);}
                 progressEnded=SDL_GetTicks();progressFading=true;
             }else if(work==Work::Offer){
-                mutating=false;if(success){status=MPC_PM_NAME " installed. Return to MPC to use it on a plugin track.";completed=true;failed=false;welcomeOffer={{"label","Installed"},{"allowed",false},{"reason","Latest version already installed."}};}
+                mutating=false;if(success){status=MPC_PM_NAME " installed. Return to MPC to use it on a plugin track.";completed=true;failed=false;welcomeOffer={{"label","Installed"},{"allowed",false},{"reason","Catalog release installed."}};}
                 progressEnded=SDL_GetTicks();progressFading=true;reload();
             }else if(work==Work::SdRead){
                 sdReady=success;if(success){sdCards=std::move(result.cards);sdPage=std::clamp(sdPage,0,std::max(0,(int(sdCards.size())-1)/4));if(sdView)status=sdState.value("configured",false)?sdState.value("reason",""):sdCards.empty()?"No suitable SD card found. Insert your card and choose Refresh.":"Select an SD card. Installation starts only after confirmation.";}
@@ -544,7 +544,7 @@ static int app(int argc,char**argv) {
         if(responsive){
             const Uint32 now=SDL_GetTicks();
             if(step==0&&!busy&&listReady){click(1070,565);click(170,650);click(1100,705);probeStarted=now;++step;}
-            else if(step==1){if(welcome||!hideNext||offerPending||status.find("Checking the latest stable")!=std::string::npos||now-probeStarted>250)throw std::runtime_error("Welcome input stalled or optional lookup was not cancelled");click(930,90);++step;}
+            else if(step==1){if(welcome||!hideNext||offerPending||status.find("Checking the catalog-selected")!=std::string::npos||now-probeStarted>250)throw std::runtime_error("Welcome input stalled or optional lookup was not cancelled");click(930,90);++step;}
             else if(step==2&&!busy&&listReady){if(!manager.hideWelcome()||manager.darkTheme()==startingDark)throw std::runtime_error("Queued preferences failed");click(320,90);click(320,90);click(320,90);probeStarted=now;++step;}
             else if(step==3){if(view!="local"||!busy||work!=Work::List)throw std::runtime_error("Local background read did not start");click(650,90);++step;}
             else if(step==4){if(view!="history"||now-probeStarted>250)throw std::runtime_error("Navigation blocked on local ZIP read");click(100,90);click(930,90);++step;}
@@ -630,7 +630,7 @@ static int app(int argc,char**argv) {
                 if(mutating)continue;
                 if(y>=48&&y<86&&x>=1084&&x<1216){dark=!dark;Theme::set(dark);themePending=true;}
                 else if(y>=628&&y<671&&x>=64&&x<600){hideNext=!hideNext;hidePending=true;failed=false;}
-                else if(y>=538&&y<596&&x>=958&&x<1188&&!offerPending&&!(busy&&work==Work::Offer)&&welcomeOffer.value("allowed",false)){offerPending=true;failed=false;status="Checking the latest stable " MPC_PM_NAME " release...";}
+                else if(y>=538&&y<596&&x>=958&&x<1188&&!offerPending&&!(busy&&work==Work::Offer)&&welcomeOffer.value("allowed",false)){offerPending=true;failed=false;status="Checking the catalog-selected " MPC_PM_NAME " release...";}
                 else if(y>=446&&y<504&&x>=958&&x<1188){openSd();continue;}
                 else if(y>=680&&y<738){if(x>=64&&x<334){returnToMpc();break;}if(x>=958&&x<1216){welcome=false;offerPending=false;failed=false;status=listReady?(catalogError.empty()?"Catalog ready. Choose a package.":catalogError):"Loading plugins...";}}
                 continue;

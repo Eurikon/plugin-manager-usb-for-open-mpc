@@ -365,7 +365,7 @@ void Manager::verifyLatestPlugin(const std::string& id,const ReleaseSource& sour
             if(name.size()<suffix.size()||name.compare(name.size()-suffix.size(),suffix.size(),suffix)!=0)continue;
             require(asset==nullptr,"Latest release has multiple ARMv7 packages");asset=&entry;
         }
-        require(asset!=nullptr&&asset->value("state","")=="uploaded","Latest release has no ready ARMv7 package");
+        require(asset!=nullptr&&asset->value("state","")=="uploaded","Selected release has no ready "+arch+" package");
         const auto name=asset->at("name").get<std::string>();
         require(source.assetPrefix.empty()||name==source.assetPrefix+catalogVersion+"-mpc-"+arch+".zip","Release package name does not match this manager");
         require(std::regex_match(name,std::regex("[A-Za-z0-9][A-Za-z0-9_.-]*"))&&asset->at("browser_download_url").get<std::string>()==prefix+tag+"/"+name&&asset->at("browser_download_url")==item->at("url"),"Latest package does not match the catalog download");
