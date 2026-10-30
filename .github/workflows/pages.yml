@@ -3,6 +3,8 @@ name: Documentation website
 on:
   push:
     branches: [main]
+    paths-ignore:
+      - 'tmp/**'
   workflow_dispatch:
 
 permissions:
