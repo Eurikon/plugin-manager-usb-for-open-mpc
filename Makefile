@@ -55,6 +55,7 @@ test-local:
 	$(PYTHON) -m unittest discover -s tests -p startup_package_test.py
 	$(PYTHON) -m unittest discover -s tests -p payload_package_test.py
 	$(PYTHON) -m unittest discover -s tests -p sign_release_test.py
+	$(PYTHON) -m unittest discover -s tests -p release_archive_test.py
 	$(PYTHON) -m unittest discover -s tests -p bootstrap_failure_note_test.py
 
 site:
@@ -66,4 +67,4 @@ test-offline:
 
 syntax:
 	$(PYTHON) -m py_compile package.py tools/*.py tests/*.py
-	@for script in *.sh src/startup/*.sh; do sh -n "$$script" || exit; done
+	@for script in *.sh tools/*.sh src/startup/*.sh; do sh -n "$$script" || exit; done

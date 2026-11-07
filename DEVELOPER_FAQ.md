@@ -642,45 +642,45 @@ Those consumers are separate projects, not contents required to build this one.
 
 ### How do I create a downloadable installer ZIP?
 
-Generate a **fresh manager-only bundle** with the README packaging command,
-omitting the optional plugin argument. Do not archive a used USB drive containing
-plugins, history, preferences or logs. Set `OUTPUT_DIR` as in that recipe, then:
+Generate a **fresh manager-only bundle** with the README packaging command, omitting the optional plugin argument.
+Do not archive a used USB drive containing plugins, history, preferences or logs.
+
+Build `tests/release_update_test.cpp` against the previous supported release's headers and compiled backend/core objects, once per architecture.
+Inside the matching existing build container, use:
 
 ```sh
-python3 - "$OUTPUT_DIR/usb" "$OUTPUT_DIR/plugin-manager-usb.zip" <<'PY'
-import hashlib
-import json
-from pathlib import Path
-import sys
-import zipfile
-
-root = Path(sys.argv[1]).resolve()
-archive = Path(sys.argv[2]).resolve()
-manifest = json.loads((root / "USB-SHA256.json").read_text())
-paths = list(root.rglob("*"))
-if any(path.is_symlink() for path in paths):
-    raise SystemExit("Bundle contains a symlink")
-files = {str(path.relative_to(root)) for path in paths if path.is_file()}
-if files != set(manifest) | {"USB-SHA256.json", "PMU-UPDATE.json"}:
-    raise SystemExit("Bundle contains missing or unlisted files")
-if any((root / "local-plugins").iterdir()):
-    raise SystemExit("Public bundle must not include plugins")
-for name, expected in manifest.items():
-    if hashlib.sha256((root / name).read_bytes()).hexdigest() != expected:
-        raise SystemExit("Checksum mismatch: " + name)
-with zipfile.ZipFile(archive, "x", zipfile.ZIP_DEFLATED) as output:
-    for name in sorted(files):
-        output.write(root / name, name)
-    output.writestr("local-plugins/", b"")
-print(hashlib.sha256(archive.read_bytes()).hexdigest(), archive.name)
-PY
+sh tools/build_release_validator.sh /path/to/previous-source /path/to/previous-build /path/to/validator
 ```
 
-Before archiving, also verify `PMU-UPDATE.json` and its complete inventory using the native update probe against the compiled publisher key.
-The snippet verifies the factory inventory and preserves the hidden marker and
-empty `local-plugins/` folder. Extracting the ZIP puts the launch files at the
-USB root, without an extra enclosing folder. Use it only on fresh packager
-output: an inventory is not a secret scan or proof of publisher identity.
+The validator calls that older backend's real update-check, download and ZIP-staging methods.
+Network responses are supplied locally; the bytes are the final release ZIP, its signatures remain enforced, and its incoming native worker must complete the v1 handshake.
+The test does not apply an update to hardware.
+Retain the older source and object identities with the release evidence.
+
+Create the final ZIP through the mandatory acceptance gate:
+
+```sh
+python3 tools/release_archive.py prepare "$OUTPUT_DIR/usb" "$OUTPUT_DIR/plugin-manager-usb-v<version>.zip" \
+  --validator-armv7 /path/to/armv7-validator --validator-aarch64 /path/to/aarch64-validator
+```
+
+Both older-updater validators must reject a copy containing the previously problematic empty `local-plugins/` ZIP entry, then accept the exact final archive.
+The final ZIP contains only signed files and its envelope; empty user-data folders are not archived.
+Existing local plugin folders are preserved by updates; a new stick's optional `local-plugins/` folder can be created on the computer.
+The command saves a SHA-256 checksum and a local acceptance receipt tied to the exact ZIP, validator binaries and pinned Docker images.
+Receipts contain local paths and must remain untracked.
+Run `TEST_MANAGER_BUNDLE=/path/to/fresh/usb python3 -m unittest discover -s tests -p release_archive_test.py` for the archive/publication guard regressions.
+
+After pushing the verified source and tag, publish through the same gate:
+
+```sh
+python3 tools/release_archive.py publish "$OUTPUT_DIR/plugin-manager-usb-v<version>.zip" \
+  --repo OWNER/REPOSITORY --notes-file /path/to/release-notes.md
+```
+
+Publication refuses a missing or mismatched receipt, rechecks a private upload copy through both older updaters, uploads a draft and compares its downloaded assets before making it public.
+A failed check prevents publication.
+Use this command rather than uploading an independently created ZIP.
 
 Record the source commit, tested target and final ZIP checksum in release notes.
 Build from a clean, matching release tag.
@@ -688,8 +688,8 @@ Both native managers must report the release version and `development: false` fr
 Normal stable updates use tag `v<version>` and asset `plugin-manager-usb-v<version>.zip`.
 The one-time 1.3.0 migration uses `plugin-manager-usb-v1.3.0-migration.zip`, deliberately outside the old updater's asset match.
 Do not publish a normal-name alias for that migration bundle.
-The commands do not upload or publish anything. Installer release automation
-is not configured; creating a website does not create an installer release.
+Only the explicit **publish** command uploads and publishes a release.
+Creating the documentation website does not create an installer release.
 
 ### What must stay out of a public release?
 

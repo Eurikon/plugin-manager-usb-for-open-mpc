@@ -1,6 +1,6 @@
 # Plugin Manager USB for OPEN MPC
 
-[![Download installer](https://img.shields.io/badge/Download-1.3.2-brightgreen?logo=github)](https://github.com/Eurikon/plugin-manager-usb-for-open-mpc/releases/download/v1.3.2/plugin-manager-usb-v1.3.2.zip)
+[![Download installer](https://img.shields.io/badge/Download-1.3.3-brightgreen?logo=github)](https://github.com/Eurikon/plugin-manager-usb-for-open-mpc/releases/download/v1.3.3/plugin-manager-usb-v1.3.3.zip)
 [![Latest release](https://img.shields.io/github/v/release/Eurikon/plugin-manager-usb-for-open-mpc?logo=github&label=Release)](https://github.com/Eurikon/plugin-manager-usb-for-open-mpc/releases/latest)
 [![Changelog](https://img.shields.io/badge/Changelog-History-blue?logo=github)](CHANGELOG.md)
 [![User guide](https://img.shields.io/badge/Guide-Website-blue?logo=githubpages)](https://eurikon.github.io/plugin-manager-usb-for-open-mpc/guide.html)
@@ -48,7 +48,8 @@ The online catalog needs internet on the MPC; local plugin ZIPs can be installed
 Opening the manager stops the MPC application; returning starts it again.
 
 Copy the bundle contents directly onto the USB stick, without an extra enclosing folder.<br>
-Keep `autorun/`, `.mpc-manager-id`, `USB-SHA256.json`, `local-plugins/` and `Plugin Manager helper.xpa` together at the root.
+Keep `autorun/`, `.mpc-manager-id`, `USB-SHA256.json` and `Plugin Manager helper.xpa` together at the root.<br>
+For local plugin ZIPs, create a `local-plugins/` folder at the root if it is not already there.
 
 ### MPC OS 3.9.1
 

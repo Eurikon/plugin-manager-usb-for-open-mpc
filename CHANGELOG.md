@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.3.3 — 07-11-2026
+
+- Fix automatic updates being rejected because the release ZIP included an empty folder outside the signed inventory. Existing local plugin folders and packages are preserved.
+- Require the exact final ZIP to pass older-updater download, signature, extraction and native-worker checks before release upload.
+
 ## 1.3.2 — 07-11-2026
 
 - Disable copying the manager onto its own active SD installation and reject self-copy attempts before changing installation records. Use SETUP's **Check for updates** to update the running SD copy.

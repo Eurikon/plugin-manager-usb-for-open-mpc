@@ -58,6 +58,7 @@ int main(int argc,char** argv){
         auto failure=[&](std::vector<Entry> entries,const char* label){zip(archive,entries);rejects([&]{unpack(output,pmu::fileSha256(archive),architecture,spec.version);},label);check(!fs::exists(output),"failed extraction removes only its own staging data");};
         auto entries=original;entries.back().data="wrong";failure(entries,"payload checksum mismatch is refused and cleaned");
         entries=original;entries.push_back({"unexpected.txt","unlisted"});failure(entries,"uninventoried files are refused");
+        entries=original;entries.push_back({"local-plugins/","",AE_IFDIR});failure(entries,"empty user-data folders outside the signed inventory are refused");
         entries=original;entries.push_back(original.back());failure(entries,"duplicate ZIP paths are refused");
         entries=original;entries.push_back({"../escaped","invalid"});failure(entries,"path traversal is refused");check(!fs::exists(root/"escaped"),"traversal creates no outside file");
         entries=original;entries.push_back({"unlisted-link","/etc/passwd",AE_IFLNK});failure(entries,"ZIP symlinks are refused");
