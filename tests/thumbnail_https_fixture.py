@@ -24,12 +24,28 @@ IMAGE = (b'\x89PNG\r\n\x1a\n'
 
 class Handler(BaseHTTPRequestHandler):
     protocol_version = 'HTTP/1.1'
+    requests = []
 
     def log_message(self, *args):
         pass
 
     def do_GET(self):
         try:
+            if self.path in ('/etag.png', '/modified.png'):
+                etag, modified = '"thumbnail-1"', 'Wed, 01 Jan 2025 00:00:00 GMT'
+                unchanged = (self.headers.get('If-None-Match') == etag if self.path == '/etag.png'
+                             else self.headers.get('If-Modified-Since') == modified)
+                self.requests.append((self.path, self.headers.get('If-None-Match'),
+                                      self.headers.get('If-Modified-Since'), 304 if unchanged else 200))
+                self.send_response(304 if unchanged else 200)
+                if self.path == '/etag.png':
+                    self.send_header('ETag', etag)
+                self.send_header('Last-Modified', modified)
+                self.send_header('Content-Length', '0' if unchanged else str(len(IMAGE)))
+                self.end_headers()
+                if not unchanged:
+                    self.wfile.write(IMAGE)
+                return
             if self.path in ('/redirect', '/insecure-redirect', '/redirect-loop', '/untrusted'):
                 target = {'/redirect': 'https://artwork.invalid/valid.png',
                           '/insecure-redirect': 'http://artwork.invalid/valid.png',
@@ -86,6 +102,14 @@ def main():
         thread.start()
         try:
             subprocess.run(sys.argv[1:], check=True, timeout=30)
+            for path in ('/etag.png', '/modified.png'):
+                requests = [entry for entry in Handler.requests if entry[0] == path]
+                if len(requests) != 2 or [entry[3] for entry in requests] != [200, 304]:
+                    raise RuntimeError(f'{path}: unchanged artwork was downloaded again: {requests}')
+            etag_request = next(entry for entry in Handler.requests if entry[0] == '/etag.png' and entry[3] == 304)
+            if etag_request[1] != '"thumbnail-1"' or etag_request[2] is not None:
+                raise RuntimeError('ETag must take precedence over Last-Modified')
+            print('PASS: 3 server-side conditional download and ETag-priority checks')
         finally:
             server.shutdown()
             server.server_close()

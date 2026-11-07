@@ -7,6 +7,9 @@
 #include <cstdlib>
 #include <sys/stat.h>
 #include <unistd.h>
+#include <archive.h>
+#include <archive_entry.h>
+#include <locale.h>
 
 static void check(bool value,const char* name) {
     if(!value)throw std::runtime_error(name);
@@ -15,6 +18,47 @@ static void check(bool value,const char* name) {
 static void save(const fs::path& path,const std::string& value) {
     std::ofstream output(path);output<<value;
     if(!output)throw std::runtime_error("Cannot write fixture");
+}
+static void archiveChecks(Manager& manager,const fs::path& root) {
+    struct Entry {std::string path,data;bool link=false;};
+    auto zip=[&](const std::string& name,const std::vector<Entry>& entries){
+        const auto path=root/(name+".zip");
+        const std::string before=setlocale(LC_CTYPE,nullptr);
+        if(!setlocale(LC_CTYPE,"C.UTF-8"))throw std::runtime_error("UTF-8 fixture locale unavailable");
+        auto* output=archive_write_new();
+        try{
+            if(!output||archive_write_set_format_zip(output)!=ARCHIVE_OK||archive_write_open_filename(output,path.c_str())!=ARCHIVE_OK)throw std::runtime_error("Cannot create archive fixture");
+            for(const auto& file:entries){
+                auto* entry=archive_entry_new();if(!entry)throw std::runtime_error("Cannot create archive entry");
+                archive_entry_set_pathname(entry,file.path.c_str());archive_entry_set_filetype(entry,file.link?AE_IFLNK:AE_IFREG);archive_entry_set_perm(entry,0644);archive_entry_set_size(entry,file.link?0:file.data.size());
+                if(file.link)archive_entry_set_symlink(entry,file.data.c_str());
+                const int status=archive_write_header(output,entry);archive_entry_free(entry);
+                if(status!=ARCHIVE_OK||(!file.link&&archive_write_data(output,file.data.data(),file.data.size())!=static_cast<la_ssize_t>(file.data.size())))throw std::runtime_error("Cannot write archive fixture");
+            }
+            if(archive_write_close(output)!=ARCHIVE_OK)throw std::runtime_error("Cannot close archive fixture");
+            archive_write_free(output);setlocale(LC_CTYPE,before.c_str());return path;
+        }catch(...){if(output)archive_write_free(output);setlocale(LC_CTYPE,before.c_str());throw;}
+    };
+    const std::string name="Πακέτο/Émilie/Привет/العربية/日本語/🎛.txt";
+    const auto valid=zip("unicode",{{name,"payload"},{"Πακέτο/é.txt","combining"},{"Πακέτο/link","Émilie/Привет/العربية/日本語/🎛.txt",true}});
+    const auto traversal=zip("unicode-traversal",{{"Πακέτο/../escape","refuse"}});
+    const auto link=zip("unicode-link-escape",{{"Πακέτο/link","../../escape",true}});
+    const auto duplicate=zip("unicode-duplicate",{{name,"first"},{name,"second"}});
+    const auto truncated=root/"unicode-truncated.zip";save(truncated,"PK\x03\x04");
+    const std::string before=setlocale(LC_CTYPE,nullptr);const auto threadLocale=uselocale(nullptr);
+    check(before=="C","archive regression starts in the ASCII process locale");
+    const auto unpacked=manager.unpack(valid,root/"unicode-out");
+    check(unpacked.filename()=="Πακέτο"&&fs::is_regular_file(root/"unicode-out"/name),"Unicode roots and Latin, Greek, Cyrillic, Arabic, CJK and emoji filenames extract unchanged");
+    check(fs::is_regular_file(unpacked/"é.txt"),"combining filename characters follow ZIP Unicode normalization");
+    check(fs::read_symlink(unpacked/"link")=="Émilie/Привет/العربية/日本語/🎛.txt"&&fs::is_regular_file(unpacked/"link"),"Unicode symlink targets remain inside the package");
+    check(before==setlocale(LC_CTYPE,nullptr)&&threadLocale==uselocale(nullptr),"archive extraction restores the caller locale without changing the process locale");
+    for(const auto& path:{traversal,link,duplicate,truncated}){
+        const auto destination=root/(path.stem().string()+"-out");bool refused=false;
+        try{manager.unpack(path,destination);}catch(const std::exception&){refused=true;}
+        check(refused&&!fs::exists(destination),"unsafe or damaged Unicode archives are rejected and staging removed");
+        check(before==setlocale(LC_CTYPE,nullptr)&&threadLocale==uselocale(nullptr),"archive rejection restores the caller and process locales");
+    }
+    check(!fs::exists(root/"escape"),"Unicode archives cannot escape their extraction folder");
 }
 int main() {
     char pattern[]="/tmp/manager-architecture.XXXXXX";
@@ -68,13 +112,14 @@ int main() {
         };
         save(root/"catalog.tsv","#mpc-catalog-tsv 1\n"+row("both",true,true)+row("legacy",true,false)+row("modern",false,true));
         save(root/"catalog.json",Json{{"schema",1},{"plugins",Json::array({{{"id","both"},{"author","Fixture author"},{"screenshot","https://example.invalid/screen.png"},{"versions",Json::array({{{"version","1.0.0"},{"sha256",digest},{"assets",{{"aarch64",{{"sha256",digest64}}}}}}})}}})}}.dump());
-        save(root/"bin/wget","#!/bin/sh\nset -eu\ncase \"$5\" in */catalog.tsv) cp \"$MPC_ARCHITECTURE_FIXTURE/catalog.tsv\" \"$4\" ;; */catalog.json) cp \"$MPC_ARCHITECTURE_FIXTURE/catalog.json\" \"$4\" ;; *) exit 99 ;; esac\n");
+        save(root/"bin/wget","#!/bin/sh\nset -eu\ncase \"$5\" in https://open-mpc.github.io/catalog.tsv) cp \"$MPC_ARCHITECTURE_FIXTURE/catalog.tsv\" \"$4\" ;; https://open-mpc.github.io/catalog.json) cp \"$MPC_ARCHITECTURE_FIXTURE/catalog.json\" \"$4\" ;; *) exit 99 ;; esac\n");
         chmod((root/"bin/wget").c_str(),0700);
         setenv("PATH",((root/"bin").string()+":"+savedPath).c_str(),1);setenv("MPC_ARCHITECTURE_FIXTURE",root.c_str(),1);
         const auto library=root/"synths/module.so";save(library,"temporary installed-file marker");
         save(root/"settings.xml","<PROPERTIES><VALUE name=\"pluginList-arm\"><PLUGIN name=\"Legacy\" file=\""+library.string()+"\" uid=\"Leg1\"/></VALUE><VALUE name=\"pluginList-arm-64bit\"><PLUGIN name=\"Modern\" file=\""+library.string()+"\" uid=\"Mod1\"/></VALUE></PROPERTIES>");
         for(const std::string arch:{"armv7","aarch64"}) {
             Manager manager(root/"usb",root/arch,root/"synths",root/"settings.xml",arch);
+            archiveChecks(manager,root/arch);
             manager.openCatalog();check(manager.catalog.size()==3,"catalog preserves entries across device generations");
             const auto& both=manager.catalog[0];check(both.at("sha")== (arch=="aarch64"?digest64:digest),"catalog selects the device checksum");
             check(both.at("url")==std::string("https://example.invalid/")+arch+".zip","catalog selects the device URL");

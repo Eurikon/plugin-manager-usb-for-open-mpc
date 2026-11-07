@@ -1,5 +1,18 @@
 # Changelog
 
+## 1.3.1 — 07-11-2026
+
+- Support Unicode package filenames during extraction, preserving path and checksum checks and reporting archive-reader errors accurately.
+- Show the manager identity, version and build-year copyright on the idle welcome screen instead of catalog status, and keep the installed version visible in SETUP.
+- Save thumbnails beside the active manager in a dedicated bounded folder, reuse them across openings and offline, and check ETag or Last-Modified before downloading replacements.
+- Fix startup rejection caused by Mac metadata files copied beside signed helper or runtime files, while retaining signature and payload checks.
+- Include compatible startup-loader replacements in signed updates, with approved previous-version checks, atomic publication and recovery through the existing update protocol.
+- Keep recognised Mac metadata from obstructing update cleanup or uninstall.
+- Offer the newest stable OpenMPC Plugin Manager VST release directly from GitHub, independently of catalog publication delays, with architecture, checksum, package and installed-version checks.
+- Use the upstream manager's current display name while preserving its release and installation identifiers.
+- Use the Open MPC organisation's current catalog and repository addresses.
+- Keep firmware extraction compatible with the documented Python 3.10 minimum.
+
 ## 1.3.0 — 29-10-2026
 
 - Add publisher-authorized complete manager and helper updates, with staged activation, startup confirmation and a retained working version for recovery.

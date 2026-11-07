@@ -16,4 +16,7 @@ nlohmann::json runIncomingWorker(const IncomingWorker& worker,const std::filesys
                                 const nlohmann::json& task,const UpdateProgress& progress={},
                                 std::chrono::milliseconds timeout=std::chrono::minutes(3));
 int serveUpdateWorker(const UpdateHandler& handler);
+void runRecoveryWorker(const NativeImageSpec& worker,const std::filesystem::path& scratch,
+                       const std::filesystem::path& capsule,
+                       std::chrono::seconds timeout=std::chrono::seconds(175));
 }

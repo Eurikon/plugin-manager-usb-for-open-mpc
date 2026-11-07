@@ -3,6 +3,7 @@
 #include "migration_package.hpp"
 #include "session_handoff.hpp"
 #include "runtime_handoff.hpp"
+#include "helper_controller_update.hpp"
 #include "crypto.hpp"
 #include "checksum.hpp"
 #include "platform.hpp"
@@ -75,16 +76,19 @@ Json handleRuntimeTask(const Json& task,const std::string& publisher,const Updat
         const fs::path rollbackBase=rollback.at("session").get<std::string>();const auto& rollbackImage=rollback.at("worker");const NativeImageSpec rollbackWorker{rollbackImage.at("path").get<std::string>(),rollbackImage.at("sha256").get<std::string>(),rollbackImage.at("architecture").get<std::string>()};need(rollback.at("generation")==selected.generation.id&&rollback.at("source_identity")==identity&&rollbackWorker.executable.parent_path()==rollbackBase&&rollbackWorker.architecture==architecture,"Recovery worker returned another runtime identity");validateNativeImage(rollbackWorker);
         MigrationSelection result;fs::path prepared;bool queued=false;
         try{
+            stopped();stageControllerUpdate(bundle,helper,rollbackBase,publisher);
             stopped();result=activateMigration(source,helper,identity,architecture,publisher,plan.runtime,plan.helper,progress,{},selected.generation.id);
             const auto next=current.choose(false,identity);need(next.generation.id==result.runtime,"Updated manager selection changed before handover staging");prepared=prepareRuntimeSession(next,source,helper,publisher,progress,snapshot,RuntimeStart::StageOnly);
-            stopped();const auto capsule=session.publish(prepared,helper,result.runtime,rollbackBase,rollbackWorker,result.helper,result.previousHelper);queued=true;
+            stopped();applyControllerUpdate(rollbackBase);const auto capsule=session.publish(prepared,helper,result.runtime,rollbackBase,rollbackWorker,result.helper,result.previousHelper);queued=true;
             return {{"generation",result.runtime},{"helper_generation",result.helper},{"version",version},{"handoff",capsule.string()},{"handoff_queued",true}};
         }catch(...){
             if(!queued){
+                std::string controllerFailure;try{rollbackControllerUpdate(rollbackBase);}catch(const std::exception& error){controllerFailure=error.what();}
                 auto trust=[&](const std::string& kind){return [publisher,kind](const auto& id,const auto&,const auto& proof){verifyAuthorization(publisher,kind,id,proof);};};
                 if(!result.runtime.empty())try{VersionStore store(source/"autorun/runtime/.pmu-versions",geteuid(),[](const auto& file){return fileSha256(file);},{},false,trust("runtime"),architecture);store.restore(result.previousRuntime,result.runtime);}catch(...){}
                 if(!result.helper.empty())try{VersionStore store(helper/".pmu-versions",geteuid(),[](const auto& file){return fileSha256(file);},{},false,trust("helper"));store.restore(result.previousHelper,result.helper);}catch(...){}
-                std::error_code ignored;if(!prepared.empty())fs::remove_all(prepared,ignored);fs::remove_all(rollbackBase,ignored);
+                std::error_code ignored;if(!prepared.empty())fs::remove_all(prepared,ignored);if(controllerFailure.empty())fs::remove_all(rollbackBase,ignored);
+                else throw std::runtime_error("Controller recovery could not be verified; recovery files retained at "+rollbackBase.string()+": "+controllerFailure);
             }
             throw;
         }

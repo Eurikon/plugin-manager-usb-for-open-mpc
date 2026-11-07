@@ -15,7 +15,7 @@ if command -v git >/dev/null 2>&1 &&
 fi
 manager_version_flag="-DMPC_MANAGER_DEVELOPMENT=$manager_development"
 update_objects=''
-for unit in checksum crypto native_image version_store source_runtime update_worker update_bundle update_migration runtime_session migration_package session_handoff runtime_handoff runtime_worker; do
+for unit in checksum crypto native_image version_store source_runtime update_worker update_bundle update_migration runtime_session migration_package session_handoff helper_controller_update runtime_handoff runtime_worker; do
     c++ -std=c++17 -O2 -Wall -Wextra -Werror -Isrc -c "src/$unit.cpp" -o "$output/$unit.o"
     update_objects="$update_objects $output/$unit.o"
 done
@@ -34,8 +34,8 @@ c++ -std=c++17 -O2 -Wall -Wextra -Werror -Isrc tests/architecture_test.cpp "$out
 c++ -std=c++17 -O2 -Wall -Wextra -Werror -Isrc -Itests tests/sd_install_test.cpp "$output"/backend.o "$output"/plugin_storage.o "$output"/sd_install.o $update_objects -ldl -larchive -lcrypto -pthread -o "$output"/sd-install-test
 c++ -std=c++17 -O2 -Wall -Wextra -Werror -Isrc -Itests tests/manager_update_test.cpp "$output"/backend.o "$output"/plugin_storage.o "$output"/manager_update.o $update_objects -ldl -larchive -pthread -o "$output"/manager-update-test
 c++ -std=c++17 -O2 -Wall -Wextra -Werror -Isrc tests/plugin_storage_test.cpp "$output"/backend.o "$output"/plugin_storage.o $update_objects -ldl -larchive -pthread -o "$output"/plugin-storage-test
-c++ -std=c++17 -O2 -Wall -Wextra -Werror -Isrc $(pkg-config --cflags libpng) tests/thumbnail_test.cpp "$output"/thumbnail.o -Wl,-Bstatic -lpng -ljpeg -lz -Wl,-Bdynamic -ldl -pthread -o "$output"/thumbnail-test
-c++ -std=c++17 -O2 -Wall -Wextra -Werror -Isrc $(pkg-config --cflags libpng) tests/thumbnail_network_test.cpp "$output"/thumbnail.o -Wl,-Bstatic -lpng -ljpeg -lz -Wl,-Bdynamic -ldl -pthread -o "$output"/thumbnail-network-test
+c++ -std=c++17 -O2 -Wall -Wextra -Werror -Isrc $(pkg-config --cflags libpng) tests/thumbnail_test.cpp "$output"/thumbnail.o "$output"/crypto.o -Wl,-Bstatic -lpng -ljpeg -lz -Wl,-Bdynamic -ldl -pthread -o "$output"/thumbnail-test
+c++ -std=c++17 -O2 -Wall -Wextra -Werror -Isrc $(pkg-config --cflags libpng) tests/thumbnail_network_test.cpp "$output"/thumbnail.o "$output"/crypto.o -Wl,-Bstatic -lpng -ljpeg -lz -Wl,-Bdynamic -ldl -pthread -o "$output"/thumbnail-network-test
 cp assets/font.ttf "$output"/font.ttf
 cp licenses/TitilliumWeb.txt "$output"/font-license.txt
 cp /usr/share/doc/nlohmann-json3-dev/copyright "$output"/json-license.txt

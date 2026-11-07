@@ -75,7 +75,9 @@ class StartupPackageTests(unittest.TestCase):
     def archive(self):
         return HELPER.build_archive(self.root / "external-MPC", self.project)
 
-    def signed_inputs(self):
+    def signed_inputs(self, record=True):
+        (self.root / "tools").mkdir(exist_ok=True)
+        shutil.copyfile(ROOT / "tools/helper_loader_compatibility.json", self.root / "tools/helper_loader_compatibility.json")
         private = self.root / "signing/release.pem"
         public = self.root / "src/publisher_key.hpp"
         initialize(private, public)
@@ -93,7 +95,22 @@ class StartupPackageTests(unittest.TestCase):
             for name in ("manager", "shortcut", "shortcut-hook.so", "source-dispatcher",
                          "startup/manager-entry.so", "startup/manager-loader.so", "startup/bootstrap-note"):
                 (build / name).write_bytes(binary)
+        if record:
+            HELPER.record_controller_loaders()
         return private, Signer(private, public)
+
+    def test_controller_policy_records_both_architectures_without_duplicates(self):
+        self.signed_inputs(record=False)
+        self.assertEqual(HELPER.record_controller_loaders(), 2)
+        self.assertEqual(HELPER.record_controller_loaders(), 0)
+        for arch, relative in (("armv7", "build"), ("aarch64", "build/aarch64")):
+            data = (self.root / relative / "startup/manager-loader.so").read_bytes()
+            self.assertIn(hashlib.sha256(data).hexdigest(), HELPER.controller_policy({arch: data})["previous"][arch])
+
+    def test_unrecorded_controller_blocks_packaging(self):
+        self.signed_inputs(record=False)
+        with self.assertRaisesRegex(ValueError, "Record the built startup loaders"):
+            HELPER.controller_policy({"armv7": (self.root / "build/startup/manager-loader.so").read_bytes()})
 
     def test_versioned_helper_contains_stable_loaders_and_signed_payload(self):
         _, signer = self.signed_inputs()
@@ -121,6 +138,10 @@ class StartupPackageTests(unittest.TestCase):
                                          firmware_310_arm64=self.root / "external-MPC64")
         envelope = json.loads((destination / "PMU-UPDATE.json").read_bytes())
         inventory = envelope["generation"]["files"]
+        roles = envelope["generation"]["entrypoints"]
+        self.assertIn("controller_policy", roles)
+        self.assertIn("controller_v1_armv7", roles)
+        self.assertIn("controller_v1_aarch64", roles)
         self.assertEqual(set(inventory), {path.relative_to(destination).as_posix() for path in destination.rglob("*")
                                           if path.is_file()} - {"PMU-UPDATE.json"})
         for name, checksum in inventory.items():

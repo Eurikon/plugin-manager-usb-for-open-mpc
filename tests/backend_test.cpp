@@ -125,36 +125,41 @@ static void managerStageChecks(Manager& manager) {
     }catch(...){save(wget,originalWget);throw;}
     save(wget,originalWget);for(const auto& file:{source,response,status,calls,hashInput})fs::remove(file);
 }
-// A repository that publishes other things too (so "latest" is the wrong release): the release is found by tag prefix
-// plus the catalog version, and the package by its exact name.
 static void taggedReleaseChecks(Manager& manager) {
-    const auto catalog=manager.catalog;auto item=catalog.at(0);
-    const std::string repo="test-owner/mixed-releases",tagPrefix="plugin-g2-v",assetPrefix="Plugin-G2-";
-    const auto version=item.at("version").get<std::string>();const auto tag=tagPrefix+version;const auto name=assetPrefix+version+"-mpc-"+manager.arch+".zip";const std::string otherArch=manager.arch=="aarch64"?"armv7":"aarch64";
-    const auto endpoint="https://api.github.com/repos/"+repo+"/releases/tags/"+tag;
-    auto urlFor=[&](const std::string& releaseTag,const std::string& file){return "https://github.com/"+repo+"/releases/download/"+releaseTag+"/"+file;};
-    auto packageUrl=[&](const std::string& file){return urlFor(tag,file);};
-    item["url"]=packageUrl(name);manager.catalog={item};
-    const auto response=manager.session/"tagged-response.json",calls=manager.session/"tagged-requests";
-    const auto wget=fs::path("/tmp/manager-test-bin/wget");const auto originalWget=text(wget);
-    save(wget,"#!/bin/sh\nset -eu\nprintf '%s\\n' \"$8\" >>/tmp/manager-session/tagged-requests\n[ \"$#\" -eq 8 ] && [ \"$1\" = -T ] && [ \"$2\" = 15 ] && [ \"$3\" = -t ] && [ \"$4\" = 1 ] && [ \"$5\" = '--header=Accept: application/vnd.github+json' ] && [ \"$6\" = -O ] && [ \"$8\" = '"+endpoint+"' ] || exit 9\ncp /tmp/manager-session/tagged-response.json \"$7\"\n");
-    auto releaseFor=[&](const std::string& releaseTag,const std::string& file){return Json{{"draft",false},{"prerelease",false},{"tag_name",releaseTag},{"assets",Json::array({{{"name",file},{"state","uploaded"},{"size",std::stoull(item.at("size").get<std::string>())},{"browser_download_url",urlFor(releaseTag,file)},{"digest","sha256:"+item.at("sha").get<std::string>()}}})}};};
-    auto verify=[&](const Json& metadata,bool accepted,const char* label){save(response,metadata.dump());bool passed=true;try{manager.verifyLatestPlugin(item.at("id").get<std::string>(),ReleaseSource(repo,tagPrefix,assetPrefix));}catch(const std::exception&){passed=false;}check(passed==accepted&&!fs::exists(manager.session/"latest-release.json"),label);};
+    const auto catalog=manager.catalog;const auto item=catalog.at(0);const auto id=item.at("id").get<std::string>();
+    const ReleaseSource source("test-owner/mixed-releases","plugin-g2-v","Plugin-G2-");
+    const auto response=manager.session/"tagged-response.json",second=manager.session/"tagged-second.json",calls=manager.session/"tagged-requests";
+    const auto wget=fs::path("/tmp/manager-test-bin/wget");const auto originalWget=text(wget),settings=text(manager.settings);
+    save(wget,"#!/bin/sh\nset -eu\nprintf '%s\\n' \"$8\" >>/tmp/manager-session/tagged-requests\n[ \"$#\" -eq 8 ] && [ \"$2\" = 10 ] && [ \"$5\" = '--header=Accept: application/vnd.github+json' ] || exit 9\ncase \"$8\" in 'https://api.github.com/repos/test-owner/mixed-releases/releases?per_page=100&page=1') cp /tmp/manager-session/tagged-response.json \"$7\";; 'https://api.github.com/repos/test-owner/mixed-releases/releases?per_page=100&page=2') cp /tmp/manager-session/tagged-second.json \"$7\";; *) exit 9;; esac\n");
+    auto releaseFor=[&](const std::string& version){const auto tag=source.tagPrefix+version,name=source.assetPrefix+version+"-mpc-"+manager.arch+".zip";return Json{{"draft",false},{"prerelease",false},{"tag_name",tag},{"published_at","2026-11-04T11:58:58Z"},{"html_url","https://github.com/"+source.repo+"/releases/tag/"+tag},{"assets",Json::array({{{"name",name},{"state","uploaded"},{"size",std::stoull(item.at("size").get<std::string>())},{"browser_download_url","https://github.com/"+source.repo+"/releases/download/"+tag+"/"+name},{"digest","sha256:"+item.at("sha").get<std::string>()}}})}};};
+    auto verify=[&](const Json& metadata,bool accepted,const char* label){save(response,metadata.dump());bool passed=true;try{manager.latestPluginRelease(id,source,true);}catch(const std::exception&){passed=false;}check(passed==accepted&&!fs::exists(manager.session/"plugin-releases.json"),label);};
     try {
-        verify(releaseFor(tag,name),true,"tagged release and exact package name match the catalog (the tag endpoint is the only request the fake wget allows)");
-        check(text(calls).find("/releases/latest")==std::string::npos&&text(calls).find("/releases/tags/"+tag)!=std::string::npos,"a prefixed release is never looked up through releases/latest");
-        const auto bogusTag=tagPrefix+"999.0.0";manager.catalog[0]["url"]=urlFor(bogusTag,name); // every other field consistent with the bogus tag, so only the tag check can reject
-        verify(releaseFor(bogusTag,name),false,"a release whose tag is not prefix plus the catalog version is rejected even when its package URL matches the catalog");
-        manager.catalog[0]["url"]=packageUrl(name);
-        const auto other="Other-"+version+"-mpc-"+manager.arch+".zip";manager.catalog[0]["url"]=packageUrl(other);
-        verify(releaseFor(tag,other),false,"a package that is not named prefix plus version plus -mpc-<arch>.zip is rejected even when everything else matches");
-        manager.catalog[0]["url"]=packageUrl(name);
-        const auto wrongArch=assetPrefix+version+"-mpc-"+otherArch+".zip";manager.catalog[0]["url"]=packageUrl(wrongArch);
-        verify(releaseFor(tag,wrongArch),false,"the other generation's package is not accepted on this one");
-        manager.catalog[0]["url"]=packageUrl(name);
-        auto draft=releaseFor(tag,name);draft["prerelease"]=true;verify(draft,false,"a pre-release is not offered");
-    } catch(...) {manager.catalog=catalog;save(wget,originalWget);throw;}
-    manager.catalog=catalog;save(wget,originalWget);for(const auto& file:{response,calls})fs::remove(file);
+        const auto release=releaseFor("0.9.0");verify(Json::array({release}),true,"direct manager release selection is independent of the older catalog version");
+        check(manager.latestPluginRelease(id,source).at("version")=="0.9.0","cached release preserves its own version");
+        const auto before=checksumCalls(calls);save(response,"{broken");check(manager.latestPluginRelease(id,source).at("version")=="0.9.0"&&checksumCalls(calls)==before,"ordinary screen changes reuse the session release lookup");
+        manager.catalog.clear();verify(Json::array({release}),true,"upstream manager remains available without a catalog");manager.catalog=catalog;
+        auto other=releaseFor("99.0.0");other["tag_name"]="g2-stick-v99.0.0";auto beta=releaseFor("99.0.0");beta["prerelease"]=true;auto draft=releaseFor("99.0.0");draft["draft"]=true;
+        verify(Json::array({other,beta,draft,release}),true,"stick releases, prereleases and drafts cannot replace the manager offer");
+        check(manager.latestPluginRelease(id,source).at("version")=="0.9.0","mixed repository selects only a stable manager release");
+        auto newer=releaseFor("0.10.0");newer["published_at"]="2026-11-05T11:58:58Z";verify(Json::array({newer,release}),true,"newer stable manager release is selected");check(manager.latestPluginRelease(id,source).at("version")=="0.10.0","selection does not follow lexical version ordering or catalog ordering");
+        Json page=Json::array();for(int i=0;i<100;++i)page.push_back(other);save(second,Json::array({release}).dump());const auto pages=checksumCalls(calls);verify(page,true,"manager release can be found beyond the first API page");check(checksumCalls(calls)==pages+2,"release pagination follows the exact repository");
+        for(const std::string defect:{"digest","url","size","duplicate","missing","unfinished","release-url"}){
+            auto bad=release;
+            if(defect=="digest")bad["assets"][0]["digest"]="";
+            if(defect=="url")bad["assets"][0]["browser_download_url"]="https://untrusted.invalid/package.zip";
+            if(defect=="size")bad["assets"][0]["size"]=0;
+            if(defect=="duplicate")bad["assets"].push_back(bad["assets"][0]);
+            if(defect=="missing")bad["assets"]=Json::array();
+            if(defect=="unfinished")bad["assets"][0]["state"]="new";
+            if(defect=="release-url")bad["html_url"]="https://untrusted.invalid/release";
+            verify(Json::array({bad}),false,"direct release requires exact asset identity, size, checksum and ready state");
+        }
+        verify(Json{{"message","API rate limit exceeded"}},false,"API errors do not become plugin offers");
+        verify(Json::array({draft,beta,other}),false,"no stable matching release is unavailable");
+        save(response,"{broken");bool rejected=false;try{manager.latestPluginRelease(id,source,true);}catch(const std::exception&){rejected=true;}check(rejected&&!fs::exists(manager.session/"plugin-releases.json"),"malformed direct release response is removed");
+        check(text(manager.settings)==settings&&manager.catalog==catalog&&!fs::exists(manager.session/"download.zip"),"release lookup does not install, download packages or alter catalog state");
+    }catch(...){manager.catalog=catalog;save(wget,originalWget);throw;}
+    manager.catalog=catalog;save(wget,originalWget);for(const auto& file:{response,second,calls})fs::remove(file);
 }
 // A Gen 2 manager that has no plugin location yet (MPC has no content drive set, so automatic selection fails): the
 // welcome-screen option must be disabled with the reason, not enabled and then fail when tapped.
@@ -166,53 +171,32 @@ static void noLocationOfferChecks(Manager& manager) {
     gen2.catalog={item};
     const auto offer=gen2.installationOffer(item);
     check(!offer.at("allowed").get<bool>()&&offer.at("label")=="Unavailable"&&offer.at("reason").get<std::string>().find("SETUP")!=std::string::npos,"a Gen 2 manager with no plugin location disables the offer and says to choose one in SETUP");
-    bool refused=false;try{gen2.installLatestPlugin(item.at("id").get<std::string>(),ReleaseSource("test-owner/mixed-releases","plugin-g2-v","Plugin-G2-"));}catch(const std::exception& error){refused=std::string(error.what()).find("SETUP")!=std::string::npos;}
+    bool refused=false;try{gen2.installReleasePlugin(item.at("id").get<std::string>(),ReleaseSource("test-owner/mixed-releases","plugin-g2-v","Plugin-G2-"));}catch(const std::exception& error){refused=std::string(error.what()).find("SETUP")!=std::string::npos;}
     check(refused,"installing without a plugin location is refused before any request, naming SETUP");
     fs::remove(emptySettings);
 }
 static void latestReleaseChecks(Manager& manager,const Json& primary,const Json& olderVersion,const fs::path& library) {
     const auto catalog=manager.catalog;auto item=catalog.at(0);
     auto repo=primary.value("source_repo","");if(!std::regex_match(repo,std::regex("[A-Za-z0-9][A-Za-z0-9-]*/[A-Za-z0-9][A-Za-z0-9_.-]*")))repo="test-owner/test-repository";
-    const auto endpoint="https://api.github.com/repos/"+repo+"/releases/latest";
+    const ReleaseSource source(repo,"v",item.at("id").get<std::string>()+"-");
+    const auto endpoint="https://api.github.com/repos/"+repo+"/releases?per_page=100&page=1";
     const auto tag="v"+item.at("version").get<std::string>();const auto name=item.at("id").get<std::string>()+"-"+item.at("version").get<std::string>()+"-mpc-armv7.zip";
     item["url"]="https://github.com/"+repo+"/releases/download/"+tag+"/"+name;manager.catalog={item};
     const auto response=manager.session/"latest-response.json",status=manager.session/"latest-status",calls=manager.session/"latest-requests";
     const auto wget=fs::path("/tmp/manager-test-bin/wget");const auto originalWget=text(wget),settings=text(manager.settings);
-    const Json release={{"draft",false},{"prerelease",false},{"tag_name",tag},{"assets",Json::array({{{"name",name},{"state","uploaded"},{"size",std::stoull(item.at("size").get<std::string>())},{"browser_download_url",item.at("url")},{"digest","sha256:"+item.at("sha").get<std::string>()}}})}};
-    save(status,"0");save(wget,"#!/bin/sh\nset -eu\nprintf '%s\\n' request >>/tmp/manager-session/latest-requests\nif [ \"$#\" -eq 5 ] && [ \"$5\" = '"+item.at("url").get<std::string>()+"' ]; then cp /tmp/manager-fixtures/package.zip \"$4\"; exit; fi\n[ \"$#\" -eq 8 ] && [ \"$1\" = -T ] && [ \"$2\" = 15 ] && [ \"$3\" = -t ] && [ \"$4\" = 1 ] && [ \"$5\" = '--header=Accept: application/vnd.github+json' ] && [ \"$6\" = -O ] && [ \"$8\" = '"+endpoint+"' ] || exit 9\n[ \"$(cat /tmp/manager-session/latest-status)\" = 0 ] || exit 8\ncp /tmp/manager-session/latest-response.json \"$7\"\nif [ -f /tmp/manager-session/latest-guard-copy ]; then while IFS= read -r source && IFS= read -r target; do mkdir -p \"$(dirname \"$target\")\"; cp \"$source\" \"$target\"; done </tmp/manager-session/latest-guard-copy; fi\n");
-    auto verify=[&](const Json& metadata,bool accepted,const char* label){save(response,metadata.dump());bool passed=true;try{manager.verifyLatestPlugin(item.at("id").get<std::string>(),repo);}catch(const std::exception&){passed=false;}check(passed==accepted&&!fs::exists(manager.session/"latest-release.json"),label);};
+    const Json release={{"draft",false},{"prerelease",false},{"tag_name",tag},{"published_at","2026-11-04T11:58:58Z"},{"html_url","https://github.com/"+repo+"/releases/tag/"+tag},{"assets",Json::array({{{"name",name},{"state","uploaded"},{"size",std::stoull(item.at("size").get<std::string>())},{"browser_download_url",item.at("url")},{"digest","sha256:"+item.at("sha").get<std::string>()}}})}};
+    save(status,"0");save(wget,"#!/bin/sh\nset -eu\nprintf '%s\\n' request >>/tmp/manager-session/latest-requests\nif [ \"$#\" -eq 5 ] && [ \"$5\" = '"+item.at("url").get<std::string>()+"' ]; then cp /tmp/manager-fixtures/package.zip \"$4\"; exit; fi\n[ \"$#\" -eq 8 ] && [ \"$1\" = -T ] && [ \"$2\" = 10 ] && [ \"$3\" = -t ] && [ \"$4\" = 1 ] && [ \"$5\" = '--header=Accept: application/vnd.github+json' ] && [ \"$6\" = -O ] && [ \"$8\" = '"+endpoint+"' ] || exit 9\n[ \"$(cat /tmp/manager-session/latest-status)\" = 0 ] || exit 8\ncp /tmp/manager-session/latest-response.json \"$7\"\nif [ -f /tmp/manager-session/latest-guard-copy ]; then while IFS= read -r source && IFS= read -r target; do mkdir -p \"$(dirname \"$target\")\"; cp \"$source\" \"$target\"; done </tmp/manager-session/latest-guard-copy; fi\n");
     try {
-        verify(release,true,"latest stable package matches supplied catalog metadata without downloading it");
-        const auto before=checksumCalls(calls);verify(release,true,"latest release is rechecked on every explicit selection");check(checksumCalls(calls)==before+1,"latest selection makes one bounded metadata request");
-        auto changed=release;changed["tag_name"]=item.at("version");changed["assets"][0]["browser_download_url"]="https://github.com/"+repo+"/releases/download/"+item.at("version").get<std::string>()+"/"+name;manager.catalog[0]["url"]=changed["assets"][0]["browser_download_url"];verify(changed,true,"release tags accept versions with or without v prefix");manager.catalog={item};
-        changed=release;changed["tag_name"]="v999999.0.0";verify(changed,false,"newer upstream release blocks stale catalog offer");
-        changed=release;changed["assets"][0]["digest"]="sha256:"+std::string(64,'0');verify(changed,false,"latest digest mismatch blocks offer");
-        changed=release;changed["assets"][0].erase("digest");verify(changed,false,"latest release without checksum evidence is rejected");
-        changed=release;changed["assets"][0]["size"]=1;verify(changed,false,"latest package size mismatch is rejected");
-        changed=release;changed["assets"][0]["browser_download_url"]="https://untrusted.invalid/package.zip";verify(changed,false,"latest package download remains pinned to repository release");
-        changed=release;changed["assets"].push_back(changed["assets"][0]);verify(changed,false,"ambiguous latest ARMv7 assets are rejected");
-        changed=release;changed["assets"]=Json::array();verify(changed,false,"latest release without ARMv7 package is rejected");
-        changed=release;changed["assets"][0]["state"]="new";verify(changed,false,"unfinished release upload is rejected");
-        changed=release;changed["draft"]=true;verify(changed,false,"draft release is rejected");
-        changed=release;changed["prerelease"]=true;verify(changed,false,"prerelease is rejected");
-        verify(Json{{"message","API rate limit exceeded"}},false,"GitHub API error is rejected");
-        save(response,"{broken");bool rejected=false;try{manager.verifyLatestPlugin(item.at("id").get<std::string>(),repo);}catch(const std::exception&){rejected=true;}check(rejected&&!fs::exists(manager.session/"latest-release.json"),"malformed latest response is rejected and removed");
-        save(status,"8");verify(release,false,"failed metadata request is rejected");save(status,"0");
-        const auto requests=checksumCalls(calls);
-        auto rejectBeforeRequest=[&](const char* id,const std::string& repository,const char* label){bool invalid=false;try{manager.verifyLatestPlugin(id,repository);}catch(const std::exception&){invalid=true;}check(invalid&&checksumCalls(calls)==requests,label);};
-        rejectBeforeRequest(item.at("id").get_ref<const std::string&>().c_str(),"../repository","invalid repository rejected before request");
-        rejectBeforeRequest("",repo,"missing catalog entry rejected before request");
-        manager.catalog.push_back(item);rejectBeforeRequest(item.at("id").get_ref<const std::string&>().c_str(),repo,"duplicate catalog entry rejected before request");manager.catalog={item};
-        manager.catalog[0]["os_compat"]=Json::array({"2.x"});rejectBeforeRequest(item.at("id").get_ref<const std::string&>().c_str(),repo,"incompatible catalog offer rejected before request");manager.catalog={item};
-        manager.catalog[0]["url"]="https://untrusted.invalid/package.zip";rejectBeforeRequest(item.at("id").get_ref<const std::string&>().c_str(),repo,"untrusted catalog repository rejected before request");manager.catalog={item};
-        check(text(manager.settings)==settings&&!fs::exists(manager.session/"download.zip")&&!fs::exists(manager.usb/"plugin-history.json")&&fs::is_empty(manager.synths),"latest lookup never downloads package or changes plugin installation");
+        save(response,Json::array({release}).dump());const auto direct=manager.latestPluginRelease(item.at("id").get<std::string>(),source,true);
+        check(direct.at("sha")==item.at("sha")&&direct.at("url")==item.at("url"),"direct installation retains the verified release asset");
+        check(text(manager.settings)==settings&&!fs::exists(manager.session/"download.zip")&&!fs::exists(manager.usb/"plugin-history.json")&&fs::is_empty(manager.synths),"direct lookup performs no installation writes");
         const auto folder=manager.synths/primary.at("skin").get<std::string>();
         const auto secondary=manager.synths/(primary.at("skin").get<std::string>()+" secondary");
         auto installed=[&](Json metadata,const fs::path& destination){fs::create_directories(destination);metadata["skin"]=destination.filename().string();fs::copy_file(library,destination/metadata.at("so").get<std::string>(),fs::copy_options::overwrite_existing);save(destination/"mpc-plugin.json",metadata.dump());};
         auto checkOffer=[&](const std::string& label,bool allowed,const char* message){const auto offer=manager.installationOffer(item);check(offer.at("label")==label&&offer.at("allowed")==allowed,message);};
         checkOffer("Install",true,"absent plugin offers installation");
         installed(primary,folder);checkOffer("Installed",false,"equal installed release disables welcome installation");
-        const auto guardedRequests=checksumCalls(calls);bool blocked=false;try{manager.installLatestPlugin(item.at("id").get<std::string>(),repo);}catch(const std::exception&){blocked=true;}check(blocked&&checksumCalls(calls)==guardedRequests,"installed guard rejects before any remote request");
+        const auto guardedRequests=checksumCalls(calls);bool blocked=false;try{manager.installReleasePlugin(item.at("id").get<std::string>(),source);}catch(const std::exception&){blocked=true;}check(blocked&&checksumCalls(calls)==guardedRequests+1&&!fs::exists(manager.session/"download.zip"),"installed guard rechecks the latest release but rejects before package download");
         auto metadata=primary;metadata["version"]="v"+primary.at("version").get<std::string>();installed(metadata,folder);checkOffer("Installed",false,"installed versions normalize v prefix");
         metadata["version"]="999999.0.0";installed(metadata,folder);checkOffer("Installed",false,"newer installed release prevents downgrade");
         metadata["version"]="unknown";installed(metadata,folder);checkOffer("Installed",false,"unparseable installed release is not reinstalled");
@@ -229,18 +213,28 @@ static void latestReleaseChecks(Manager& manager,const Json& primary,const Json&
             installed(primary,secondary);checkOffer("Installed",false,"any equal duplicate blocks update even when first match is older");
             installed(metadata,secondary);checkOffer("Update",true,"all matching managed releases must be older to allow update");fs::remove_all(secondary);fs::remove_all(folder);
         }else std::cout<<"SKIP: older installed release checks require a supplied version with a numeric predecessor\n";
-        save(response,release.dump());const auto snapshot=manager.session/"guard-manifest.json";save(snapshot,primary.dump());
+        save(response,Json::array({release}).dump());const auto snapshot=manager.session/"guard-manifest.json";save(snapshot,primary.dump());
         const auto inject=manager.session/"latest-guard-copy";save(inject,library.string()+"\n"+(folder/primary.at("so").get<std::string>()).string()+"\n"+snapshot.string()+"\n"+(folder/"mpc-plugin.json").string()+"\n");
-        const auto beforeGuard=checksumCalls(calls);blocked=false;try{manager.installLatestPlugin(item.at("id").get<std::string>(),repo);}catch(const std::exception&){blocked=true;}fs::remove(inject);
+        const auto beforeGuard=checksumCalls(calls);blocked=false;try{manager.installReleasePlugin(item.at("id").get<std::string>(),source);}catch(const std::exception&){blocked=true;}fs::remove(inject);
         check(blocked&&checksumCalls(calls)==beforeGuard+1&&!fs::exists(manager.session/"download.zip"),"installation arriving during latest check blocks package download");fs::remove_all(folder);
         bool installationReported=false;blocked=false;
-        try{manager.installLatestPlugin(item.at("id").get<std::string>(),repo,[&](const std::string& stage){if(stage.find("Checking OS 3 compatibility")==0)installed(primary,folder);if(stage.find("Installing plugin")==0)installationReported=true;});}catch(const std::exception&){blocked=true;}
+        try{manager.installReleasePlugin(item.at("id").get<std::string>(),source,[&](const std::string& stage){if(stage.find("Checking OS 3 compatibility")==0)installed(primary,folder);if(stage.find("Installing plugin")==0)installationReported=true;});}catch(const std::exception&){blocked=true;}
         check(blocked&&!installationReported&&sha256(folder/primary.at("so").get<std::string>())==sha256(library)&&!fs::exists(manager.synths/".mpc-usb-manager")&&!fs::exists(manager.usb/"plugin-history.json"),"fresh installed guard blocks installer execution after package validation");
         fs::remove_all(folder);fs::remove(snapshot);fs::remove(manager.session/"download.zip");fs::remove_all(manager.session/"install");
     } catch(...) {save(wget,originalWget);manager.catalog=catalog;throw;}
     save(wget,originalWget);manager.catalog=catalog;for(const auto& file:{response,status,calls})fs::remove(file);
 }
-int main(){try{
+int main(int argc,char** argv){try{
+    if(argc==2&&std::string(argv[1])=="--release-lookup-only"){
+        const fs::path bin="/tmp/manager-test-bin",session="/tmp/manager-session",root="/tmp/manager-release-only";
+        for(const auto& path:{bin,session,root})check(!fs::exists(path),"release-only fixture needs clean temporary paths");
+        fs::create_directories(bin);fs::create_directories(session);fs::create_directories(root/"synths");fs::create_directories(root/"usb");
+        save(bin/"wget","#!/bin/sh\nexit 99\n");check(chmod((bin/"wget").c_str(),0700)==0,"release-only download fixture is executable");
+        save(root/"settings","<PROPERTIES/>");const char* previous=getenv("PATH");const std::string saved=previous?previous:"";setenv("PATH",(bin.string()+":"+saved).c_str(),1);
+        for(const std::string arch:{"armv7","aarch64"}){Manager manager(root/"usb",session,root/"synths",root/"settings",arch);manager.catalog={{{"id","test-manager"},{"version","0.2.5"},{"size","42"},{"sha",std::string(64,'a')}}};taggedReleaseChecks(manager);}
+        setenv("PATH",saved.c_str(),1);for(const auto& path:{bin,session,root})fs::remove_all(path);
+        return 0;
+    }
     const auto fixture=Json::parse(std::ifstream("/tmp/manager-fixtures/fixture.json"));
     const auto primary=fixture.at("primary");const auto id=primary.at("id").get<std::string>();
     Manager manager("/tmp/manager-usb","/tmp/manager-session","/sdcard/Expansions","/tmp/manager-settings.xml","armv7");

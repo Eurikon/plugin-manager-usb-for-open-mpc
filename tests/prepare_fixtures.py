@@ -240,8 +240,8 @@ def _prepare(root: Path, package: Path, legacy_package: Path | None, primary: di
 set -eu
 printf 'request\\n' >> /tmp/manager-fixtures/requests
 case "$5" in
-  https://sd88me.github.io/mpc-vst-plugins/catalog.tsv) cp /tmp/manager-fixtures/catalog.tsv "$4" ;;
-  https://sd88me.github.io/mpc-vst-plugins/catalog.json) cp /tmp/manager-fixtures/catalog.json "$4" ;;
+  https://open-mpc.github.io/catalog.tsv) cp /tmp/manager-fixtures/catalog.tsv "$4" ;;
+  https://open-mpc.github.io/catalog.json) cp /tmp/manager-fixtures/catalog.json "$4" ;;
   https://fixture/legacy.zip) cp /tmp/manager-fixtures/legacy.zip "$4" ;;
   https://fixture/package.zip) cp /tmp/manager-fixtures/partial.zip "$4"; sleep 0.1; cp /tmp/manager-fixtures/package.zip "$4"; sleep 0.1 ;;
   *) exit 1 ;;

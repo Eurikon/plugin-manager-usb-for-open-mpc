@@ -18,6 +18,7 @@ SOURCES = ("src/checksum.hpp", "src/checksum.cpp", "src/native_image.hpp", "src/
            "src/source_dispatcher.cpp", "src/publisher_key.hpp", "tests/runtime_worker_test.cpp",
            "src/session_handoff.hpp", "src/session_handoff.cpp", "tests/session_handoff_test.cpp",
            "src/runtime_handoff.hpp", "src/runtime_handoff.cpp", "tests/runtime_handoff_test.cpp",
+           "src/helper_controller_update.hpp", "src/helper_controller_update.cpp", "tests/helper_controller_update_test.cpp",
            "src/version_store.cpp", "src/update_worker.hpp", "src/update_worker.cpp",
            "src/update_bundle.hpp", "src/update_bundle.cpp", "tests/update_bundle_test.cpp",
            "src/helper_payload.h", "src/helper_loader.hpp", "src/helper_loader.cpp",
@@ -46,7 +47,7 @@ def main():
     flags = ["-O0", "-g", "-fsanitize=address,undefined", "-fno-sanitize-recover=all", "-fno-omit-frame-pointer"] if args.sanitize else ["-O2"]
     compiler = ["c++", "-std=c++17", "-Wall", "-Wextra", "-Werror", *flags, "-I/source/src"]
     commands = [" ".join([*compiler, "-c", "/source/src/" + name + ".cpp", "-o", "/results/" + name + ".o"])
-                for name in ("checksum", "crypto", "native_image", "version_store", "update_worker", "update_bundle", "helper_loader", "source_runtime", "update_migration", "runtime_session", "migration_package", "runtime_worker", "session_handoff", "runtime_handoff")]
+                for name in ("checksum", "crypto", "native_image", "version_store", "update_worker", "update_bundle", "helper_loader", "source_runtime", "update_migration", "runtime_session", "migration_package", "helper_controller_update", "runtime_worker", "session_handoff", "runtime_handoff")]
     objects = ["/results/" + name + ".o" for name in ("checksum", "crypto", "native_image", "version_store", "update_worker")]
     for source_name, binary in (("version_store_test.cpp", "version-store-test"),
                                 ("update_worker_fixture.cpp", "worker-fixture"),
@@ -69,17 +70,19 @@ def main():
                               "/results/version_store.o", "/results/source_runtime.o", "/results/runtime_session.o", "-ldl", "-lcrypto", "-pthread", "-o", "/results/runtime-session-test"]))
     commands.append(" ".join([*compiler, "-I/source/tests", "/source/tests/runtime_worker_test.cpp", *objects,
                               "/results/source_runtime.o", "/results/runtime_session.o", "/results/update_bundle.o", "/results/update_migration.o",
-                              "/results/migration_package.o", "/results/runtime_worker.o", "/results/session_handoff.o", "/results/runtime_handoff.o", "-ldl", "-larchive", "-lcrypto", "-pthread", "-o", "/results/runtime-worker-test"]))
+                              "/results/migration_package.o", "/results/runtime_worker.o", "/results/session_handoff.o", "/results/helper_controller_update.o", "/results/runtime_handoff.o", "-ldl", "-larchive", "-lcrypto", "-pthread", "-o", "/results/runtime-worker-test"]))
     commands.append(" ".join([*compiler, "/source/src/source_dispatcher.cpp", *objects, "/results/source_runtime.o", "-ldl", "-pthread", "-o", "/results/source-dispatcher"]))
     commands.append(" ".join([*compiler, "/source/tests/session_handoff_test.cpp", "/results/session_handoff.o", "-o", "/results/session-handoff-test"]))
     commands.append("strip /results/runtime-worker-test")
-    commands.append(" ".join([*compiler, "-I/source/tests", "/source/tests/runtime_handoff_test.cpp", "/results/checksum.o", "/results/crypto.o", "/results/native_image.o", "/results/version_store.o", "/results/source_runtime.o", "/results/session_handoff.o", "/results/runtime_handoff.o", "-ldl", "-lcrypto", "-pthread", "-o", "/results/runtime-handoff-test"]))
+    commands.append(" ".join([*compiler, "-I/source/tests", "/source/tests/helper_controller_update_test.cpp", "/results/checksum.o", "/results/crypto.o", "/results/native_image.o", "/results/version_store.o", "/results/update_bundle.o", "/results/update_worker.o", "/results/session_handoff.o", "/results/helper_controller_update.o", "-ldl", "-lcrypto", "-larchive", "-pthread", "-o", "/results/helper-controller-test"]))
+    commands.append("strip /results/helper-controller-test")
+    commands.append(" ".join([*compiler, "-I/source/tests", "/source/tests/runtime_handoff_test.cpp", "/results/checksum.o", "/results/crypto.o", "/results/native_image.o", "/results/version_store.o", "/results/source_runtime.o", "/results/session_handoff.o", "/results/runtime_handoff.o", "/results/helper_controller_update.o", "/results/update_bundle.o", "/results/update_worker.o", "-ldl", "-lcrypto", "-larchive", "-pthread", "-o", "/results/runtime-handoff-test"]))
     commands.append("strip /results/runtime-handoff-test")
-    commands.extend(("/results/version-store-test", "/results/update-worker-test /results/worker-fixture",
+    commands.extend(("PMU_CONTROLLER_FIXTURE=1 /results/helper-controller-test /results/helper-1.so /results/helper-2.so", "/results/version-store-test", "/results/update-worker-test /results/worker-fixture",
                      "/results/update-bundle-test /results/worker-fixture",
                      "/results/helper-loader-test /results/helper-1.so /results/helper-2.so /results/helper-3.so",
                      "/results/crypto-test", "/results/source-runtime-test",
-                     "/results/filesystem-identity-test /mount-a /mount-b", "/results/update-migration-test", "/results/runtime-session-test", "/results/runtime-worker-test", "/results/session-handoff-test", "/results/runtime-handoff-test"))
+                     "/results/filesystem-identity-test /mount-a /mount-b", "/results/update-migration-test", "/results/runtime-session-test", "/results/runtime-worker-test", "/results/session-handoff-test", "/results/runtime-handoff-test /results/helper-1.so /results/helper-2.so"))
     container = "pmu-update-core-" + uuid.uuid4().hex[:12]
     volume = container + "-mount-test"
     command = ["docker", "run", "--rm", "--pull=never", "--name", container,
@@ -100,10 +103,10 @@ def main():
         text = (output / "tests.log").read_text()
         report["returncode"] = result.returncode
         report["passed"] = result.returncode == 0 and not re.search(r"warning:|runtime error:|AddressSanitizer:|^FAIL:", text, re.M)
-        counts = {name: int(count) for count, name in re.findall(r"PASS: (\d+) (version-store|update-worker|update-bundle|helper-loader|publisher-authorization|source-runtime|filesystem-identity|update-migration|runtime-session|runtime-worker|session-handoff|runtime-handoff)", text)}
+        counts = {name: int(count) for count, name in re.findall(r"PASS: (\d+) (version-store|update-worker|update-bundle|helper-loader|helper-controller|publisher-authorization|source-runtime|filesystem-identity|update-migration|runtime-session|runtime-worker|session-handoff|runtime-handoff)", text)}
         report["checks_by_suite"] = counts
         report["checks"] = sum(counts.values())
-        if not report["passed"] or set(counts) != {"version-store", "update-worker", "update-bundle", "helper-loader", "publisher-authorization", "source-runtime", "filesystem-identity", "update-migration", "runtime-session", "runtime-worker", "session-handoff", "runtime-handoff"}:
+        if not report["passed"] or set(counts) != {"version-store", "update-worker", "update-bundle", "helper-loader", "helper-controller", "publisher-authorization", "source-runtime", "filesystem-identity", "update-migration", "runtime-session", "runtime-worker", "session-handoff", "runtime-handoff"}:
             raise RuntimeError("Update-core verification failed; inspect " + str(output / "tests.log"))
         print(f"PASS: {args.arch}, {report['checks']} checks" + (", fatal ASan/UBSan" if args.sanitize else ""))
     except Exception as error:

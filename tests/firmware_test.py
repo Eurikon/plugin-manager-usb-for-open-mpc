@@ -276,12 +276,14 @@ class ExtractedRootTests(unittest.TestCase):
                     patch.object(FIRMWARE.subprocess, "run", side_effect=self.debugfs()), \
                     patch.object(FIRMWARE, "manager_package") as package, \
                     patch.object(helper, "profile_seed", return_value=b"fixture") as seed, \
+                    patch.object(FIRMWARE.hashlib, "file_digest", create=True, side_effect=AssertionError("Requires Python 3.11")), \
                     patch.object(FIRMWARE, "validate_executable") as legacy:
                 package.return_value._helper.return_value = helper
                 result = FIRMWARE.extract_firmware(source, destination, controller_helper=True)
             seed.assert_called_once_with(destination.resolve() / "usr/bin/MPC")
             legacy.assert_not_called()
             self.assertEqual(result["controller_profile"], "Gen1 OS 3.10")
+            self.assertEqual(result["executable_sha256"], hashlib.sha256(executable()).hexdigest())
             self.assertNotIn("autorun_salt_sha256", result)
 
     def test_unknown_controller_profile_removes_only_new_root(self):

@@ -61,6 +61,39 @@ int main(){
             const auto c=first.stage(f.input,f.spec("3.0.0",{{"program","third release"}}));first.activate(c);first.boot();first.confirm(c);first.prune();check(fs::exists(f.store/a)&&fs::exists(f.store/b)&&fs::exists(f.store/c),"retirement retains the other architecture's working fallback");rejects([&]{pmu::VersionStore bad(f.store,geteuid(),hash,{},true,{},"../outside");},"selection profiles cannot escape the store");
             check(second.offer(b)&&second.offer(c),"an unused profile may skip pending offers while retaining its working fallback");check(!second.offer(b),"a stale update cannot downgrade the other device profile");check(second.boot()->id==c&&second.boot()->id==a,"skipped offers still recover the last version confirmed on that architecture");check(first.current()->id==c&&!first.current()->pending,"secondary-profile failure cannot undo the primary-profile success");
         }
+        {
+            Fixture f(root/"mac-metadata");auto store=f.open();const auto a=store.stage(f.input,f.spec("1.0.0"));store.seed(a);
+            const auto original=read(f.store/a/"generation.json");
+            for(const std::string name:{".DS_Store","._program","assets/.DS_Store","assets/._data","._assets","._generation.json"})save(f.store/a/name,"Mac metadata");
+            check(store.boot()->id==a,"Mac sidecars do not prevent a verified generation from booting");
+            check(read(f.store/a/"generation.json")==original&&read(f.store/a/"program")=="payload","metadata acceptance preserves the inventory and payload");
+            save(f.store/a/"program","changed");rejects([&]{store.current();},"Mac metadata does not hide a changed signed payload");save(f.store/a/"program","payload");
+            const auto b=store.stage(f.input,f.spec("2.0.0",{{"program","second"}}));store.activate(b);store.boot();store.confirm(b);
+            const auto c=store.stage(f.input,f.spec("3.0.0",{{"program","third"}}));store.activate(c);store.boot();store.confirm(c);store.prune();
+            check(!fs::exists(f.store/a),"retirement removes recognised sidecars together with the owned generation");
+            save(f.store/b/"._program","Mac metadata");save(f.store/c/".DS_Store","Mac metadata");
+            check(store.erase()==0&&!fs::exists(f.store/b)&&!fs::exists(f.store/c),"uninstall removes owned generations containing Mac metadata");
+        }
+        for(const std::string kind:{"symlink","hardlink","directory","fifo","unrelated","writable","oversized"}){
+            Fixture f(root/("unsafe-mac-metadata-"+kind));auto store=f.open();const auto a=store.stage(f.input,f.spec("1.0.0"));store.seed(a);const auto sidecar=f.store/a/"._program";
+            if(kind=="symlink")fs::create_symlink(f.store/a/"program",sidecar);
+            else if(kind=="hardlink")fs::create_hard_link(f.store/a/"program",sidecar);
+            else if(kind=="directory")fs::create_directory(sidecar);
+            else if(kind=="fifo")check(mkfifo(sidecar.c_str(),0600)==0,"sidecar FIFO fixture created");
+            else if(kind=="unrelated")save(f.store/a/"._unowned","preserve");
+            else {save(sidecar,"metadata");if(kind=="writable")check(chmod(sidecar.c_str(),0666)==0,"writable metadata fixture created");else fs::resize_file(sidecar,64*1024*1024+1);}
+            rejects([&]{store.current();},"unsafe or unrelated metadata remains rejected");
+            check(store.erase()==1&&fs::exists(f.store/a/"program"),"unsafe metadata preserves the complete generation during uninstall");
+        }
+        {
+            Fixture f(root/"signed-metadata-name");auto store=f.open();const auto a=store.stage(f.input,f.spec("1.0.0",{{"._program","signed content"},{".DS_Store","signed content"}}));store.seed(a);save(f.store/a/"._program","changed");
+            rejects([&]{store.current();},"an explicitly inventoried metadata name still requires its signed checksum");
+        }
+        for(const std::string point:{"retirement-started","retirement-file-durable"}){
+            Fixture f(root/("metadata-prune-kill-"+std::to_string(checks)));auto store=f.open();const auto a=store.stage(f.input,f.spec("1.0.0"));store.seed(a);save(f.store/a/"._program","Mac metadata");save(f.store/a/"assets/.DS_Store","Mac metadata");
+            const auto b=store.stage(f.input,f.spec("2.0.0",{{"program","second"}}));store.activate(b);store.boot();store.confirm(b);const auto c=store.stage(f.input,f.spec("3.0.0",{{"program","third"}}));store.activate(c);store.boot();store.confirm(c);
+            interrupted(f,point,[&](auto& child){child.prune();});auto restarted=f.open();check(restarted.boot()->id==c,"interrupted metadata cleanup preserves the active generation");restarted.prune();check(!fs::exists(f.store/a),"retirement resumes after interrupted metadata cleanup");
+        }
         for(const std::string damage:{"no-confirm","payload","receipt","extra","link","active-metadata","missing-selection"}){
             Fixture f(root/("fallback-"+damage));auto store=f.open();const auto a=store.stage(f.input,f.spec("1.0.0"));store.seed(a);const auto b=store.stage(f.input,f.spec("2.0.0",{{"program","second"}}));store.activate(b);
             if(damage=="no-confirm")store.boot();

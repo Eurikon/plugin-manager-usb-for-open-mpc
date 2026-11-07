@@ -23,6 +23,7 @@
 #include <ctime>
 #include <cctype>
 #include <array>
+#include <locale.h>
 
 static void require(bool condition, const std::string& message) {
     if (!condition) throw std::runtime_error(message);
@@ -156,7 +157,7 @@ void Manager::openCatalog() {
     require(catalog.empty()&&!fs::exists(session/"catalog-attempted"),"Catalog already fetched this session");
     write(session/"catalog-attempted","1");
     const auto path=session/"catalog.tsv";
-    if(runProcess({"wget","-T","15","-O",path.string(),"https://sd88me.github.io/mpc-vst-plugins/catalog.tsv"})!=0) {
+    if(runProcess({"wget","-T","15","-O",path.string(),"https://open-mpc.github.io/catalog.tsv"})!=0) {
         fs::remove(path);catalogError="Catalog unavailable. Local packages still work.";return;
     }
     std::istringstream lines(read(path));std::string line;
@@ -176,7 +177,7 @@ void Manager::openCatalog() {
         catalog.back()["blocked_reason"]=catalogBlock(catalog.back());
     }
     const auto details=session/"catalog.json";
-    if(runProcess({"wget","-T","15","-O",details.string(),"https://sd88me.github.io/mpc-vst-plugins/catalog.json"})==0) {
+    if(runProcess({"wget","-T","15","-O",details.string(),"https://open-mpc.github.io/catalog.json"})==0) {
         try {
             const auto metadata=Json::parse(read(details));
             require(metadata.value("schema",0)==1&&metadata.at("plugins").is_array(),"Invalid catalog metadata");
@@ -340,50 +341,72 @@ Json Manager::stageManagerUpdate(const Json& checkedRelease,const std::function<
         return {{"bundle_root",bundle.string()},{"release",release},{"files",files}};
     }catch(...){std::error_code error;fs::remove_all(stage,error);throw;}
 }
-void Manager::verifyLatestPlugin(const std::string& id,const ReleaseSource& source) {
-    const std::string& repo=source.repo;
-    require(std::regex_match(repo,std::regex("[A-Za-z0-9][A-Za-z0-9-]*/[A-Za-z0-9][A-Za-z0-9_.-]*")),"Invalid plugin repository");
-    const Json* item=nullptr;
-    for(const auto& entry:catalog)if(entry.value("id","")==id){require(item==nullptr,"Catalog contains duplicate plugin entries");item=&entry;}
-    require(item!=nullptr,"Plugin is unavailable in the current catalog");
-    const auto blocked=catalogBlock(*item);require(blocked.empty(),"Plugin unavailable: "+blocked);
-    const auto prefix="https://github.com/"+repo+"/releases/download/";
-    require(item->value("url","").rfind(prefix,0)==0,"Catalog plugin repository does not match");
-    auto version=[](std::string value){if(!value.empty()&&value.front()=='v')value.erase(0,1);return value;};
-    const auto catalogVersion=version(item->at("version").get<std::string>());
-    const auto wantedTag=source.tagPrefix+catalogVersion;
-    if(!source.tagPrefix.empty())require(std::regex_match(wantedTag,std::regex("[A-Za-z0-9][A-Za-z0-9_.-]*")),"Catalog version is not usable in a release tag");
-    const auto path=session/"latest-release.json";
-    fs::remove(path);
+Json Manager::latestPluginRelease(const std::string& id,const ReleaseSource& source,bool refresh) {
+    require(std::regex_match(id,std::regex("[a-z0-9][a-z0-9_-]*")),"Invalid plugin identity");
+    require(std::regex_match(source.repo,std::regex("[A-Za-z0-9][A-Za-z0-9-]*/[A-Za-z0-9][A-Za-z0-9_.-]*")),"Invalid plugin repository");
+    for(const auto& prefix:{source.tagPrefix,source.assetPrefix})require(std::regex_match(prefix,std::regex("[A-Za-z0-9][A-Za-z0-9_.-]*")),"Invalid plugin release prefix");
+    const auto key=id+":"+source.repo+":"+source.tagPrefix+":"+source.assetPrefix;
+    if(!refresh&&releaseLookups.contains(key)){
+        const auto& result=releaseLookups.at(key);require(!result.contains("error"),result.value("error",""));return result;
+    }
+    const auto path=session/"plugin-releases.json";
     try {
-        require(runProcess({"wget","-T","15","-t","1","--header=Accept: application/vnd.github+json","-O",path.string(),"https://api.github.com/repos/"+repo+"/releases/"+(source.tagPrefix.empty()?std::string("latest"):"tags/"+wantedTag)})==0,"Cannot check the latest release; try again when online");
-        require(fs::is_regular_file(path)&&fs::file_size(path)<=1024*1024,"Invalid latest release response");
-        const auto release=Json::parse(read(path));
-        require(release.is_object()&&release.contains("draft")&&release.at("draft")==false&&release.contains("prerelease")&&release.at("prerelease")==false,"Latest release is not a stable published release");
-        const auto tag=release.at("tag_name").get<std::string>();
-        require(std::regex_match(tag,std::regex("[A-Za-z0-9][A-Za-z0-9_.-]*"))&&(source.tagPrefix.empty()?version(tag)==catalogVersion:tag==wantedTag),"Catalog has not caught up with the latest release; try again later");
-        const auto& assets=release.at("assets");require(assets.is_array()&&assets.size()<=1024,"Invalid latest release assets");
-        const Json* asset=nullptr;
-        for(const auto& entry:assets) {
-            require(entry.is_object(),"Invalid latest release asset");
-            const auto name=entry.value("name","");
-            const auto suffix="-mpc-"+arch+".zip";
-            if(name.size()<suffix.size()||name.compare(name.size()-suffix.size(),suffix.size(),suffix)!=0)continue;
-            require(asset==nullptr,"Latest release has multiple ARMv7 packages");asset=&entry;
+        Json chosen;std::string published;uint64_t total=0;bool complete=false;
+        const auto deadline=std::chrono::steady_clock::now()+std::chrono::seconds(45);
+        for(unsigned page=1;page<=16;++page){
+            require(std::chrono::steady_clock::now()<deadline,"Plugin release lookup timed out; try again");
+            fs::remove(path);
+            const auto url="https://api.github.com/repos/"+source.repo+"/releases?per_page=100&page="+std::to_string(page);
+            require(runProcess({"wget","-T","10","-t","1","--header=Accept: application/vnd.github+json","-O",path.string(),url},{},4*1024*1024)==0,"Cannot check plugin releases; try again when online");
+            require(fs::is_regular_file(path)&&fs::file_size(path)<=4*1024*1024,"Invalid plugin release response");
+            total+=fs::file_size(path);require(total<=16*1024*1024,"Plugin release metadata exceeds its limit");
+            const auto releases=Json::parse(read(path));fs::remove(path);
+            require(releases.is_array()&&releases.size()<=100,"Invalid plugin release list");
+            for(const auto& release:releases){
+                if(!release.is_object()||!release.contains("draft")||release.at("draft")!=false||!release.contains("prerelease")||release.at("prerelease")!=false)continue;
+                const auto tag=release.value("tag_name",std::string());if(tag.rfind(source.tagPrefix,0)!=0)continue;
+                const auto version=tag.substr(source.tagPrefix.size());
+                require(std::regex_match(version,std::regex("(0|[1-9][0-9]{0,8})\\.(0|[1-9][0-9]{0,8})\\.(0|[1-9][0-9]{0,8})")),"Unsupported stable plugin release tag");
+                const auto date=release.value("published_at",std::string());require(std::regex_match(date,std::regex("[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z")),"Plugin release has no publication date");
+                if(chosen.is_null()||date>published||(date==published&&libcVersion(version)>libcVersion(chosen.at("tag_name").get<std::string>().substr(source.tagPrefix.size())))){chosen=release;published=date;}
+            }
+            if(releases.size()<100){complete=true;break;}
         }
-        require(asset!=nullptr&&asset->value("state","")=="uploaded","Selected release has no ready "+arch+" package");
-        const auto name=asset->at("name").get<std::string>();
-        require(source.assetPrefix.empty()||name==source.assetPrefix+catalogVersion+"-mpc-"+arch+".zip","Release package name does not match this manager");
-        require(std::regex_match(name,std::regex("[A-Za-z0-9][A-Za-z0-9_.-]*"))&&asset->at("browser_download_url").get<std::string>()==prefix+tag+"/"+name&&asset->at("browser_download_url")==item->at("url"),"Latest package does not match the catalog download");
-        const auto size=item->at("size").get<std::string>();
-        require(std::regex_match(size,std::regex("[1-9][0-9]*"))&&asset->at("size").is_number_unsigned(),"Invalid latest package size");
-        const auto bytes=std::stoull(size);require(bytes<=512ULL*1024*1024&&asset->at("size").get<uint64_t>()==bytes,"Latest package size does not match the catalog");
-        const auto checksum=item->at("sha").get<std::string>();
-        require(std::regex_match(checksum,std::regex("[0-9a-f]{64}"))&&asset->at("digest").get<std::string>()=="sha256:"+checksum,"Latest package checksum does not match the catalog");
-        fs::remove(path);
-    } catch(...) {fs::remove(path);throw;}
+        require(complete,"Too many plugin releases to determine the newest one safely");
+        require(!chosen.is_null(),"No stable plugin release is available");
+        const auto tag=chosen.at("tag_name").get<std::string>(),version=tag.substr(source.tagPrefix.size());
+        require(chosen.value("html_url",std::string())=="https://github.com/"+source.repo+"/releases/tag/"+tag,"Plugin release URL does not match its repository");
+        const auto name=source.assetPrefix+version+"-mpc-"+arch+".zip";
+        require(chosen.contains("assets")&&chosen.at("assets").is_array()&&chosen.at("assets").size()<=1024,"Invalid plugin release assets");
+        const Json* asset=nullptr;
+        for(const auto& candidate:chosen.at("assets"))if(candidate.is_object()&&candidate.value("name",std::string())==name){require(asset==nullptr,"Plugin release has duplicate packages");asset=&candidate;}
+        require(asset&&asset->value("state",std::string())=="uploaded","The latest plugin release has no ready package for this device");
+        const auto url="https://github.com/"+source.repo+"/releases/download/"+tag+"/"+name;
+        require(asset->value("browser_download_url",std::string())==url,"Plugin package URL does not match its release");
+        require(asset->contains("size")&&asset->at("size").is_number_unsigned(),"Invalid plugin package size");
+        const auto bytes=asset->at("size").get<uint64_t>();require(bytes>0&&bytes<=512ULL*1024*1024,"Plugin package exceeds its size limit");
+        require(asset->contains("digest")&&asset->at("digest").is_string(),"Plugin release has no SHA-256 checksum");
+        const auto digest=asset->at("digest").get<std::string>();require(std::regex_match(digest,std::regex("sha256:[0-9a-f]{64}")),"Plugin release has no SHA-256 checksum");
+        Json item={{"id",id},{"name",id},{"version",version},{"kind","instrument"},{"origin","release"},{"arch",arch},{"size",std::to_string(bytes)},{"sha",digest.substr(7)},{"url",url}};
+        for(const auto& entry:catalog)if(entry.value("id",std::string())==id){for(const char* field:{"skin","uid","name","kind"})if(entry.contains(field)&&entry.at(field).is_string())item[field]=entry.at(field);break;}
+        releaseLookups[key]=item;return item;
+    }catch(const std::exception& error){fs::remove(path);releaseLookups[key]={{"error",error.what()}};throw;}
 }
+class ArchiveLocale {
+    locale_t value,previous;
+public:
+    ArchiveLocale():value(newlocale(LC_CTYPE_MASK,"C.UTF-8",nullptr)),previous(nullptr) {
+        require(value!=nullptr,"UTF-8 filename support is unavailable");
+        previous=uselocale(value);
+        if(!previous){freelocale(value);throw std::runtime_error("Cannot enable UTF-8 filename support");}
+    }
+    ~ArchiveLocale(){uselocale(previous);freelocale(value);}
+    ArchiveLocale(const ArchiveLocale&)=delete;
+    ArchiveLocale& operator=(const ArchiveLocale&)=delete;
+};
 fs::path Manager::unpack(const fs::path& zip,const fs::path& destination) {
+    // Libarchive converts ZIP names to the caller's locale, which is ASCII by default.
+    const ArchiveLocale locale;
     require(!fs::exists(destination),"Extraction destination already exists");fs::create_directories(destination);
     struct archive* archive=archive_read_new();require(archive!=nullptr,"Archive allocation failed");
     archive_read_support_format_zip(archive);archive_read_support_filter_all(archive);
@@ -412,7 +435,8 @@ fs::path Manager::unpack(const fs::path& zip,const fs::path& destination) {
             while((n=archive_read_data(archive,buffer,sizeof buffer))>0) {written+=n;require(written<=uint64_t(archive_entry_size(entry)),"ZIP size mismatch");output.write(buffer,n);require(bool(output),"Extraction write failed");}
             require(n==0&&written==uint64_t(archive_entry_size(entry)),"ZIP read failed");
         }
-        require(result==ARCHIVE_EOF&&roots.size()==1,"ZIP is incomplete");
+        require(result==ARCHIVE_EOF,std::string("Cannot read ZIP: ")+(archive_error_string(archive)?archive_error_string(archive):"archive ended unexpectedly"));
+        require(roots.size()==1,"ZIP must contain one package folder");
         for(const auto& link:links) fs::create_symlink(link.second,link.first);
         archive_read_free(archive);
         return destination/(*roots.begin());
@@ -536,16 +560,15 @@ Json Manager::installationOffer(const Json& item) {
         try {if(version(installed.value("version",""))>=version(item.value("version","")))return offer("Installed",false,"The current or a newer version is already installed");}
         catch(const std::exception&){return offer("Installed",false,"Already installed; its release version cannot be compared");}
     }
-    const auto blocked=catalogBlock(item);if(!blocked.empty())return offer("Unavailable",false,blocked);
+    const auto blocked=item.value("origin",std::string())=="release"?std::string():catalogBlock(item);if(!blocked.empty())return offer("Unavailable",false,blocked);
     if(nativePluginStorage&&synths.empty())return offer("Unavailable",false,"Choose a plugin installation location in SETUP first.");
     return offer(found?"Update":"Install",true,{});
 }
-void Manager::installLatestPlugin(const std::string& id,const ReleaseSource& source,const std::function<void(const std::string&)>& progress,const std::function<void(float)>& amount) {
-    const Json* selected=nullptr;
-    for(const auto& item:catalog)if(item.value("id","")==id){require(selected==nullptr,"Catalog contains duplicate plugin entries");selected=&item;}
-    require(selected!=nullptr,"Plugin is unavailable in the current catalog");
-    const Json item=*selected;const auto offer=installationOffer(item);require(offer.at("allowed").get<bool>(),offer.at("reason").get<std::string>());
-    verifyLatestPlugin(id,source);
+void Manager::installReleasePlugin(const std::string& id,const ReleaseSource& source,const std::function<void(const std::string&)>& progress,const std::function<void(float)>& amount) {
+    require(!nativePluginStorage||!synths.empty(),"Choose a plugin installation location in SETUP first.");
+    if(progress)progress("Checking the newest stable plugin release...");
+    const auto item=latestPluginRelease(id,source,true);const auto offer=installationOffer(item);
+    require(offer.at("allowed").get<bool>(),offer.at("reason").get<std::string>());
     installPackage(item,progress,amount,true);
 }
 std::vector<Json> Manager::list(const std::string& view) {
@@ -608,11 +631,12 @@ void Manager::installPackage(const Json& item,const std::function<void(const std
     if(item.at("origin")=="catalog"){report("Checking catalog compatibility before download...");const auto reason=catalogBlock(item);require(reason.empty(),"Download blocked: "+reason);}
     report("Checking installation destination...");
     history(usb);validateTarget();fs::path zip;
-    if(item.at("origin")=="catalog") {
+    if(item.at("origin")=="catalog"||item.at("origin")=="release") {
         report("Downloading package. No plugin files changed...");
         zip=session/"download.zip";float size=0;try{size=std::stof(item.value("size","0"));}catch(const std::exception&){}
         auto tick=[&]{if(!amount)return;std::error_code ec;const auto bytes=fs::file_size(zip,ec);amount(!ec&&size>0?std::min(0.99f,float(bytes)/size):-1.f);};
-        require(runProcess({"wget","-T","30","-O",zip.string(),item.at("url").get<std::string>()},tick)==0,"Download failed");
+        require(runProcess({"wget","-T","30","-O",zip.string(),item.at("url").get<std::string>()},tick,item.at("origin")=="release"?std::stoull(item.at("size").get<std::string>()):512ULL*1024*1024)==0,"Download failed");
+        if(item.at("origin")=="release")require(fs::file_size(zip)==std::stoull(item.at("size").get<std::string>()),"Plugin release download size mismatch");
         if(amount)amount(-1);
     } else zip=item.at("path").get<std::string>();
     report("Checking package checksum...");
@@ -620,16 +644,17 @@ void Manager::installPackage(const Json& item,const std::function<void(const std
     const auto temporary=session/"install";fs::remove_all(temporary);const auto root=unpack(zip,temporary);
     report("Checking OS 3 compatibility and package contents...");
     const Json value=manifest(root,item.at("origin")=="catalog"?&item:nullptr);
-    require(value.at("id")==item.at("id")&&value.at("version")==item.at("version")&&value.at("skin")==item.at("skin"),"Package identity differs from selection");
-    if(latestOnly){const auto offer=installationOffer(item);require(offer.at("allowed").get<bool>(),offer.at("reason").get<std::string>());}
+    require(value.at("id")==item.at("id")&&value.at("version")==item.at("version")&&(item.at("origin")=="release"||!item.contains("skin")||value.at("skin")==item.at("skin")),"Package identity differs from selection");
+    Json verified=item;for(const char* field:{"skin","uid","name","kind","manufacturer"})if(value.contains(field))verified[field]=value.at(field);
+    if(latestOnly){const auto offer=installationOffer(verified);require(offer.at("allowed").get<bool>(),offer.at("reason").get<std::string>());}
     const auto registry=synths/".mpc-usb-manager"/value.at("id").get<std::string>();
     report("Installing plugin to "+synths.string()+". Keep the manager drive inserted...");started=true;
     if(nativePluginStorage)pluginStorage.prepare(synths,pluginStorageIdentity);
     require(runProcess({"sh",(root/"install.sh").string(),"-y","-n","-t",synths.string()})==0,"Community package installer failed; see USB log");
     fs::create_directories(registry);
     for(const char* file:{"uninstall.sh","plugin_list.awk","mpc-plugin.json"}) fs::copy_file(root/file,registry/file,fs::copy_options::overwrite_existing);
-    installed=true;remember(item,true);if(amount)amount(1);
-    fs::remove_all(temporary);if(item.at("origin")=="catalog") fs::remove(zip);
+    installed=true;remember(verified,true);if(amount)amount(1);
+    fs::remove_all(temporary);if(item.at("origin")=="catalog"||item.at("origin")=="release") fs::remove(zip);
     } catch(const std::exception& e) {const std::string message=std::string(installed?"Plugin installed, but the USB installation record could not be saved. ":started?"Installation failed; plugin files may have changed. ":"Not installed; plugin files unchanged. ")+e.what();std::fprintf(stderr,"%s\n",message.c_str());throw std::runtime_error(message);}
 }
 void Manager::remove(const Json& selection) {

@@ -11,6 +11,7 @@ from pathlib import Path
 import re
 import stat
 import struct
+import tempfile
 import zipfile
 import zlib
 
@@ -84,6 +85,54 @@ def native_file(path: Path, architecture: str, maximum: int) -> bytes:
     if (wide and flags != 0) or (not wide and (flags & 0xff000000 != 0x05000000 or not flags & 0x400 or flags & 0x200)):
         raise ValueError("Native build input has an unsupported ARM ABI: " + path.name)
     return data
+
+
+def controller_policy(controllers: dict[str, bytes]) -> dict:
+    policy = json.loads(read_file(PROJECT / "tools/helper_loader_compatibility.json", 16 * 1024))
+    if not isinstance(policy, dict) or set(policy) != {"schema", "abi", "previous"} or policy["schema"] != 1 or policy["abi"] != 1 or not isinstance(policy["previous"], dict):
+        raise ValueError("Unsupported startup-loader compatibility policy")
+    for arch, allowed in policy["previous"].items():
+        if arch not in ("armv7", "aarch64") or not isinstance(allowed, list) or not 1 <= len(allowed) <= 128 or any(not isinstance(value, str) or not re.fullmatch(r"[0-9a-f]{64}", value) for value in allowed):
+            raise ValueError("Invalid approved previous startup loaders")
+    for arch, data in controllers.items():
+        if digest(data) not in policy["previous"].get(arch, []):
+            raise ValueError("Record the built startup loaders before packaging: python3 tools/helper_package.py --record-loader-compatibility")
+    return policy
+
+
+def record_controller_loaders() -> int:
+    policy = controller_policy({})
+    changed = 0
+    found = False
+    for arch, relative in (("armv7", "build"), ("aarch64", "build/aarch64")):
+        path = PROJECT / relative / "startup/manager-loader.so"
+        if not path.exists():
+            continue
+        found = True
+        identity = digest(native_file(path, arch, 2 * 1024 * 1024))
+        allowed = policy["previous"].setdefault(arch, [])
+        if identity not in allowed:
+            if len(allowed) >= 128:
+                raise ValueError("Startup-loader compatibility history is full")
+            allowed.append(identity)
+            changed += 1
+    if not found:
+        raise ValueError("Build the startup loaders before recording their compatibility")
+    if changed:
+        target = PROJECT / "tools/helper_loader_compatibility.json"
+        temporary = None
+        try:
+            with tempfile.NamedTemporaryFile(mode="w", dir=target.parent, prefix=".loader-policy-", delete=False) as output:
+                temporary = Path(output.name)
+                output.write(json.dumps(policy, indent=2) + "\n")
+                output.flush()
+                os.fsync(output.fileno())
+            temporary.chmod(0o644)
+            os.replace(temporary, target)
+        finally:
+            if temporary is not None:
+                temporary.unlink(missing_ok=True)
+    return changed
 
 
 def setup_project(data: bytes) -> bytes:
@@ -267,11 +316,19 @@ def build_versioned_archive(firmware: Path, project: Path, signer, version: str,
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Package the MPC OS 3.10 controller helper")
-    parser.add_argument("firmware_executable", type=Path)
-    parser.add_argument("setup_project", type=Path)
-    parser.add_argument("destination", type=Path)
+    parser.add_argument("firmware_executable", type=Path, nargs="?")
+    parser.add_argument("setup_project", type=Path, nargs="?")
+    parser.add_argument("destination", type=Path, nargs="?")
+    parser.add_argument("--record-loader-compatibility", action="store_true")
     args = parser.parse_args()
     try:
+        if args.record_loader_compatibility:
+            if any((args.firmware_executable, args.setup_project, args.destination)):
+                parser.error("Loader recording does not take firmware or destination arguments")
+            print("Startup-loader identities recorded: " + str(record_controller_loaders()))
+            return
+        if any(value is None for value in (args.firmware_executable, args.setup_project, args.destination)):
+            parser.error("Supply firmware_executable, setup_project and destination")
         data = build_archive(args.firmware_executable, args.setup_project)
         with args.destination.open("xb") as output:
             output.write(data)

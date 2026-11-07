@@ -76,15 +76,19 @@ struct Child {
     ~Child(){if(pid>0&&!reaped){kill(-pid,SIGKILL);int status;while(waitpid(pid,&status,0)<0&&errno==EINTR){}}}
 };
 Fd aboveReserved(int fd){Fd copy(fcntl(fd,F_DUPFD_CLOEXEC,6));need(copy.value>=6,"Cannot retain update-worker descriptor");return copy;}
+bool prepareChild(pid_t parent){
+    if(setpgid(0,0)||prctl(PR_SET_PDEATHSIG,SIGKILL)||getppid()!=parent)return false;
+    sigset_t empty;sigemptyset(&empty);if(sigprocmask(SIG_SETMASK,&empty,nullptr))return false;
+    for(int signal:{SIGPIPE,SIGCHLD,SIGINT,SIGTERM,SIGHUP}){struct sigaction action{};action.sa_handler=SIG_DFL;sigemptyset(&action.sa_mask);if(sigaction(signal,&action,nullptr))return false;}
+    return true;
+}
 Json exchange(int program,int scratch,const Json& task,const UpdateProgress& progress,std::chrono::milliseconds timeout){
     const auto requestId=nonce();const Json request={{"protocol",1},{"request_id",requestId},{"task",task}};const auto requestText=request.dump()+'\n';need(requestText.size()<=requestLimit,"Oversized update request");
     auto writable=anonymous(scratch);writeAll(writable.value,requestText);need(fsync(writable.value)==0,"Cannot finish update request");auto requestFile=readonly(writable.value);writable=Fd{};auto response=anonymous(scratch);
     auto childRequest=aboveReserved(requestFile.value),childResponse=aboveReserved(response.value),childProgram=aboveReserved(program);const auto parent=getpid();
     Child child;child.pid=fork();need(child.pid>=0,"Cannot start incoming update worker");
     if(!child.pid){
-        if(setpgid(0,0)||prctl(PR_SET_PDEATHSIG,SIGKILL)||getppid()!=parent)_exit(126);
-        sigset_t empty;sigemptyset(&empty);if(sigprocmask(SIG_SETMASK,&empty,nullptr))_exit(126);
-        for(int signal:{SIGPIPE,SIGCHLD,SIGINT,SIGTERM,SIGHUP}){struct sigaction action{};action.sa_handler=SIG_DFL;sigemptyset(&action.sa_mask);if(sigaction(signal,&action,nullptr))_exit(126);}
+        if(!prepareChild(parent))_exit(126);
         if(dup2(childRequest.value,3)<0||dup2(childResponse.value,4)<0||dup2(childProgram.value,5)<0||!closeOthers())_exit(126);
         for(int fd=0;fd<2;++fd){close(fd);if(open("/dev/null",fd==0?O_RDONLY:O_WRONLY)!=fd)_exit(126);}
         char name[]="pmu-update-worker",mode[]="--pmu-update-v1",path[]="PATH=/usr/sbin:/usr/bin:/sbin:/bin",lang[]="LC_ALL=C";char* args[]={name,mode,nullptr};char* environment[]={path,lang,nullptr};
@@ -117,6 +121,18 @@ IncomingWorker generationWorker(const Generation& generation,const std::string& 
 Json runIncomingWorker(const IncomingWorker& worker,const fs::path& session,const Json& task,const UpdateProgress& progress,std::chrono::milliseconds timeout){
     need(timeout.count()>0&&timeout<=std::chrono::minutes(15),"Invalid update-worker deadline");need(task.is_object(),"Invalid update-worker task");auto scratch=directory(session);struct stat value{};need(fstat(scratch.value,&value)==0&&value.st_uid==geteuid()&&!(value.st_mode&0022),"Unsafe update-worker scratch directory");auto program=pinNativeImage(worker,session);
     const auto hello=exchange(program.descriptor(),scratch.value,{{"operation","hello"}},{},timeout);need(hello.value("product",std::string())=="plugin-manager-usb"&&hello.value("protocol",0)==1,"Incoming release does not support the stable update protocol");return exchange(program.descriptor(),scratch.value,task,progress,timeout);
+}
+void runRecoveryWorker(const NativeImageSpec& worker,const fs::path& scratch,const fs::path& capsule,std::chrono::seconds timeout){
+    need(timeout.count()>0&&timeout<=std::chrono::seconds(175),"Invalid recovery-worker deadline");
+    need(capsule.is_absolute()&&capsule.lexically_normal()==capsule&&capsule.native().find('\0')==std::string::npos&&capsule.filename()=="update-handoff.json","Invalid recovery capsule path");
+    auto pinned=pinNativeImage(worker,scratch);auto program=aboveReserved(pinned.descriptor());std::string argument=capsule.string();const auto parent=getpid();Child child;child.pid=fork();need(child.pid>=0,"Cannot start original handover recovery");
+    if(!child.pid){
+        if(!prepareChild(parent)||dup2(program.value,5)<0||!closeOthers())_exit(126);
+        close(3);close(4);char name[]="pmu-update-recovery",mode[]="--pmu-recover-v1",path[]="PATH=/usr/sbin:/usr/bin:/sbin:/bin",locale[]="LC_ALL=C";char* arguments[]={name,mode,argument.data(),nullptr};char* environment[]={path,locale,nullptr};execve("/proc/self/fd/5",arguments,environment);_exit(127);
+    }
+    const auto deadline=std::chrono::steady_clock::now()+timeout;int status=0;
+    for(;;){const auto result=waitpid(child.pid,&status,WNOHANG);if(result==child.pid){child.reaped=true;break;}if(result<0&&errno==EINTR)continue;need(result==0,"Cannot wait for original handover recovery");need(std::chrono::steady_clock::now()<deadline,"Original handover recovery timed out");usleep(25000);}
+    need(WIFEXITED(status)&&WEXITSTATUS(status)==0,"Original handover recovery failed");
 }
 int serveUpdateWorker(const UpdateHandler& handler){
     std::string requestId;size_t written=0;bool reported=false;

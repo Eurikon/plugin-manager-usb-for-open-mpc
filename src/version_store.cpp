@@ -162,14 +162,27 @@ struct VersionStore::Impl {
     }
     std::optional<Selection> namedState(const std::string& name){if(!present(root.value,name))return {};return selection(parseMetadata(readAt(root.value,name,1024)));}
     std::optional<Selection> state(const std::string& name){return namedState(recordName(name));}
-    void inventory(int directory,const GenerationSpec& spec,const std::string& prefix={}){
+    bool metadata(const std::string& name,const std::string& leaf,const GenerationSpec& spec){
+        if(spec.files.count(name))return false;
+        if(leaf==".DS_Store")return true;
+        if(leaf.rfind("._",0)!=0||leaf.size()<=2)return false;
+        const auto target=name.substr(0,name.size()-leaf.size())+leaf.substr(2);
+        if(spec.files.count(target)||target==receipt||target==authorizationFile)return true;
+        const auto first=spec.files.lower_bound(target+'/');
+        return first!=spec.files.end()&&first->first.rfind(target+'/',0)==0;
+    }
+    void inventory(int directory,const GenerationSpec& spec,const std::string& prefix={},std::vector<std::string>* extras=nullptr){
         auto entries=listing(directory);
         while(auto* entry=nextEntry(entries.get())){
             const std::string leaf=entry->d_name;if(leaf=="."||leaf=="..")continue;
             const auto name=prefix+leaf;struct stat value{};need(fstatat(directory,leaf.c_str(),&value,AT_SYMLINK_NOFOLLOW)==0,"Generation changed during inspection");
             if(S_ISDIR(value.st_mode)){
                 const auto first=spec.files.lower_bound(name+'/');need(first!=spec.files.end()&&first->first.rfind(name+'/',0)==0,"Generation contains an unowned directory");
-                auto child=descend(directory,leaf);checkOwner(child.value,true);inventory(child.value,spec,name+'/');
+                auto child=descend(directory,leaf);checkOwner(child.value,true);inventory(child.value,spec,name+'/',extras);
+            }else if(metadata(name,leaf,spec)){
+                auto sidecar=file(directory,leaf);const auto status=info(sidecar.value);
+                need(status.st_size>=0&&uint64_t(status.st_size)<=maximumFile,"Oversized Mac metadata file");
+                if(extras)extras->push_back(name);
             }else need(S_ISREG(value.st_mode)&&value.st_nlink==1&&(spec.files.count(name)||(prefix.empty()&&(name==receipt||name==authorizationFile))),"Generation contains an unowned or unsafe file");
         }
     }
@@ -185,7 +198,8 @@ struct VersionStore::Impl {
         std::vector<std::string> result;while(auto* entry=nextEntry(entries.get()))if(std::string(entry->d_name)!="."&&std::string(entry->d_name)!=".."){need(result.size()<1024,"Version storage inventory exceeds its bound");result.emplace_back(entry->d_name);}return result;
     }
     void removeGeneration(const std::string& name,const GenerationSpec& spec){
-        auto folder=descend(root.value,name);checkOwner(folder.value,true);inventory(folder.value,spec);std::set<std::string> directories;
+        auto folder=descend(root.value,name);checkOwner(folder.value,true);std::vector<std::string> extras;inventory(folder.value,spec,{},&extras);std::set<std::string> directories;
+        for(const auto& item:extras){auto parent=descend(folder.value,fs::path(item).parent_path());auto sidecar=file(parent.value,fs::path(item).filename().string());need(unlinkat(parent.value,fs::path(item).filename().c_str(),0)==0,"Cannot retire Mac metadata file");sync(parent.value);point("retirement-file-durable");}
         for(const auto& item:spec.files)for(auto p=fs::path(item.first).parent_path();!p.empty();p=p.parent_path())directories.insert(p.generic_string());
         for(const auto& item:spec.files){auto parent=descend(folder.value,fs::path(item.first).parent_path(),false,true);if(parent.value<0||!present(parent.value,fs::path(item.first).filename().string()))continue;auto ownedFile=file(parent.value,fs::path(item.first).filename().string());need(unlinkat(parent.value,fs::path(item.first).filename().c_str(),0)==0,"Cannot retire generation file");sync(parent.value);point("retirement-file-durable");}
         std::vector<std::string> ordered(directories.begin(),directories.end());std::sort(ordered.begin(),ordered.end(),[](const auto& a,const auto& b){return a.size()>b.size();});

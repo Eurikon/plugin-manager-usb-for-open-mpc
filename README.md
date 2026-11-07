@@ -1,6 +1,6 @@
 # Plugin Manager USB for OPEN MPC
 
-[![Download installer](https://img.shields.io/badge/Download-1.3.0-brightgreen?logo=github)](https://github.com/Eurikon/plugin-manager-usb-for-open-mpc/releases/download/v1.3.0/plugin-manager-usb-v1.3.0-migration.zip)
+[![Download installer](https://img.shields.io/badge/Download-1.3.1-brightgreen?logo=github)](https://github.com/Eurikon/plugin-manager-usb-for-open-mpc/releases/download/v1.3.1/plugin-manager-usb-v1.3.1.zip)
 [![Latest release](https://img.shields.io/github/v/release/Eurikon/plugin-manager-usb-for-open-mpc?logo=github&label=Release)](https://github.com/Eurikon/plugin-manager-usb-for-open-mpc/releases/latest)
 [![Changelog](https://img.shields.io/badge/Changelog-History-blue?logo=github)](CHANGELOG.md)
 [![User guide](https://img.shields.io/badge/Guide-Website-blue?logo=githubpages)](https://eurikon.github.io/plugin-manager-usb-for-open-mpc/guide.html)
@@ -93,18 +93,19 @@ Wait for MPC to finish reopening; **do not turn off your device during this tran
 | **Catalog and local plugins** | Explains online browsing and offline ZIP installation from the selected USB or SD source. |
 | **Come back whenever you need** | Shows the two-second **Shift + Menu** shortcut. Keep the source drive inserted. |
 | **Plugin Manager on SD → Setup** | Opens SD installation, welcome preferences and manager updates. |
-| **Or install "OpenMPC Plugin Manager G2" instead** | Offers an optional manager that runs on an MPC plugin track. |
+| **Or install "OpenMPC Plugin Manager VST" instead** | Offers an optional manager that runs on an MPC plugin track. |
 | **Hide message** | Skips this welcome screen on later openings from this source. Restore it in **SETUP → Show on opening**. |
 | **Browse plugins** | Opens the catalog without leaving the manager. |
 | **Return to MPC** | Closes the manager and restarts the MPC application. |
 | **Sun / moon** | Switches between light and dark themes. The label names the theme you will switch to. |
 
-The welcome screen also offers **OpenMPC Plugin Manager G2**, which runs on an MPC track and supports Gen 1 and Gen 2.<br>
+The welcome screen also offers **OpenMPC Plugin Manager VST**, which runs on an MPC track and supports Gen 1, Force and Gen 2.<br>
 Its button offers **Install** when absent, or **Update** when an older, known release is installed in the selected plugin location.<br>
 **Installed** is disabled for equal, newer or unknown versions and installations outside that location.<br>
 The regular catalog still allows deliberate reinstallation.<br>
 Choosing **Install** or **Update** authorizes the operation directly.<br>
-The catalog selects the release; its package is verified before installation, and failed verification stops installation.<br>
+The button checks GitHub directly for the newest stable release, independently of the catalog.<br>
+Its package is selected for your device and verified before installation; failed verification stops installation.<br>
 No plugin package is downloaded before you choose an enabled action.
 
 ## Install the Manager on SD
@@ -168,7 +169,9 @@ These logs can be read on your computer without SSH.
 
 The top-right version belongs to the catalog release, local ZIP, on-device installation or saved history entry shown in that tab.<br>
 A floppy symbol and version beside the MPC OS badge identify the installed copy; a small light beside the offered version indicates a newer update.<br>
-Thumbnails load into RAM and are discarded when the manager closes.
+Thumbnails are saved in `thumbnails/` beside the manager on USB or SD and reused between openings.<br>
+The manager uses the image server's change markers to avoid downloading unchanged pictures again.<br>
+Saved pictures remain available when the image server cannot be reached; the thumbnail cache is limited to 32 MiB.
 
 Uninstall removes the managed plugin and its registration, while keeping its history entry.<br>
 History helps identify previous installations after wiping or changing a device; it does not back up projects or plugin files.
@@ -302,6 +305,9 @@ The output contains both the legacy USB launcher and `Plugin Manager helper.xpa`
 The extracted firmware stays inside the disposable container.<br>
 `/output/usb` must not already exist; an existing destination is preserved.
 
+After building and validating the loaders, record their identities with `python3 tools/helper_package.py --record-loader-compatibility`.<br>
+Include the updated compatibility file in the release source before the final tagged build.
+
 If you already have the extracted executables, the packaging command is:
 
 ```sh
@@ -359,9 +365,9 @@ See the [Developer FAQ](DEVELOPER_FAQ.md#how-do-i-use-this-checkout-from-another
 
 ## Credits and Acknowledgments
 
-This project builds on **sd88me**'s [mpc-vst-plugins](https://github.com/sd88me/mpc-vst-plugins) catalog, package format and installation tooling.<br>
+This project builds on **sd88me**'s [mpc-vst-plugins](https://github.com/open-mpc/mpc-vst-plugins) catalog, package format and installation tooling.<br>
 The [upstream copyright notice](licenses/community-tools.txt) is preserved in the repository and USB bundles.<br>
-See the [upstream credits](https://github.com/sd88me/mpc-vst-plugins#credits) for community contributors.
+See the [upstream credits](https://github.com/open-mpc/mpc-vst-plugins#credits) for community contributors.
 
 **Twisted Cable** develops this on-device USB manager, its interface, reopening shortcut, installation inventory and firmware-based offline testing workflow.<br>
 Plugin authors retain ownership and licenses for their own packages; plugins are downloaded separately and are not included in this repository.

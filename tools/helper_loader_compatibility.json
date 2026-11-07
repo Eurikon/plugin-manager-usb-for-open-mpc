@@ -1,0 +1,14 @@
+{
+  "schema": 1,
+  "abi": 1,
+  "previous": {
+    "armv7": [
+      "79bba14dfbdc1ade91bf9bcf85ca55103f7fc353c4f89661f3b8908892667527",
+      "e88204282829a8140b5f221bdf221bda4af511befc1f1653ea0b9902d3dec064"
+    ],
+    "aarch64": [
+      "8ee62a5bfd2bc76548cbd02ece5d3ce18dab1f8e8f0250bea626860b95a909dd",
+      "d6a33df85342b40c01921216a146bd87309b93e32f4869d739227fc1a47466ed"
+    ]
+  }
+}

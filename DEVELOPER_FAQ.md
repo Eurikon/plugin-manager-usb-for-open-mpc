@@ -103,6 +103,7 @@ Keep the socket permission checks enabled.
 | --- | --- |
 | [src/main.cpp](src/main.cpp) | SDL interface, rendering, touch interaction, navigation and job progress. |
 | [src/backend.hpp](src/backend.hpp), [src/backend.cpp](src/backend.cpp) | Catalog, package validation, installation/removal, device inventory, history and preferences. |
+| [src/thumbnail.hpp](src/thumbnail.hpp), [src/thumbnail.cpp](src/thumbnail.cpp) | Background image downloads, decoding, persistent thumbnails and HTTP change checks. |
 | [open.sh](open.sh) | USB entry point; reuses an active supervisor or copies runtime into RAM. |
 | [setup.sh](setup.sh) | Detects the MPC service/private MIDI port and starts the temporary supervisor. |
 | [src/shortcut.cpp](src/shortcut.cpp) | Session ownership, reopen requests, temporary service configuration and cleanup. |
@@ -313,6 +314,7 @@ regular-file data. The target filesystem must also support the package's links.
 
 The manager fetches the community's `catalog.tsv` once per opening and optionally
 enriches it from `catalog.json`. Retrieval failure still permits local packages.
+Both are fetched from `https://open-mpc.github.io/`.
 
 The TSV header must be `#mpc-catalog-tsv 1`. Accepted plugin rows supply identity,
 version, kind, skin, UID, download size/hash/HTTPS URL, deferred-install support,
@@ -386,7 +388,19 @@ memory for the current opening.
 The source is the USB root or the SD card's `Plugin Manager USB/` directory.
 Each source has its own history, preferences and `local-plugins/` folder.
 Opening the manager records detected installations in that source's history.
-Catalog data, downloads and extracted packages remain per-opening RAM data and are discarded on exit.
+Catalog data, plugin downloads and extracted packages remain per-opening RAM data and are discarded on exit.
+
+Thumbnails persist in the active source's `thumbnails/` folder.
+They are stored as bounded, checksummed, already-resized pixel records with their URL, ETag and Last-Modified values.
+Change the cache-format identifier when thumbnail geometry or resampling rules change.
+Saved images appear before background validation; HTTP 304 reuses them without downloading an image body or rewriting the file.
+ETag takes precedence over Last-Modified.
+A server providing neither marker requires downloading its image to check for changes.
+Unavailable servers retain the saved picture, while malformed cache entries are replaced after a successful image download and decode.
+The pixel cache in RAM remains capped at 4 MiB; persistent storage is capped at 32 MiB and removes the oldest stored entries when needed.
+Only managed thumbnail records are pruned; links and unrelated files are preserved.
+USB and SD copies keep separate caches.
+`tests/run_thumbnail_tests.py` covers persistence, changes, offline use, corruption, storage bounds, HTTPS validation, redirects and cancellation on both architectures, including fatal sanitizer runs.
 
 An optional `display-rotation.txt` in the active USB/SD manager folder accepts `180` for a picture-and-touch flip or `0` for automatic orientation.
 Reads are bounded to 64 bytes and refuse links and non-regular files.
@@ -419,6 +433,7 @@ It stages complete runtime and helper generations alongside the last working ver
 The current session keeps its existing executables.
 After it closes, an independent transient handover unit retires the old supervisor, prepares the new hook with the existing addin order, and restarts the MPC application.
 Its recovery command runs from a separately retained old cohort if handover fails.
+For a compatible startup-loader replacement, a verified recovery guard first restores the previous loader on failure, then calls that original cohort through its unchanged v1 recovery protocol.
 The stable controller loader confirms native-helper startup; the GUI confirms its generation only after the first rendered frame.
 An attempted but unconfirmed generation falls back on the next opening.
 
@@ -430,6 +445,12 @@ Return to the updated USB copy and use **Update manager** to reconcile an older 
 
 Automatic recovery requires readable original media and a supported functioning controller loader.
 Physical media failure and firmware that stops that loader from running still need recovery from the complete bundle.
+An installation already unable to open the manager cannot reach its updater and needs the corrected helper copied once.
+Version storage tolerates regular, owner-checked `.DS_Store` files and AppleDouble sidecars for inventoried files or directories.
+Those extras never satisfy a signed file or startup role; signed files retain their checksum checks, and links or unrelated files remain rejected.
+Retirement removes recognised metadata with its owned generation and remains recoverable after interruption.
+The OS 3.9 factory USB dispatchers remain part of the sealed autorun set; routine updates leave that set unchanged.
+New complete bundles contain the corrected dispatchers; a factory bootstrap that cannot open the manager requires a complete bundle refresh.
 No new hardware update validation is claimed for this redesign.
 
 ### How are manager updates authorized?
@@ -466,7 +487,15 @@ A capability handshake precedes application; process groups, clean environment a
 
 Keep the version-1 handover capsule and its 15 fields compatible with the retained previous worker.
 Its `open_after_handoff` mode refreshes RAM without undoing the source’s startup-health decision.
-The stable controller filename and C payload ABI v1 remain outside routine replacement.
+The controller filename and C payload ABI v1 remain stable.
+Compatible binary replacements use the signed `controller_v1_<arch>` and `controller_policy` update roles.
+The installed loader must match an approved previous hash, or already match the replacement.
+Unknown modifications are preserved and reported before activation.
+Copies are verified in private RAM, then the replacement is written beside the installed loader and atomically renamed on the same filesystem.
+The previous binary and recovery guard remain available through startup confirmation.
+A stopped or interrupted update leaves a complete previous or replacement loader, never a partially copied executable.
+Before packaging a release, run `python3 tools/helper_package.py --record-loader-compatibility` after building and validating the loaders, and include the updated `tools/helper_loader_compatibility.json` with the source changes.
+Packaging refuses an unrecorded loader, so future compatible replacements retain the previous release identities.
 Mutable helper/bootstrap/runtime files are selected through signed manifests rather than a fixed legacy filename whitelist.
 Keep factory selection records distinct from live update state, and preserve other architectures’ working generations during pruning.
 `tests/run_update_core.py` exercises activation, forced process interruption, recovery, media identity, worker transport and handover.
@@ -475,28 +504,31 @@ Use `make test-update-core UPDATE_ARCH=aarch64`, repeat with `armv7`, and add `U
 
 ### How does the welcome-screen Plugin Manager offer work?
 
-The default offer is **OpenMPC Plugin Manager G2**, the MIT-licensed Gen 1/Gen 2 adaptation of poloq’s Plugin Manager.
-`src/plugin_manager_option.hpp` defines its catalog ID, display name and `ReleaseSource` repository/tag/package prefixes.
-Its repository publishes multiple products: verification requests `releases/tags/plugin-manager-g2-v<catalog version>` and checks the exact architecture-specific package name, URL, size and SHA-256 against the session catalog.
-This verifies the catalog-selected release; it does not independently establish the newest release across matching tags.
-A Gen 2 device without a selected plugin location shows an unavailable offer with a SETUP instruction.
+The default offer is **OpenMPC Plugin Manager VST**, the MIT-licensed OpenMPC fork of poloq’s Plugin Manager for Gen 1, Force and Gen 2.
+`src/plugin_manager_option.hpp` defines its ID, display name and repository/tag/package prefixes.
+Upstream retains the `plugin-manager-g2` ID, `plugin-manager-g2-v` tag prefix and `Plugin-Manager-G2-` package prefix for installation and update compatibility.
+`Manager::latestPluginRelease()` reads the repository's release pages and selects the most recently published stable release whose tag matches the manager prefix.
+Drafts, prereleases and other products such as the stick installer are excluded.
+The lookup is bounded, cached in RAM for the opening and repeated when Install or Update is selected.
+It works without a catalog entry and does not use the repository-wide `releases/latest` endpoint.
 
-`Manager::installationOffer()` compares the catalog release with actual
-installations matched by ID, skin or UID.
-It offers **Install** when absent and **Update** only when all matching releases
-are known, older and inside the selected managed plugin location.
-Equal, newer, unknown-version or external installations show disabled **Installed**.
-Choosing **Install** or **Update** authorizes the operation without another prompt.
-`Manager::installLatestPlugin()` rechecks this guard before the live release
-lookup, before downloading and immediately before installer execution.
-`Manager::verifyLatestPlugin()` checks the selected release in the pinned repository.
-Its asset for the current architecture must match the session catalog's version, download URL, size
-and SHA-256 digest; unavailable, stale or conflicting metadata blocks the offer.
-The package then passes the existing ZIP checksum, compatibility, identity
-and payload checks before its installer runs.
-Normal catalog installation retains deliberate reinstallation support.
-Opening the welcome screen does not download or install the plugin package.
-The catalog remains a once-per-opening RAM snapshot; no plugin is bundled.
+The selected architecture-specific asset must have the exact expected filename, repository URL, uploaded state, bounded size and GitHub SHA-256 digest.
+Missing, conflicting or unavailable metadata disables the offer instead of falling back to another package.
+The downloaded ZIP must match the release size and digest.
+Its own manifest must declare the selected ID, version, architecture, supported MPC OS and library requirements; catalog metadata cannot supply missing compatibility for this path.
+Existing archive, payload-checksum and stopped-session installer checks still apply.
+
+`Manager::installationOffer()` compares the selected release with actual installations by ID, skin or UID.
+It offers Install when absent, or Update when all matching installations have known older versions inside the selected plugin location.
+Equal, newer, unknown-version and external installations show disabled Installed.
+`Manager::installReleasePlugin()` rechecks the release and installed-state guard before downloading; the validated package identity is checked again immediately before its installer runs.
+A Gen 2 device without a plugin location gets a SETUP instruction.
+Selecting Install or Update authorizes that operation directly.
+Opening the welcome screen only checks metadata; no plugin package is downloaded or installed.
+Ordinary catalog browsing and deliberate reinstallation are unchanged.
+
+Run `backend-test --release-lookup-only` in a disposable Linux test environment to exercise release selection on both architectures without supplying a plugin package.
+The complete backend suite also tests installation guards with a developer-supplied package.
 
 ## Testing and troubleshooting
 

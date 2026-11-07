@@ -1,4 +1,5 @@
 #include "backend.hpp"
+#include "helper_controller_update.hpp"
 #include "version.hpp"
 #include "sd_install.hpp"
 #include "manager_update.hpp"
@@ -163,11 +164,13 @@ static int app(int argc,char**argv) {
     storagePaths=pluginStorageFixture(argv[2],argv[4],std::getenv("MPC_MANAGER_UI_TEST")&&std::string(std::getenv("MPC_MANAGER_UI_TEST"))=="plugin-location-blocked");
 #endif
     Manager manager(argv[1],argv[2],argv[3],argv[4],managerArchitecture(),storagePaths);bool dark=false;try{dark=manager.darkTheme();}catch(const std::exception& e){std::fprintf(stderr,"Theme preference: %s\n",e.what());}Theme::set(dark);Screen screen(argv[5],argv[1]);
-    ThumbnailCache thumbnails;uint64_t artworkRevision=0;
+    ThumbnailCache thumbnails({},manager.usb/"thumbnails");uint64_t artworkRevision=0;
     auto labelWidth=[&](const std::string& label,int size){int width=0;FT_Set_Pixel_Sizes(screen.face,0,size);for(unsigned char letter:label)if(!FT_Load_Char(screen.face,letter,FT_LOAD_DEFAULT))width+=screen.face->glyph->advance.x>>6;return width;};
     const int setupWidth=12+24+12+labelWidth("SETUP",23)+12,setupX=1252-setupWidth;
     const int themeWidth=16+24+12+std::max(labelWidth("Light",25),labelWidth("Dark",25))+12,themeX=995-themeWidth;
     const int welcomeHideX=1222-12-labelWidth("Hide message",25);
+    // Device clocks may be unset, so copyright follows the build year.
+    const std::string welcomeIdentity="Plugin Manager USB for \"Open MPC\" v" MPC_MANAGER_VERSION " © "+std::string(__DATE__+7,4)+" Twisted Cable";
 #ifdef MPC_MANAGER_SD_FIXTURE
     SdInstaller sdInstaller=makeSdInstallerFixture(manager.usb,manager.session,std::getenv("MPC_MANAGER_UI_TEST")?std::getenv("MPC_MANAGER_UI_TEST"):"");
     if(std::getenv("MPC_MANAGER_UI_TEST")&&std::string(std::getenv("MPC_MANAGER_UI_TEST"))=="sd-remove-current")manager.usb=sdInstaller.inspect().at("path").get<std::string>();
@@ -191,8 +194,8 @@ static int app(int argc,char**argv) {
     bool managerCheckPending=false,managerCheckFailed=false,managerUpdateConfirm=false,managerUpdated=false;std::string managerUpdateStatus="Not checked";Json managerUpdate=Json::object();
     bool offerPending=false,themePending=false,hidePending=false,savedDark=dark,savedHidden=!welcome,activeDark=dark,activeHidden=!welcome;
     bool saveTheme=false,saveHidden=false;std::string activeView;unsigned long request=0,activeRequest=0;
-    Json welcomeOffer={{"label","Install"},{"allowed",false},{"reason","Loading catalog..."}};
-    auto currentOffer=[&]() -> Json {for(const auto& item:manager.catalog)if(item.value("id","")==MPC_PM_ID)return manager.installationOffer(item);return {{"label","Unavailable"},{"allowed",false},{"reason","Plugin Manager is unavailable in the current catalog."}};};
+    Json welcomeOffer={{"label","Install"},{"allowed",false},{"reason","Checking the latest manager release..."}};
+    auto currentOffer=[&]() -> Json {try{return manager.installationOffer(manager.latestPluginRelease(MPC_PM_ID,{MPC_PM_REPO,MPC_PM_TAG_PREFIX,MPC_PM_ASSET_PREFIX}));}catch(const std::exception& error){return {{"label","Unavailable"},{"allowed",false},{"reason",error.what()}};}};
     Work work=Work::Open;
     std::future<Result> job=std::async(std::launch::async,[&]{manager.openCatalog();manager.recordInstalled();Result result{{},manager.catalogError.empty()?"Catalog ready. Choose a package.":manager.catalogError,manager.catalogError,currentOffer()};if(manager.arch=="aarch64")result.pluginLocation=manager.pluginStorageInfo();if(sdAvailable){try{result.storage=sdInstaller.inspect();}catch(const std::exception& e){result.storage={{"reason",e.what()}};}}return result;});
     const char* renderView=std::getenv("MPC_MANAGER_RENDER_VIEW");if(renderView)view=renderView;
@@ -218,7 +221,7 @@ static int app(int argc,char**argv) {
             job=std::async(std::launch::async,[&]{Result result;result.managerUpdate=manager.checkManagerUpdate();return result;});
         }else if(offerPending&&!returning){
             work=Work::Offer;busy=mutating=true;offerPending=false;completed=false;failed=false;progressFading=false;amount(-1);
-            job=std::async(std::launch::async,[&]{manager.installLatestPlugin(MPC_PM_ID,{MPC_PM_REPO,MPC_PM_TAG_PREFIX,MPC_PM_ASSET_PREFIX},progress,amount);return Result{};});
+            job=std::async(std::launch::async,[&]{manager.installReleasePlugin(MPC_PM_ID,{MPC_PM_REPO,MPC_PM_TAG_PREFIX,MPC_PM_ASSET_PREFIX},progress,amount);return Result{};});
         }else if(listPending&&!returning){
             work=Work::List;busy=true;activeView=view;activeRequest=request;listPending=false;
             job=std::async(std::launch::async,[&,requestedView=activeView]{return Result{manager.list(requestedView),{}, {},currentOffer()};});
@@ -338,6 +341,7 @@ static int app(int argc,char**argv) {
                 const bool installed=sdState.value("configured",false)||sdState.value("can_remove",false);
                 screen.box(28,143,1224,150,Theme::panel);screen.icon(52,167,Icon::Disk,Theme::red);screen.text(96,183,"Plugin Manager installation",Theme::ink,28,790);
                 std::string detail=!sdAvailable?"SD installation requires the supported MPC OS 3.10 helper.":!sdReady?(failed?status:"Checking SD installation..."):installed?sdState.value("installed",false)?"Installed on "+sdState.value("label","SD card"):sdState.value("reason","SD installation unavailable."):sdCards.empty()?"No suitable SD card found. Insert your card and choose Refresh.":"Not installed. Choose an SD card to install the manager.";
+                if(sdAvailable&&sdReady&&sdState.value("installed",false)&&!sdState.value("version","").empty())detail+=" v"+sdState.at("version").get<std::string>();
                 screen.wrapped(96,217,detail,790,2,Theme::muted,22);
                 if(sdAvailable&&sdReady){
                     screen.text(96,274,"Plugin Manager folder: Plugin Manager USB",Theme::muted,22,790);
@@ -362,7 +366,7 @@ static int app(int argc,char**argv) {
             screen.icon(52,151,Icon::Disk,Theme::red);screen.text(96,175,"Your MPC session",Theme::ink,28);
             screen.wrapped(96,207,"Save your project before opening the installer. The MPC application stops while the installer is open and restarts when you return.",1132,2,Theme::muted,22);
             screen.icon(52,241,Icon::Download,Theme::red);screen.text(96,265,"Catalog and local plugins",Theme::ink,28);
-            screen.wrapped(96,297,std::string("The catalog loads once per opening. Local ZIP packages on this ")+(sourceOnSd?"SD card":"USB")+" work offline. Catalog data and downloads are cleared when you leave.",1132,2,Theme::muted,22);
+            screen.wrapped(96,297,std::string("The catalog loads once per opening. Local ZIP packages on this ")+(sourceOnSd?"SD card":"USB")+" work offline. Catalog data and plugin downloads are cleared when you leave.",1132,2,Theme::muted,22);
             screen.icon(52,331,Icon::Return,Theme::red);screen.text(96,355,"Come back whenever you need",Theme::ink,28);
             screen.wrapped(96,387,std::string("Keep the ")+(sourceOnSd?"SD card":"USB")+" inserted. From MPC, hold SHIFT + MENU for two seconds to reopen the installer.",1132,1,Theme::muted,22);
             screen.rect(52,404,1176,1,Theme::line);
@@ -377,7 +381,7 @@ static int app(int argc,char**argv) {
             screen.button(28,605,258,"Browse plugins",true,!mutating,Icon::Right);
             screen.text(welcomeHideX,643,"Hide message",mutating?Theme::muted:Theme::ink,25,1210-welcomeHideX);
             screen.box(1222,619,30,30,hideNext?Theme::red:Theme::panel);if(hideNext)screen.icon(1225,622,Icon::Check,Theme::white);
-            screen.box(28,682,1224,98,Theme::lcd,Theme::lcd);screen.wrapped(46,713,status,1180,2,failed?0xffffbd91:Theme::white,22);
+            screen.box(28,682,1224,98,Theme::lcd,Theme::lcd);screen.wrapped(46,713,mutating||failed||completed||returning||progressFading?status:welcomeIdentity,1180,2,failed?0xffffbd91:Theme::white,22);
         }else{
         screen.text(28,43,confirming?(operation=="Uninstall"?"REMOVE PLUGIN":operation=="Update"?"UPDATE PLUGIN":"INSTALL PLUGIN"):"OPEN MPC PLUGIN CATALOG",Theme::ink,31);
         screen.box(setupX,8,setupWidth,40,Theme::panel);screen.icon(setupX+12,16,Icon::Cog,mutating?Theme::muted:Theme::ink);screen.text(setupX+48,36,"SETUP",mutating?Theme::muted:Theme::ink,23,setupWidth-60);
@@ -422,6 +426,7 @@ static int app(int argc,char**argv) {
         }
         if((!welcome&&(busy||progressFading))||(welcome&&(mutating||progressFading))){float value;{std::lock_guard<std::mutex> lock(progressMutex);value=progressValue;}const bool working=welcome?mutating:busy;const float t=working?1.0f:1.0f-float(fadeElapsed)/600;const float opacity=t*t*(3-2*t);const auto background=Theme::lcd;const int x=46,y=770,width=1180;auto faded=[&](uint32_t color){uint32_t result=0xff000000;for(int shift:{0,8,16})result|=uint32_t(((color>>shift)&255)*opacity+((background>>shift)&255)*(1-opacity))<<shift;return result;};screen.rect(x,y,width,8,faded(Theme::line));if(!working&&completed)screen.rect(x,y,width,8,faded(Theme::red));else if(value>=0)screen.rect(x,y,int(width*std::clamp(value,0.0f,1.0f)),8,faded(Theme::red));else screen.rect(x+int(((working?SDL_GetTicks():progressEnded)/4)%(width-140)),y,140,8,faded(Theme::red));}
         if(flow&&!welcome&&!progressFading){const auto pixel=screen.pixels[777*1280+46];if(busy?(pixel!=Theme::line&&pixel!=Theme::red):pixel!=Theme::lcd)throw std::runtime_error("Progress bar height or cleanup failed");}
+        if((flow||responsive)&&welcome&&!mutating&&!failed&&!completed&&!returning&&!progressFading){bool lettering=false;for(int y=690;y<714&&!lettering;++y)for(int x=46;x<1000;++x)if(screen.pixels[y*1280+x]!=Theme::lcd){lettering=true;break;}if(!lettering)throw std::runtime_error("Welcome identity is missing");}
         screen.present();++presents;dirty=false;
         if(!startupPresented){
             startupPresented=true;
@@ -719,6 +724,7 @@ int main(int argc,char**argv){try{
     if(argc==2&&std::string(argv[1])=="--pmu-update-v1")return pmu::serveUpdateWorker([](const auto& task,const auto& progress){return pmu::handleRuntimeTask(task,pmu::publisherKey,progress,MPC_MANAGER_VERSION);});
     if(argc==3&&std::string(argv[1])=="--pmu-finalize-v1"){pmu::finalizeRuntimeHandoff(argv[2],pmu::publisherKey);return 0;}
     if(argc==3&&std::string(argv[1])=="--pmu-recover-v1"){pmu::recoverRuntimeHandoff(argv[2],pmu::publisherKey);return 0;}
+    if(argc==3&&std::string(argv[1])=="--pmu-controller-recover-v1")return pmu::recoverControllerHandoff(argv[2]);
     if(argc==3&&std::string(argv[1])=="--pmu-complete-v1")return completeHandoff(argv[2])?0:1;
     if(argc==7&&std::string(argv[1])=="--pmu-gui-v1"){
         const fs::path source=argv[2],cache=argv[3];const auto context=pmu::guiRuntimeContext(cache.parent_path());if(context.at("source")!=source.string()||cache.filename()!="cache")throw std::runtime_error("GUI source changed before opening");if(mkdir(cache.c_str(),0700)!=0&&errno!=EEXIST)throw std::runtime_error("Cannot create private manager cache");if(completeHandoff(cache))return 75;

@@ -267,7 +267,11 @@ def build_signed_package(binary: Path, firmware_310: Path, setup_project: Path,
     identifier, _, signed = generation(payload, roles, version, architecture, "runtime", signer)
     files.update({"autorun/runtime/" + name: data for name, data in store(identifier, signed, architectures).items()})
     helper_payload = {}
+    controllers = {}
     with zipfile.ZipFile(io.BytesIO(helper)) as archive:
+        for arch in architectures:
+            suffix = "-aarch64" if arch == "aarch64" else ""
+            controllers[arch] = archive.read(packager.PREFIX + "manager-entry" + suffix + ".so")
         for name in archive.namelist():
             relative = name.removeprefix(packager.PREFIX)
             if relative.startswith(".pmu-versions/") and len(relative.split("/")) >= 3:
@@ -289,8 +293,15 @@ def build_signed_package(binary: Path, firmware_310: Path, setup_project: Path,
         "yesButtonText": "Open", "noButtonText": "Cancel"}]}}, indent=2) + "\n").encode()
     checked = ["autorun.json", "open.sh", *declared]
     files["autorun/autorun.check"] = hashlib.sha256(b"".join(files["autorun/" + name] for name in checked) + salt).hexdigest().encode()
-    files["USB-SHA256.json"] = encode({name: hashlib.sha256(data).hexdigest() for name, data in files.items()})
     outer_roles = {"deployment": "updates/deployment.json"}
+    policy = packager.controller_policy(controllers)
+    for arch in architectures:
+        path = "updates/controllers/" + arch + ".so"
+        files[path] = controllers[arch]
+        outer_roles["controller_v1_" + arch] = path
+    files["updates/controllers/policy.json"] = encode(policy)
+    outer_roles["controller_policy"] = "updates/controllers/policy.json"
+    files["USB-SHA256.json"] = encode({name: hashlib.sha256(data).hexdigest() for name, data in files.items() if name != "USB-SHA256.json"})
     for arch in architectures:
         outer_roles["update_worker_" + arch] = runtime_directory + "/" + roles["runtime_worker_" + arch]
     files["PMU-UPDATE.json"] = envelope(files, outer_roles, version, architecture, signer)

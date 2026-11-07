@@ -10,6 +10,7 @@
 #include <set>
 #include <thread>
 #include <vector>
+#include <filesystem>
 
 struct Thumbnail {
     int width=0,height=0;
@@ -19,10 +20,13 @@ struct Thumbnail {
 class ThumbnailCache {
 public:
     using Cancelled=std::function<bool()>;
-    using Fetch=std::function<std::vector<unsigned char>(const std::string&,const Cancelled&)>;
+    struct Request {std::string url,etag,lastModified;};
+    struct Response {std::vector<unsigned char> data;std::string etag{},lastModified{};bool unchanged=false;};
+    using Fetch=std::function<Response(const Request&,const Cancelled&)>;
     static constexpr size_t inputLimit=1024*1024,pixelLimit=1024*1024,cacheLimit=4*1024*1024;
+    static constexpr size_t storageLimit=32*1024*1024;
     static constexpr int width=128,height=80,dimensionLimit=2048;
-    explicit ThumbnailCache(Fetch fetch={});
+    explicit ThumbnailCache(Fetch fetch={},std::filesystem::path storage={},size_t storageBudget=storageLimit);
     ~ThumbnailCache();
     ThumbnailCache(const ThumbnailCache&)=delete;
     ThumbnailCache& operator=(const ThumbnailCache&)=delete;
@@ -34,8 +38,11 @@ public:
     static bool validUrl(const std::string& url);
     static Thumbnail decode(const std::vector<unsigned char>& encoded);
 private:
+    struct Storage;
     struct Entry {std::shared_ptr<const Thumbnail> image;uint64_t used=0;};
     Fetch fetch;
+    std::filesystem::path storagePath;
+    size_t storageBudget;
     mutable std::mutex mutex;
     std::condition_variable wake;
     std::vector<std::string> wanted;

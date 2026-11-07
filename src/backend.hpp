@@ -10,13 +10,9 @@
 #include <cstdint>
 namespace fs = std::filesystem;
 using Json = nlohmann::json;
-// Where a plugin is released. With an empty tagPrefix the release is the repository's latest one (poloq's layout: one
-// plugin per repository). With a tagPrefix the release is the tag tagPrefix + <catalog version>, for a repository that
-// publishes other releases too, and assetPrefix (when set) is the start of the package's exact file name.
 struct ReleaseSource {
     std::string repo, tagPrefix, assetPrefix;
-    ReleaseSource(std::string repository, std::string tags = {}, std::string assets = {}) : repo(std::move(repository)), tagPrefix(std::move(tags)), assetPrefix(std::move(assets)) {}
-    ReleaseSource(const char* repository) : repo(repository) {}
+    ReleaseSource(std::string repository, std::string tags, std::string assets) : repo(std::move(repository)), tagPrefix(std::move(tags)), assetPrefix(std::move(assets)) {}
 };
 struct Manager {
     fs::path usb, session, synths, settings;
@@ -30,9 +26,9 @@ struct Manager {
     void openCatalog();
     Json checkManagerUpdate();
     Json stageManagerUpdate(const Json& checkedRelease, const std::function<void(const std::string&)>& progress = {}, const std::function<void(float)>& amount = {});
-    void verifyLatestPlugin(const std::string& id, const ReleaseSource& source);
+    Json latestPluginRelease(const std::string& id, const ReleaseSource& source, bool refresh=false);
     Json installationOffer(const Json& item);
-    void installLatestPlugin(const std::string& id, const ReleaseSource& source, const std::function<void(const std::string&)>& progress = {}, const std::function<void(float)>& amount = {});
+    void installReleasePlugin(const std::string& id, const ReleaseSource& source, const std::function<void(const std::string&)>& progress = {}, const std::function<void(float)>& amount = {});
     std::vector<Json> list(const std::string& view);
     void install(const Json& item, const std::function<void(const std::string&)>& progress = {}, const std::function<void(float)>& amount = {});
     void remove(const Json& item);
@@ -47,6 +43,7 @@ struct Manager {
     bool darkTheme();
     void setDarkTheme(bool dark);
 private:
+    Json releaseLookups=Json::object();
     PluginStorage pluginStorage;
     bool nativePluginStorage=false,automaticPluginStorage=true;
     std::string pluginStorageIdentity,pluginStorageError;

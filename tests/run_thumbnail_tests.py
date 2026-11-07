@@ -9,7 +9,8 @@ import uuid
 
 ROOT = Path(__file__).resolve().parents[1]
 SOURCES = ('src/thumbnail.hpp', 'src/thumbnail.cpp', 'tests/thumbnail_test.cpp',
-           'tests/thumbnail_network_test.cpp', 'tests/thumbnail_https_fixture.py')
+           'tests/thumbnail_network_test.cpp', 'tests/thumbnail_https_fixture.py',
+           'src/crypto.hpp', 'src/crypto.cpp', 'src/metadata.hpp')
 
 
 def main():
@@ -32,7 +33,7 @@ def main():
     flags = ['-O1', '-g', '-fsanitize=address,undefined', '-fno-sanitize-recover=all',
              '-fno-omit-frame-pointer'] if args.sanitize else ['-O2']
     compile_prefix = ' '.join(['c++', '-std=c++17', '-Wall', '-Wextra', '-Werror', *flags,
-                              '-Isrc', '$(pkg-config --cflags libpng)', 'src/thumbnail.cpp'])
+                              '-Isrc', '$(pkg-config --cflags libpng)', 'src/thumbnail.cpp', 'src/crypto.cpp'])
     links = '-Wl,-Bstatic -lpng -ljpeg -lz -Wl,-Bdynamic -ldl -pthread'
     script = '\n'.join([
         compile_prefix + ' tests/thumbnail_test.cpp ' + links + ' -o /results/thumbnail-test',

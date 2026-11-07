@@ -35,7 +35,10 @@ int main(int argc,char** argv){
         };
         auto stage=[&](const auto& descriptor){const auto id=pmu::sha256Text(pmu::generationSpecToJson(descriptor).dump()+'\n');return store.stage(input,descriptor,key.proof(id,"helper"));};
         const auto first=stage(spec(1,fs::canonical(argv[1])));store.seed(first);
+        const auto signedInventory=read(root/"versions"/first/"generation.json"),signedProof=read(root/"versions"/first/"authorization.json");
+        save(root/"versions"/first/"._first.so","Mac sidecar");save(root/"versions"/first/".DS_Store","Finder metadata");
         {PmuLoaderFixture state{1,0,0,0,0,0,nullptr};pmu::HelperLoader loader(root/"versions",root,architecture,publisher);check(loader.start(&state)&&loader.healthy()&&state.version==1&&state.context_valid,"factory helper starts through a verified native module and stable host context");check(loader.generation()==first,"loader reports the selected generation");loader.stop();check(state.stopped==1&&!loader.healthy(),"stopping joins the payload contract before releasing its image");}
+        check(read(root/"versions"/first/"generation.json")==signedInventory&&read(root/"versions"/first/"authorization.json")==signedProof,"Mac metadata acceptance leaves signed inventory and authorization unchanged");
         const auto second=stage(spec(2,fs::canonical(argv[2])));store.activate(second);
         {PmuLoaderFixture state{1,0,0,0,0,0,nullptr};pmu::HelperLoader loader(root/"versions",root,architecture,publisher);check(loader.start(&state)&&state.version==2&&loader.healthy()&&!store.current()->pending,"changed native helper and bootstrap paths activate only after the payload readiness callback");check(std::string(state.host->bootstrap_script).find("changed-layout/entry/start.sh")!=std::string::npos,"bootstrap path comes from the complete generation roles");}
         store.activate(first);store.boot();store.confirm(first);store.activate(second);

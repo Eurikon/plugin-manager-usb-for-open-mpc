@@ -192,7 +192,10 @@ def extract_firmware(image, destination, *, controller_helper=False):
             helper = manager_package()._helper()
             helper.profile_seed(executable)
             with executable.open("rb") as source:
-                executable_hash = hashlib.file_digest(source, "sha256").hexdigest()
+                checksum = hashlib.sha256()
+                for block in iter(lambda: source.read(65536), b""):
+                    checksum.update(block)
+                executable_hash = checksum.hexdigest()
                 source.seek(4)
                 generation = "Gen2" if source.read(1) == b"\x02" else "Gen1"
             result.update(executable_sha256=executable_hash, controller_profile=generation + " OS 3.10")

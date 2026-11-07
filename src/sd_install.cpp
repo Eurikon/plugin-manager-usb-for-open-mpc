@@ -316,7 +316,7 @@ std::vector<Json> SdInstaller::targets() {
     return result;
 }
 Json SdInstaller::inspect() {
-    Json value={{"supported",available()},{"configured",false},{"installed",false},{"current",false},{"uuid",""},{"label",""},{"path",""},{"can_remove",false},{"reason",""}};
+    Json value={{"supported",available()},{"configured",false},{"installed",false},{"current",false},{"uuid",""},{"label",""},{"version",""},{"path",""},{"can_remove",false},{"reason",""}};
     if(!value["supported"].get<bool>())return value;
     const auto configured=configuredUuid(paths),pending=configuredUuid(paths,"installed-storage.removing");
     need(configured.empty()||pending.empty()||configured==pending,"Conflicting saved SD selections");
@@ -325,7 +325,7 @@ Json SdInstaller::inspect() {
     for(const auto& volume:volumes(paths,source,true,false))if(volume.uuid==uuid){
         const auto target=volume.root/installedFolder;const auto owned=receipt(target,uuid);
         value["label"]=volume.label;value["path"]=target.string();value["current"]=source==target;value["can_remove"]=true;
-        if(owned.value("schema",0)==2){bool complete=false;try{pmu::SourceRuntime runtime(target,paths.arch,paths.publisher);complete=runtime.choose(false).generation.spec.entrypoints.count("manager_"+paths.arch);}catch(const std::exception&){}value["installed"]=owned["installed"].get<bool>()&&complete;}
+        if(owned.value("schema",0)==2){bool complete=false;try{pmu::SourceRuntime runtime(target,paths.arch,paths.publisher);const auto selected=runtime.choose(false);complete=selected.generation.spec.entrypoints.count("manager_"+paths.arch);if(complete)value["version"]=selected.generation.spec.version;}catch(const std::exception&){}value["installed"]=owned["installed"].get<bool>()&&complete;}
         else value["installed"]=owned["installed"].get<bool>()&&present(target/".mpc-manager-id")&&present(target/"autorun/runtime"/managerRuntimePath("manager",paths.arch));
         if(!pending.empty()){value["installed"]=false;value["reason"]="SD removal was interrupted. Select Remove to finish.";}
         else if(!value["installed"].get<bool>())value["reason"]="SD installation is incomplete. Reinstall or remove it.";
