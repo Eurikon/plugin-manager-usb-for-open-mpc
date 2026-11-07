@@ -1,6 +1,6 @@
 # Plugin Manager USB for OPEN MPC
 
-[![Download installer](https://img.shields.io/badge/Download-1.3.1-brightgreen?logo=github)](https://github.com/Eurikon/plugin-manager-usb-for-open-mpc/releases/download/v1.3.1/plugin-manager-usb-v1.3.1.zip)
+[![Download installer](https://img.shields.io/badge/Download-1.3.2-brightgreen?logo=github)](https://github.com/Eurikon/plugin-manager-usb-for-open-mpc/releases/download/v1.3.2/plugin-manager-usb-v1.3.2.zip)
 [![Latest release](https://img.shields.io/github/v/release/Eurikon/plugin-manager-usb-for-open-mpc?logo=github&label=Release)](https://github.com/Eurikon/plugin-manager-usb-for-open-mpc/releases/latest)
 [![Changelog](https://img.shields.io/badge/Changelog-History-blue?logo=github)](CHANGELOG.md)
 [![User guide](https://img.shields.io/badge/Guide-Website-blue?logo=githubpages)](https://eurikon.github.io/plugin-manager-usb-for-open-mpc/guide.html)
@@ -131,7 +131,7 @@ The same interface is used for both sources; each source keeps its own preferenc
 
 ![Plugin Manager SETUP page](site/assets/manager-setup.png)
 
-- **Plugin Manager installation:** install, update/reinstall or uninstall the SD copy. **Update manager** copies the current session's manager onto SD; it is separate from downloading a new release.
+- **Plugin Manager installation:** install, update/reinstall or uninstall the SD copy. From USB, **Update manager** copies that manager onto SD. It is disabled when running from the SD installation itself; use **Check for updates** below to download a newer release directly onto SD.
 - **Plugin Manager updates:** choose **Check for updates** to check GitHub Releases. If a supported newer release is available, **Install update** opens a confirmation before downloading and installing it.
 - **Welcome message:** enable **Show on opening** to restore the welcome screen for this source.
 

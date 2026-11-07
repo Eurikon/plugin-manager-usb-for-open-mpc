@@ -415,6 +415,8 @@ Internal disks and SSDs are excluded.
 The internal helper records the SD UUID; this selection does not change the plugin package target described above.
 
 SETUP's **Update manager** copies the current runtime to SD.
+It is disabled for the active SD installation, and the backend rejects copying a directory onto itself before changing the SD files or helper selection.
+An SD session uses **Check for updates** to download a newer published release.
 Removal validates the installation receipt and owned file identities before deleting recognized application files and clearing the SD selection.
 History, preferences, local packages and unrelated files are retained, so a directory can remain after uninstall.
 Modified or unrecognized application files require inspection rather than blind deletion.

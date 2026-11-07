@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.3.2 — 07-11-2026
+
+- Disable copying the manager onto its own active SD installation and reject self-copy attempts before changing installation records. Use SETUP's **Check for updates** to update the running SD copy.
+
 ## 1.3.1 — 07-11-2026
 
 - Support Unicode package filenames during extraction, preserving path and checksum checks and reporting archive-reader errors accurately.

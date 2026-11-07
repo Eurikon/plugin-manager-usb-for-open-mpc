@@ -124,6 +124,7 @@ def main():
         "src/migration_package.hpp", "build/migration_package.o",
         "src/session_handoff.hpp", "build/session_handoff.o",
         "src/runtime_handoff.hpp", "build/runtime_handoff.o",
+        "src/helper_controller_update.hpp", "build/helper_controller_update.o",
         "src/runtime_worker.hpp", "build/runtime_worker.o",
         "build/checksum.o", "build/crypto.o", "build/version_store.o", "build/source_runtime.o",
         "build/thumbnail.o", "build/backend.o", "build/plugin_storage.o", "build/sd_install.o", "build/manager_update.o", "build/manager", "build/font.ttf")]
@@ -190,7 +191,7 @@ JSON
         downloader.chmod(0o755)
     script = """set -eu
 c++ -std=c++17 -O2 -Wall -Wextra -Werror -DMPC_MANAGER_SD_FIXTURE -Isrc -Itests -I/opt/sdl/include/SDL2 $(pkg-config --cflags freetype2) -c src/main.cpp -o /results/main.o
-c++ /results/main.o build/backend.o build/plugin_storage.o build/sd_install.o build/manager_update.o build/thumbnail.o build/source_runtime.o build/version_store.o build/checksum.o build/crypto.o build/native_image.o build/update_worker.o build/update_bundle.o build/update_migration.o build/runtime_session.o build/migration_package.o build/session_handoff.o build/runtime_handoff.o build/runtime_worker.o -ldl -o /results/manager-ui $(/opt/sdl/bin/sdl2-config --static-libs) $(pkg-config --libs freetype2) -larchive -Wl,-Bstatic -lpng -ljpeg -lz -Wl,-Bdynamic
+c++ /results/main.o build/backend.o build/plugin_storage.o build/sd_install.o build/manager_update.o build/thumbnail.o build/source_runtime.o build/version_store.o build/checksum.o build/crypto.o build/native_image.o build/update_worker.o build/update_bundle.o build/update_migration.o build/runtime_session.o build/migration_package.o build/session_handoff.o build/runtime_handoff.o build/helper_controller_update.o build/runtime_worker.o -ldl -o /results/manager-ui $(/opt/sdl/bin/sdl2-config --static-libs) $(pkg-config --libs freetype2) -larchive -Wl,-Bstatic -lpng -ljpeg -lz -Wl,-Bdynamic
 for mode in sd-unavailable sd-empty sd-cancel sd-install sd-remove sd-remove-current sd-hidden sd-themes sd-updates sd-update-error sd-self-update sd-self-update-fail sd-install-dark legacy-smoke; do
   # Shared mounts can change inode identities after atomic replacement.
   root=$(mktemp -d "/tmp/pmu-ui-$mode.XXXXXX")

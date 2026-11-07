@@ -339,6 +339,7 @@ void SdInstaller::install(const std::string& uuid,const std::function<void(const
     need(configuredUuid(paths,"installed-storage.removing").empty(),"Finish the interrupted SD removal before installing");
     need(prior.empty()||prior==uuid,"Remove the existing SD installation before selecting another card");
     const auto volume=selectVolume(paths,source,uuid,true);const auto target=volume.root/installedFolder;
+    need(!present(target)||!fs::equivalent(source,target),"Already running from this SD installation. Use Check for updates instead.");
     need(volume.device!=paths.fileDevice(source)||source==target,"Choose the SD card, not the installation USB");
     if(present(source/"autorun/runtime/.pmu-versions")){installVersioned(paths,source,volume,progress,amount);return;}
     const auto expected=runtimeManifest(paths);const auto runtime=source/"autorun/runtime";plainPath(runtime);

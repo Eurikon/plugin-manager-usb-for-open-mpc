@@ -274,7 +274,7 @@ static int app(int argc,char**argv) {
                 sdReady=success;if(success){sdCards=std::move(result.cards);sdPage=std::clamp(sdPage,0,std::max(0,(int(sdCards.size())-1)/4));if(sdView)status=sdState.value("configured",false)?sdState.value("reason",""):sdCards.empty()?"No suitable SD card found. Insert your card and choose Refresh.":"Select an SD card. Installation starts only after confirmation.";}
             }else if(work==Work::SdInstall||work==Work::SdRemove){
                 mutating=false;sdConfirm=sdPicker=false;
-                if(success){completed=true;failed=false;sdReady=true;status=work==Work::SdInstall?(sourceOnSd?"Updated on SD. Return to MPC; keep the SD card inserted.":"Installed on SD. Return to MPC and safely eject the USB. Open the manager by holding SHIFT + MENU for two seconds."):"Manager removed from SD. Plugins, history, preferences and local packages were kept.";if(work==Work::SdRemove&&sdSourceRemoval)returnToMpc();}
+                if(success){completed=true;failed=false;sdReady=true;status=work==Work::SdInstall?"Installed on SD. Return to MPC and safely eject the USB. Open the manager by holding SHIFT + MENU for two seconds.":"Manager removed from SD. Plugins, history, preferences and local packages were kept.";if(work==Work::SdRemove&&sdSourceRemoval)returnToMpc();}
                 else sdSourceRemoval=false;
                 progressEnded=SDL_GetTicks();progressFading=true;
             }else if(work==Work::List&&activeRequest==request&&activeView==view){
@@ -327,8 +327,8 @@ static int app(int argc,char**argv) {
                 for(const auto& card:sdCards)if(card.value("uuid","")==sdSelected)label=card.value("label",card.value("path","SD card"));
                 screen.box(28,143,1224,442,Theme::panel);
                 screen.text(52,205,remove?"Remove this manager from SD?":"Install this manager on "+label+"?",Theme::ink,34,1150);
-                screen.wrapped(52,268,remove?"Your plugins, installation history, preferences and local packages stay on the card.":sourceOnSd?"After updating, return to MPC. Keep the SD card inserted.":"After installation, return to MPC and safely eject the USB. Keep the SD card inserted; hold SHIFT + MENU for two seconds to open the manager.",1150,2,Theme::muted,22);
-                screen.text(52,359,remove?"Plugin Manager folder: Plugin Manager USB":sourceOnSd?"The current session remains available until you return to MPC.":"This USB session remains available until you return to MPC.",Theme::muted,22,1150);
+                screen.wrapped(52,268,remove?"Your plugins, installation history, preferences and local packages stay on the card.":"After installation, return to MPC and safely eject the USB. Keep the SD card inserted; hold SHIFT + MENU for two seconds to open the manager.",1150,2,Theme::muted,22);
+                screen.text(52,359,remove?"Plugin Manager folder: Plugin Manager USB":"This USB session remains available until you return to MPC.",Theme::muted,22,1150);
                 screen.button(28,605,340,remove?"Confirm removal":"Confirm install",true,!busy&&!startupHealth.valid(),remove?Icon::Trash:Icon::Download);
                 screen.button(380,605,220,"Cancel",false,!mutating);
             }else if(sdPicker){
@@ -345,7 +345,7 @@ static int app(int argc,char**argv) {
                 screen.wrapped(96,217,detail,790,2,Theme::muted,22);
                 if(sdAvailable&&sdReady){
                     screen.text(96,274,"Plugin Manager folder: Plugin Manager USB",Theme::muted,22,790);
-                    screen.button(918,155,310,installed?(sdState.value("installed",false)?"Update manager":"Reinstall manager"):"Install to SD",true,!busy&&(!installed||(sdState.value("can_remove",false)&&!sdState.value("removing",false))),Icon::Download);
+                    screen.button(918,155,310,installed?(sdState.value("installed",false)?"Update manager":"Reinstall manager"):"Install to SD",true,!busy&&!sdState.value("current",false)&&(!installed||(sdState.value("can_remove",false)&&!sdState.value("removing",false))),Icon::Download);
                     if(installed)screen.button(918,225,310,"Uninstall manager",false,!busy&&sdState.value("can_remove",false),Icon::Trash);
                 }
                 screen.box(28,309,1224,150,Theme::panel);screen.icon(52,333,Icon::History,Theme::red);screen.text(96,349,"Plugin Manager updates",Theme::ink,28,790);
@@ -571,7 +571,8 @@ static int app(int argc,char**argv) {
                 else if(step==8&&welcome){std::fprintf(stderr,"PASS: SD selection cancellation and refresh preserve installation state\n");click(1100,90);step=100;}
             }else if(mode=="sd-remove"||mode=="sd-remove-current"){
                 if(step==0&&listReady){click(1070,475);++step;}
-                else if(step==1&&sdView&&sdReady){if(!sdState.value("configured",false)||!sdState.value("can_remove",false))throw std::runtime_error("SD removal fixture unavailable");click(1070,254);++step;}
+                else if(step==1&&sdView&&sdReady){if(!sdState.value("configured",false)||!sdState.value("can_remove",false))throw std::runtime_error("SD removal fixture unavailable");if(mode=="sd-remove-current"){if(!sourceOnSd)throw std::runtime_error("Current SD source not identified");click(1070,185);step=10;}else{click(1070,254);++step;}}
+                else if(step==10){if(sdConfirm||mutating||work==Work::SdInstall)throw std::runtime_error("SD session permitted copying the manager onto itself");std::fprintf(stderr,"PASS: SD session ignores its disabled copy button while retaining uninstall\n");capture("sd-copy-disabled.bmp");click(1070,254);step=2;}
                 else if(step==2){if(!sdConfirm||sdOperation!="Remove")throw std::runtime_error("SD removal confirmation absent");capture("sd-remove-confirm.bmp");click(470,634);++step;}
                 else if(step==3){if(sdConfirm||!sdState.value("configured",false))throw std::runtime_error("Cancelled SD removal changed state");click(1070,254);++step;}
                 else if(step==4){click(180,634);click(180,634);click(1100,90);step=mode=="sd-remove-current"?99:5;}
@@ -667,7 +668,7 @@ static int app(int argc,char**argv) {
                     if(y>=143&&y<585&&x>=28&&x<1252&&(y-143)%113<103){const int index=sdPage*4+(y-143)/113;if(index<int(sdCards.size()))sdSelected=sdCards[index].value("uuid","");}
                     if(y>=605&&y<663){if(x>=28&&x<208&&sdPage>0){--sdPage;sdSelected.clear();}else if(x>=220&&x<400&&(sdPage+1)*4<int(sdCards.size())){++sdPage;sdSelected.clear();}else if(x>=942&&x<1252&&!sdSelected.empty()){sdOperation="Install";sdConfirm=true;}}
                 }else if(x>=918&&x<1228){
-                    if(y>=155&&y<213){if(sdState.value("configured",false)||sdState.value("can_remove",false)){if(sdState.value("can_remove",false)&&!sdState.value("removing",false)){sdSelected=sdState.value("uuid","");sdOperation="Install";sdConfirm=true;}}else{sdPicker=true;sdSelected.clear();}}
+                    if(y>=155&&y<213&&!sdState.value("current",false)){if(sdState.value("configured",false)||sdState.value("can_remove",false)){if(sdState.value("can_remove",false)&&!sdState.value("removing",false)){sdSelected=sdState.value("uuid","");sdOperation="Install";sdConfirm=true;}}else{sdPicker=true;sdSelected.clear();}}
                     else if(y>=225&&y<283&&sdState.value("can_remove",false)){sdOperation="Remove";sdConfirm=true;}
                 }
                 continue;
