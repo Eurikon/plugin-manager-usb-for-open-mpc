@@ -26,10 +26,26 @@ class ReleaseArchiveTests(unittest.TestCase):
         shutil.copytree(BUNDLE, self.bundle)
         self.version = json.loads((self.bundle / "PMU-UPDATE.json").read_text())["generation"]["version"]
         self.archive = self.root / ("plugin-manager-usb-v" + self.version + ".zip")
+        core_spec = importlib.util.spec_from_file_location("release_test_core_inputs", ROOT / "tests/run_update_core.py")
+        core = importlib.util.module_from_spec(core_spec)
+        core_spec.loader.exec_module(core)
+        self.lifecycle = {}
+        for arch in RELEASE.ARCHITECTURES:
+            directory = self.root / arch
+            directory.mkdir()
+            log = directory / "tests.log"
+            log.write_text("".join("PASS: update-return-reopen " + medium + " with concurrent helper confirmation\n" for medium in ("sd", "usb")))
+            report = directory / "results.json"
+            report.write_text(json.dumps({"arch": arch, "passed": True, "returncode": 0,
+                "update_lifecycle": {"sd": True, "usb": True}, "checks_by_suite": {"runtime-handoff": 2},
+                "files": {name: RELEASE.digest(ROOT / name) for name in core.SOURCES},
+                "tests_sha256": RELEASE.digest(log)}))
+            self.lifecycle[arch] = report
 
     def receipt(self):
         value = {"schema": 1, "version": self.version, "archive_sha256": RELEASE.digest(self.archive),
-                 "validators": {arch: {} for arch in RELEASE.ARCHITECTURES}}
+                 "validators": {arch: {} for arch in RELEASE.ARCHITECTURES},
+                 "lifecycle": RELEASE.validate_lifecycle(self.lifecycle)}
         RELEASE.receipt_path(self.archive).write_text(json.dumps(value))
 
     def test_archive_has_only_signed_files_and_envelope(self):
@@ -85,8 +101,50 @@ class ReleaseArchiveTests(unittest.TestCase):
         validators = {arch: ROOT / "tools/release_archive.py" for arch in RELEASE.ARCHITECTURES}
         with patch.object(RELEASE, "run", return_value="sha256:" + "1" * 64), patch.object(RELEASE, "validate", side_effect=ValueError("Baseline refused ZIP")):
             with self.assertRaisesRegex(ValueError, "Baseline refused"):
-                RELEASE.prepare(self.bundle, self.archive, validators)
+                RELEASE.prepare(self.bundle, self.archive, validators, lifecycle_reports=self.lifecycle)
         self.assertFalse(RELEASE.receipt_path(self.archive).exists())
+
+    def test_missing_lifecycle_reports_prevent_archiving(self):
+        with self.assertRaisesRegex(ValueError, "reports are required"):
+            RELEASE.prepare(self.bundle, self.archive, {})
+        self.assertFalse(self.archive.exists())
+
+    def test_stale_lifecycle_sources_prevent_archiving(self):
+        path = self.lifecycle["armv7"]
+        value = json.loads(path.read_text())
+        value["files"]["src/runtime_handoff.cpp"] = "0" * 64
+        path.write_text(json.dumps(value))
+        with self.assertRaisesRegex(ValueError, "stale"):
+            RELEASE.prepare(self.bundle, self.archive, {}, lifecycle_reports=self.lifecycle)
+        self.assertFalse(self.archive.exists())
+
+    def test_incomplete_lifecycle_prevents_archiving(self):
+        path = self.lifecycle["aarch64"]
+        value = json.loads(path.read_text())
+        value["update_lifecycle"]["sd"] = False
+        path.write_text(json.dumps(value))
+        with self.assertRaisesRegex(ValueError, "failed"):
+            RELEASE.prepare(self.bundle, self.archive, {}, lifecycle_reports=self.lifecycle)
+        self.assertFalse(self.archive.exists())
+
+    def test_changed_lifecycle_report_prevents_publication(self):
+        RELEASE.write_archive(self.bundle, self.archive)
+        self.receipt()
+        with self.lifecycle["armv7"].open("a") as report:
+            report.write("\n")
+        with patch.object(RELEASE, "run") as command:
+            with self.assertRaisesRegex(ValueError, "Lifecycle report changed"):
+                RELEASE.publish(self.archive, "OWNER/REPO", self.root / "notes")
+            command.assert_not_called()
+
+    def test_changed_lifecycle_log_prevents_publication(self):
+        RELEASE.write_archive(self.bundle, self.archive)
+        self.receipt()
+        (self.lifecycle["aarch64"].parent / "tests.log").write_text("changed")
+        with patch.object(RELEASE, "run") as command:
+            with self.assertRaisesRegex(ValueError, "Lifecycle test log changed"):
+                RELEASE.publish(self.archive, "OWNER/REPO", self.root / "notes")
+            command.assert_not_called()
 
 
 if __name__ == "__main__":

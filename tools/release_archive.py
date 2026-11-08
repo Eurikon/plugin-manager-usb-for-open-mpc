@@ -3,6 +3,7 @@
 import argparse
 from datetime import datetime
 import hashlib
+import importlib.util
 import json
 from pathlib import Path
 import re
@@ -123,7 +124,39 @@ def receipt_path(archive):
     return Path(str(archive) + ".validation.json")
 
 
-def prepare(bundle, archive, validator_paths, images=IMAGES):
+def validate_lifecycle(paths, expected=None):
+    if not paths or set(paths) != set(ARCHITECTURES):
+        raise ValueError("Both architecture update-return-reopen reports are required")
+    project = Path(__file__).resolve().parents[1]
+    spec = importlib.util.spec_from_file_location("pmu_update_core_inputs", project / "tests/run_update_core.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    inputs = {name: digest(project / name) for name in module.SOURCES}
+    results = {}
+    for arch in ARCHITECTURES:
+        path = Path(paths[arch]).resolve()
+        if not path.is_file() or path.stat().st_size > 1024 * 1024:
+            raise ValueError("Missing or oversized lifecycle report: " + arch)
+        checksum = digest(path)
+        if expected and checksum != expected[arch]["sha256"]:
+            raise ValueError("Lifecycle report changed: " + arch)
+        value = json.loads(path.read_text())
+        if (value.get("arch") != arch or value.get("passed") is not True or value.get("returncode") != 0
+                or value.get("update_lifecycle") != {"sd": True, "usb": True}
+                or value.get("files") != inputs or value.get("checks_by_suite", {}).get("runtime-handoff", 0) <= 0):
+            raise ValueError("Missing, failed or stale update-return-reopen validation: " + arch)
+        log = path.parent / "tests.log"
+        if not log.is_file() or log.stat().st_size > 4 * 1024 * 1024 or digest(log) != value.get("tests_sha256"):
+            raise ValueError("Lifecycle test log changed: " + arch)
+        text = log.read_text()
+        if any(text.count("PASS: update-return-reopen " + medium + " with concurrent helper confirmation\n") != 1 for medium in ("sd", "usb")):
+            raise ValueError("Incomplete update-return-reopen test log: " + arch)
+        results[arch] = {"path": str(path), "sha256": checksum, "tests_sha256": digest(log)}
+    return results
+
+
+def prepare(bundle, archive, validator_paths, images=IMAGES, *, lifecycle_reports=None):
+    lifecycle = validate_lifecycle(lifecycle_reports)
     version = write_archive(bundle, archive)
     validators = {}
     for arch in ARCHITECTURES:
@@ -134,7 +167,7 @@ def prepare(bundle, archive, validator_paths, images=IMAGES):
     checksum = digest(archive)
     Path(str(archive) + ".sha256").write_text(checksum + "  " + Path(archive).name + "\n")
     receipt = {"schema": 1, "date": datetime.now().strftime("%d-%m-%Y"), "version": version,
-               "archive_sha256": checksum, "validators": validators, "reports": reports}
+               "archive_sha256": checksum, "validators": validators, "reports": reports, "lifecycle": lifecycle}
     receipt_path(archive).write_text(json.dumps(receipt, indent=2) + "\n")
     return receipt
 
@@ -144,7 +177,8 @@ def checked_receipt(archive):
     receipt = json.loads(receipt_path(archive).read_text())
     if (receipt.get("schema") != 1 or receipt.get("archive_sha256") != digest(archive)
             or archive.name != "plugin-manager-usb-v" + receipt.get("version", "") + ".zip"
-            or set(receipt.get("validators", {})) != set(ARCHITECTURES)):
+            or set(receipt.get("validators", {})) != set(ARCHITECTURES)
+            or set(receipt.get("lifecycle", {})) != set(ARCHITECTURES)):
         raise ValueError("Release ZIP has no matching final-archive acceptance receipt")
     return receipt
 
@@ -153,6 +187,7 @@ def publish(archive, repository, notes):
     if not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", repository):
         raise ValueError("Invalid release repository")
     receipt = checked_receipt(archive)
+    validate_lifecycle({arch: value["path"] for arch, value in receipt["lifecycle"].items()}, receipt["lifecycle"])
     with tempfile.TemporaryDirectory(prefix="pmu-release-upload-") as temporary:
         root = Path(temporary)
         upload = root / Path(archive).name
@@ -182,6 +217,7 @@ def main():
     create.add_argument("archive", type=Path)
     for arch in ARCHITECTURES:
         create.add_argument("--validator-" + arch, required=True, type=Path)
+        create.add_argument("--lifecycle-" + arch, required=True, type=Path)
     upload = commands.add_parser("publish")
     upload.add_argument("archive", type=Path)
     upload.add_argument("--repo", required=True)
@@ -189,7 +225,8 @@ def main():
     args = parser.parse_args()
     try:
         if args.command == "prepare":
-            prepare(args.bundle, args.archive, {arch: getattr(args, "validator_" + arch) for arch in ARCHITECTURES})
+            prepare(args.bundle, args.archive, {arch: getattr(args, "validator_" + arch) for arch in ARCHITECTURES},
+                    lifecycle_reports={arch: getattr(args, "lifecycle_" + arch) for arch in ARCHITECTURES})
             print("Final ZIP accepted by both older-updater validators; checksum and receipt saved.")
         else:
             print(publish(args.archive, args.repo, args.notes_file))

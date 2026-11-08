@@ -254,6 +254,12 @@ void VersionStore::activate(const std::string& id,const std::string& expected){
     impl->record("healthy.json",{before->active,"",false,false});impl->record("active.json",{id,before->active,true,false});
 }
 std::optional<Generation> VersionStore::current(){auto guard=impl->lock();const auto value=impl->state("active.json");if(!value)return {};return impl->generation(value->active,value->pending);}
+std::optional<Generation> VersionStore::observe(){
+    // Readiness observers must not lock out the helper publishing its confirmation.
+    impl->recheck();const auto before=impl->state("active.json");if(!before)return {};
+    auto result=impl->generation(before->active,before->pending);impl->recheck();const auto after=impl->state("active.json");
+    need(after&&after->active==before->active,"Selected version changed during readiness observation");result.pending=after->pending;return result;
+}
 Generation VersionStore::inspect(const std::string& id){auto guard=impl->lock();return impl->generation(id);}
 bool VersionStore::offer(const std::string& id){
     auto guard=impl->lock();need(!impl->profile.empty(),"A universal update offer requires a device profile");const auto candidate=impl->generation(id);need(candidate.spec.architecture=="universal"||candidate.spec.architecture==impl->profile,"Update offer does not support this device profile");const auto before=impl->state("active.json");need(before.has_value(),"A universal update offer needs an initialized profile");const auto selected=impl->generation(before->active);

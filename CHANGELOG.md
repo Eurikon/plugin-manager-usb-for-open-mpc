@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.4.1 — 08-11-2026
+
+- Fix automatic updates returning to the previous version when helper startup and the handover readiness check compete for the version lock. Readiness now observes verified state without blocking helper confirmation.
+- Require current-source Gen1 and Gen2 lifecycle tests before release packaging and publication, including concurrent helper confirmation, return to MPC and repeated reopening from SD and USB.
+
 ## 1.4.0 — 08-11-2026
 
 - Add verified recovery around plugin installation, updates and removal, with free-space and symbolic-link checks before package scripts run.

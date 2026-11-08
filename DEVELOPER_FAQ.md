@@ -698,9 +698,19 @@ Retain the older source and object identities with the release evidence.
 Create the final ZIP through the mandatory acceptance gate:
 
 ```sh
+python3 tests/run_update_core.py --arch armv7 --output build/release-core-armv7
+python3 tests/run_update_core.py --arch aarch64 --output build/release-core-aarch64
 python3 tools/release_archive.py prepare "$OUTPUT_DIR/usb" "$OUTPUT_DIR/plugin-manager-usb-v<version>.zip" \
-  --validator-armv7 /path/to/armv7-validator --validator-aarch64 /path/to/aarch64-validator
+  --validator-armv7 /path/to/armv7-validator --validator-aarch64 /path/to/aarch64-validator \
+  --lifecycle-armv7 build/release-core-armv7/results.json \
+  --lifecycle-aarch64 build/release-core-aarch64/results.json
 ```
+
+Both native lifecycle suites must pass the complete update handover, concurrent helper confirmation, return to MPC and repeated reopening from USB and SD layouts.
+They also check recovery after failed startup.
+The release gate rejects missing, failed or stale-source reports and changed logs, then rechecks them before publication.
+These are isolated native tests with controlled MPC-service fixtures; hardware observations retain their separately recorded scope.
+Download, staging and incoming-worker readiness alone do not establish successful activation.
 
 Both older-updater validators must reject a copy containing the previously problematic empty `local-plugins/` ZIP entry, then accept the exact final archive.
 The final ZIP contains only signed files and its envelope; empty user-data folders are not archived.

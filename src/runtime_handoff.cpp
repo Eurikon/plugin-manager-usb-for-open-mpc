@@ -60,7 +60,7 @@ void restore(const fs::path& path,const std::string& previous,const std::string&
 void helperHealth(const SessionHandoff& item,const std::string& publisher){
     if(item.helperGeneration.empty())return;
     VersionStore store(item.helper/".pmu-versions",geteuid(),[](const auto& file){return fileSha256(file);},{},false,[&](const auto& id,const auto&,const auto& approval){verifyAuthorization(publisher,"helper",id,approval);});const auto deadline=std::chrono::steady_clock::now()+std::chrono::seconds(45);
-    for(;;){const auto current=store.current();need(current&&current->id==item.helperGeneration,"The updated helper failed its startup check");if(!current->pending)return;need(std::chrono::steady_clock::now()<deadline,"Updated helper startup confirmation timed out");usleep(250000);}
+    for(;;){const auto current=store.observe();need(current&&current->id==item.helperGeneration,"The updated helper failed its startup check");if(!current->pending)return;need(std::chrono::steady_clock::now()<deadline,"Updated helper startup confirmation timed out");usleep(250000);}
 }
 }
 void beginRuntimeHandoff(const fs::path& capsule,const std::string& publisher){

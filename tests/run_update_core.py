@@ -106,7 +106,9 @@ def main():
         counts = {name: int(count) for count, name in re.findall(r"PASS: (\d+) (version-store|update-worker|update-bundle|helper-loader|helper-controller|publisher-authorization|source-runtime|filesystem-identity|update-migration|runtime-session|runtime-worker|session-handoff|runtime-handoff)", text)}
         report["checks_by_suite"] = counts
         report["checks"] = sum(counts.values())
-        if not report["passed"] or set(counts) != {"version-store", "update-worker", "update-bundle", "helper-loader", "helper-controller", "publisher-authorization", "source-runtime", "filesystem-identity", "update-migration", "runtime-session", "runtime-worker", "session-handoff", "runtime-handoff"}:
+        report["tests_sha256"] = hashlib.sha256((output / "tests.log").read_bytes()).hexdigest()
+        report["update_lifecycle"] = {medium: text.count("PASS: update-return-reopen " + medium + " with concurrent helper confirmation\n") == 1 for medium in ("sd", "usb")}
+        if not report["passed"] or not all(report["update_lifecycle"].values()) or set(counts) != {"version-store", "update-worker", "update-bundle", "helper-loader", "helper-controller", "publisher-authorization", "source-runtime", "filesystem-identity", "update-migration", "runtime-session", "runtime-worker", "session-handoff", "runtime-handoff"}:
             raise RuntimeError("Update-core verification failed; inspect " + str(output / "tests.log"))
         print(f"PASS: {args.arch}, {report['checks']} checks" + (", fatal ASan/UBSan" if args.sanitize else ""))
     except Exception as error:

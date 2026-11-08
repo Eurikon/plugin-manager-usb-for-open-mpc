@@ -5,6 +5,8 @@
 #include <iostream>
 #include <vector>
 #include <sys/stat.h>
+#include <sys/file.h>
+#include <fcntl.h>
 #include <sys/wait.h>
 #include <unistd.h>
 
@@ -53,6 +55,14 @@ int main(){
             check(store.boot()->id==b&&!store.current()->pending,"confirmed release survives later boots");
             const auto c=store.stage(f.input,f.spec("3.0.0",{{"other/program","third release"}}));store.activate(c);store.boot();store.confirm(c);save(f.store/"user-file","keep");store.prune();
             check(!fs::exists(f.store/a)&&fs::exists(f.store/b)&&fs::exists(f.store/c),"retirement keeps current and one previous generation");check(read(f.store/"user-file")=="keep","retirement preserves unrelated files");
+        }
+        {
+            Fixture f(root/"readiness-observation");auto store=f.open();check(!store.observe(),"empty readiness observation has no selected generation");
+            const auto a=store.stage(f.input,f.spec("1.0.0"));store.seed(a);const auto b=store.stage(f.input,f.spec("2.0.0",{{"program","updated"}}));store.activate(b);store.boot();
+            const auto state=read(f.store/"active.json");const int lock=open((f.store/"update.lock").c_str(),O_RDWR|O_CLOEXEC);check(lock>=0&&flock(lock,LOCK_EX|LOCK_NB)==0,"another process may own the confirmation lock");
+            rejects([&]{store.current();},"mutating-store lock exclusion remains enforced");const auto pending=store.observe();check(pending&&pending->id==b&&pending->pending,"readiness observes a pending generation without competing for its lock");check(read(f.store/"active.json")==state,"readiness observation does not change startup attempts or confirmation");
+            close(lock);store.confirm(b);const auto confirmed=store.observe();check(confirmed&&confirmed->id==b&&!confirmed->pending,"readiness sees completed helper confirmation");
+            save(f.store/b/"program","corrupt");rejects([&]{store.observe();},"readiness still rejects changed signed payload bytes");
         }
         {
             Fixture f(root/"architecture-health");pmu::VersionStore first(f.store,geteuid(),hash,{},true,{},"armv7"),second(f.store,geteuid(),hash,{},true,{},"aarch64");

@@ -23,6 +23,9 @@ fs::path source,newBase,rollbackBase;
 std::string imageHash,publisher,newGeneration;
 bool failStart=false,failMpc=false;
 bool mpcRunning=false,failHelper=false,controllerMode=false;
+bool confirmHelper=false;
+std::atomic<bool> helperConfirming{false},helperConfirmationFailed{false};
+std::string pendingHelper;
 unsigned mpcStarts=0;
 unsigned mpcStops=0;
 unsigned unitQueries=0;
@@ -49,7 +52,16 @@ int runtimeCommand(const std::vector<std::string>& arguments,const fs::path&,std
         const auto capsule=readSessionHandoff(arguments.back());const auto mode=controllerMode?"--pmu-controller-recover-v1":"--pmu-recover-v1";const auto program=controllerMode?capsule.rollbackBase/"controller-recovery":capsule.rollbackWorker.executable;check(arguments.size()==11&&arguments[2]=="--collect"&&arguments[4]=="--property=RuntimeMaxSec=180"&&arguments[6]=="--property=TimeoutStopSec=180"&&arguments[7].find(mode)!=std::string::npos&&arguments[7].find(program.string())!=std::string::npos,"bounded independent recovery retains the correct recovery program");save(capsule.rollbackBase/"handoff.accepted",capsule.generation+'\n');return 0;
     }
     if(arguments==std::vector<std::string>({"/bin/systemctl","stop","acvs"})){mpcRunning=false;++mpcStops;return 0;}
-    check(arguments==std::vector<std::string>({"/bin/systemctl","start","acvs"}),"handover only starts the identified MPC application service");++mpcStarts;if(failMpc)return 1;mpcRunning=true;if(failHelper){VersionStore helper(helperRoot/".pmu-versions",geteuid(),[](const auto& file){return fileSha256(file);});helper.boot();failHelper=false;}return 0;
+    check(arguments==std::vector<std::string>({"/bin/systemctl","start","acvs"}),"handover only starts the identified MPC application service");++mpcStarts;if(failMpc)return 1;mpcRunning=true;if(failHelper){VersionStore helper(helperRoot/".pmu-versions",geteuid(),[](const auto& file){return fileSha256(file);});helper.boot();failHelper=false;}
+    if(confirmHelper){
+        supervisors.emplace_back([]{
+            try{VersionStore helper(helperRoot/".pmu-versions",geteuid(),[](const auto& file){return fileSha256(file);},[](const auto& point){if(point=="selection-synced:healthy.json"){helperConfirming.store(true);usleep(500000);}});helper.confirm(pendingHelper);}
+            catch(...){helperConfirmationFailed.store(true);helperConfirming.store(true);}
+        });
+        const auto deadline=std::chrono::steady_clock::now()+std::chrono::seconds(5);
+        while(!helperConfirming.load()){if(std::chrono::steady_clock::now()>=deadline)throw std::runtime_error("Helper confirmation fixture did not start");usleep(1000);}
+    }
+    return 0;
 }
 }
 int main(int argc,char** argv){
@@ -57,17 +69,17 @@ int main(int argc,char** argv){
         if(argc==3&&std::string(argv[1])=="--pmu-controller-recover-v1")return pmu::recoverControllerHandoff(argv[2]);
         if(argc==3&&std::string(argv[1])=="--pmu-recover-v1"){pmu::recoverRuntimeHandoff(argv[2],publisher);return 0;}
         check(argc==3,"handover fixture requires two native helper images");
-        for(const std::string mode:{"service","controller-service","success","supervisor-failure","mpc-failure","helper-failure","refresh-failure"}){
+        for(const std::string mode:{"service","controller-service","success","sd-helper-confirmation","usb-helper-confirmation","supervisor-failure","mpc-failure","helper-failure","refresh-failure"}){
             std::cout<<"HANDOFF MODE "<<mode<<std::endl;
-            auto root=make("pmu-runtime-handoff"),input=root/"input";source=root/"source";const auto old=make("mpc-usb-session.old");newBase=make("mpc-usb-session.new");rollbackBase=make("mpc-usb-session.rollback");const auto work=make("mpc-usb-manager.handoff"),cache=work/"cache";fs::create_directory(cache);fs::create_directories(input);save(source/".mpc-manager-id","mpc-usb-manager-v1\n");fs::create_directories(source/"autorun/runtime");
+            auto root=make("pmu-runtime-handoff"),input=root/"input";source=root/(mode=="sd-helper-confirmation"?"media/sd/Plugin Manager USB":"media/usb");const auto old=make("mpc-usb-session.old");newBase=make("mpc-usb-session.new");rollbackBase=make("mpc-usb-session.rollback");const auto work=make("mpc-usb-manager.handoff"),cache=work/"cache";fs::create_directory(cache);fs::create_directories(input);save(source/".mpc-manager-id","mpc-usb-manager-v1\n");fs::create_directories(source/"autorun/runtime");
             {std::ifstream image("/proc/self/exe",std::ios::binary);std::ofstream copy(input/"manager",std::ios::binary);copy<<image.rdbuf();}chmod((input/"manager").c_str(),0600);imageHash=pmu::fileSha256(input/"manager");for(const auto& base:{newBase,rollbackBase}){fs::copy_file(input/"manager",base/"manager");chmod((base/"manager").c_str(),0700);}
             pmu::test::SigningFixture key;publisher=key.publicKey();const std::string arch=managerArchitecture();pmu::VersionStore store(source/"autorun/runtime/.pmu-versions",geteuid(),[](const auto& path){return pmu::fileSha256(path);},{},true,{},arch);pmu::GenerationSpec spec{"1.0.0",arch,{{"manager",imageHash}},{{"manager_"+arch,"manager"},{"runtime_worker_"+arch,"manager"}}};auto stage=[&]{return store.stage(input,spec,key.proof(pmu::sha256Text(pmu::generationSpecToJson(spec).dump()+'\n'),"runtime"));};const auto previous=stage();store.seed(previous);pmu::SourceRuntime runtime(source,arch,publisher);const auto identity=runtime.identity();spec.version="2.0.0";newGeneration=stage();store.activate(newGeneration);std::string stale=previous;if(mode=="refresh-failure"){stale=newGeneration;store.boot();store.boot();newGeneration=previous;check(store.current()->id==previous&&!store.current()->pending,"failed GUI selection has already returned to its working version");}
             save(old/"runtime-context.json",nlohmann::json({{"protocol",1},{"source",source.string()},{"generation",stale},{"source_identity",identity}}).dump());save(old/"shortcut.env","LD_PRELOAD=\"/foreign.so\"\n");supervise(old);save("/run/systemd/system/acvs.service.d/20-foreign.conf","untouched addin");
             helperRoot.clear();oldHelper.clear();std::string nextHelper;
-            if(mode=="helper-failure"){
+            if(mode=="helper-failure"||mode=="sd-helper-confirmation"||mode=="usb-helper-confirmation"){
                 helperRoot=PMU_HELPER_DIRECTORY;fs::create_directories(helperRoot);save(input/"helper","original helper");pmu::VersionStore helpers(helperRoot/".pmu-versions",geteuid(),[](const auto& file){return pmu::fileSha256(file);});pmu::GenerationSpec descriptor{"1.0.0",arch,{{"helper",pmu::fileSha256(input/"helper")}}};auto sign=[&]{return helpers.stage(input,descriptor,key.proof(pmu::sha256Text(pmu::generationSpecToJson(descriptor).dump()+'\n'),"helper"));};oldHelper=sign();helpers.seed(oldHelper);descriptor.version="2.0.0";nextHelper=sign();helpers.activate(nextHelper);helpers.boot();
             }
-            controllerMode=mode=="controller-service";
+            controllerMode=mode=="controller-service";confirmHelper=mode=="sd-helper-confirmation"||mode=="usb-helper-confirmation";helperConfirming.store(false);helperConfirmationFailed.store(false);pendingHelper=nextHelper;
             std::string controllerHash;
             if(controllerMode){
                 helperRoot=PMU_HELPER_DIRECTORY;fs::create_directories(helperRoot);const auto name=arch=="aarch64"?"manager-entry-aarch64.so":"manager-entry.so";fs::copy_file(argv[1],helperRoot/name);const auto previous=pmu::fileSha256(helperRoot/name);
@@ -80,16 +92,17 @@ int main(int argc,char** argv){
                 pmu::beginRuntimeHandoff(capsule,publisher);check(fs::exists(rollbackBase/"handoff.accepted")&&mpcStarts==0,"deferred service acceptance does not resume MPC while the GUI is closing");
                 fs::remove(rollbackBase/"handoff.accepted");
                 pmu::finalizeRuntimeHandoff(capsule,publisher);
-            }else if(mode=="success")pmu::finalizeRuntimeHandoff(capsule,publisher);
+            }else if(mode=="success"||confirmHelper)pmu::finalizeRuntimeHandoff(capsule,publisher);
             else rejects([&]{pmu::finalizeRuntimeHandoff(capsule,publisher);},"a failed supervisor or MPC restart cannot mark the handover successful");
             failMpc=false;
             if(controllerMode){const auto guard=pmu::controllerRecovery(rollbackBase);check(guard.has_value(),"completed controller handover retains its verified guard");const auto child=fork();check(child>=0,"controller recovery process forked");if(!child){execl(guard->executable.c_str(),guard->executable.c_str(),"--pmu-controller-recover-v1",capsule.c_str(),nullptr);_exit(127);}int status;check(waitpid(child,&status,0)==child&&WIFEXITED(status)&&WEXITSTATUS(status)==0,"controller recovery guard invokes the unchanged v1 recovery protocol");check(pmu::fileSha256(helperRoot/(arch=="aarch64"?"manager-entry-aarch64.so":"manager-entry.so"))==controllerHash,"successful handover keeps the new controller");}
             else pmu::recoverRuntimeHandoff(capsule,publisher);
-            if(mode=="success"||mode=="service"||controllerMode){
+            if(mode=="success"||mode=="service"||controllerMode||confirmHelper){
                 check(!fs::exists(rollbackBase)&&store.current()->id==newGeneration,"successful handover retires only the unused recovery cohort");check(mpcStarts==1,"normal handover starts MPC exactly once");
+                if(confirmHelper){check(!helperConfirmationFailed.load(),"helper confirmation completes while handover watches readiness");const auto selected=runtime.choose(true,identity);runtime.confirm(selected.generation.id,identity);check(runtime.choose(true,identity).generation.id==newGeneration,"return and repeated reopening retain the updated manager after concurrent helper confirmation");std::cout<<"PASS: update-return-reopen "<<(mode=="sd-helper-confirmation"?"sd":"usb")<<" with concurrent helper confirmation\n";}
             }else{check(store.current()->id==previous&&!store.current()->pending,"independent recovery restores the previous authenticated runtime selection");check(fs::exists(rollbackBase),"a recovery cohort remains available while it is active");check(mpcStops==1&&mpcRunning,"recovery reloads MPC with the restored helper and shortcut");}
             check(fs::exists("/run/systemd/system/acvs.service.d/20-foreign.conf"),"handover and recovery preserve foreign addin configuration");
-            const auto active=(mode=="success"||mode=="service"||controllerMode)?newBase:rollbackBase;int socketFd=socket(AF_UNIX,SOCK_DGRAM|SOCK_CLOEXEC,0);sockaddr_un address{};address.sun_family=AF_UNIX;const auto socketPath=(active/"shortcut.sock").string();std::copy(socketPath.begin(),socketPath.end(),address.sun_path);sendto(socketFd,"H",1,0,reinterpret_cast<sockaddr*>(&address),sizeof address);close(socketFd);join();fs::remove("/run/systemd/system/acvs.service.d/20-foreign.conf");if(!helperRoot.empty())fs::remove_all(helperRoot);fs::remove_all(root);fs::remove_all(old);fs::remove_all(newBase);fs::remove_all(rollbackBase);fs::remove_all(work);
+            const auto active=(mode=="success"||mode=="service"||controllerMode||confirmHelper)?newBase:rollbackBase;int socketFd=socket(AF_UNIX,SOCK_DGRAM|SOCK_CLOEXEC,0);sockaddr_un address{};address.sun_family=AF_UNIX;const auto socketPath=(active/"shortcut.sock").string();std::copy(socketPath.begin(),socketPath.end(),address.sun_path);sendto(socketFd,"H",1,0,reinterpret_cast<sockaddr*>(&address),sizeof address);close(socketFd);join();fs::remove("/run/systemd/system/acvs.service.d/20-foreign.conf");if(!helperRoot.empty())fs::remove_all(helperRoot);fs::remove_all(root);fs::remove_all(old);fs::remove_all(newBase);fs::remove_all(rollbackBase);fs::remove_all(work);
         }
         std::cout<<"PASS: "<<checks<<" runtime-handoff deferred service, supervisor replacement and independent recovery checks\n";return 0;
     }catch(const std::exception& error){std::cerr<<"FAIL: "<<error.what()<<'\n';for(auto& thread:supervisors)if(thread.joinable())thread.detach();return 1;}

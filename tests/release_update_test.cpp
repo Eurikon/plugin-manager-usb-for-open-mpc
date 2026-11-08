@@ -32,7 +32,7 @@ int main(int argc,char** argv){
         const auto hello=pmu::runIncomingWorker(verified.worker,root/"worker",{{"operation","hello"}});
         if(hello.value("protocol",0)!=1||hello.value("product","")!="plugin-manager-usb")throw std::runtime_error("Release worker did not complete its protocol handshake");
         if(pmu::fileSha256(root/"settings")!=settings||fs::exists(root/"source/PMU-UPDATE.json"))throw std::runtime_error("Release check changed its simulated installation");
-        std::cout<<Json({{"schema",1},{"baseline_version",checked.at("current_version")},{"baseline_development",checked.at("development")},{"version",version},{"architecture",architecture},{"archive_sha256",digest},{"download_checked",true},{"signed_archive_checked",true},{"native_worker_ready",true},{"installation_unchanged",true}}).dump()<<'\n';
+        std::cout<<Json({{"schema",1},{"baseline_version",checked.at("current_version")},{"baseline_development",checked.value("development",false)},{"baseline_development_reported",checked.contains("development")},{"version",version},{"architecture",architecture},{"archive_sha256",digest},{"download_checked",true},{"signed_archive_checked",true},{"native_worker_ready",true},{"installation_unchanged",true}}).dump()<<'\n';
         fs::remove_all(root);return 0;
     }catch(const std::exception& error){if(!root.empty()){std::error_code ignored;fs::remove_all(root,ignored);}std::cerr<<error.what()<<'\n';return 1;}
 }
