@@ -1,6 +1,6 @@
 # Plugin Manager USB for OPEN MPC
 
-[![Download installer](https://img.shields.io/badge/Download-1.4.1-brightgreen?logo=github)](https://github.com/Eurikon/plugin-manager-usb-for-open-mpc/releases/download/v1.4.1/plugin-manager-usb-v1.4.1.zip)
+[![Download installer](https://img.shields.io/badge/Download-1.4.2-brightgreen?logo=github)](https://github.com/Eurikon/plugin-manager-usb-for-open-mpc/releases/download/v1.4.2/plugin-manager-usb-v1.4.2.zip)
 [![Latest release](https://img.shields.io/github/v/release/Eurikon/plugin-manager-usb-for-open-mpc?logo=github&label=Release)](https://github.com/Eurikon/plugin-manager-usb-for-open-mpc/releases/latest)
 [![Changelog](https://img.shields.io/badge/Changelog-History-blue?logo=github)](CHANGELOG.md)
 [![User guide](https://img.shields.io/badge/Guide-Website-blue?logo=githubpages)](https://eurikon.github.io/plugin-manager-usb-for-open-mpc/guide.html)
@@ -137,6 +137,7 @@ The same interface is used for both sources; each source keeps its own preferenc
 - **Plugin Manager installation:** **Install manager** copies the USB manager onto SD, creating or replacing the SD copy. The button is disabled when running from that SD copy. **Uninstall manager** removes the SD application.
 - **Plugin Manager updates:** choose **Check for updates** to check GitHub Releases. If a supported newer release is available, **Install update** opens a confirmation before downloading and installing it.
 - **Welcome message:** enable **Show on opening** to restore the welcome screen for this source.
+- **Filters and sorting:** enable **Remember on opening** to keep each tab's filters and sorting after closing the manager. Disable it to clear the saved choices.
 - **Save report:** saves `diagnostics/manager-report.txt` on the manager's drive. Open it on your computer, review it, and attach it when reporting a problem. It contains build, storage and operation status; settings contents, addresses, drive labels and raw logs are excluded.
 
 An accepted release updates the manager you opened, together with its helper, while preserving plugins, history, preferences and local ZIPs.<br>
@@ -173,8 +174,10 @@ These logs can be read on your computer without SSH.
 
 **FIND** searches names, authors and descriptions with a touchscreen keyboard or connected keyboard.<br>
 **FILTER** selects a plugin type, compatible packages or available updates; **SORT** orders names or puts updates first.<br>
+A red right-edge marker shows active filter or sort settings; the button fills red while its screen is open.<br>
 Double-tap anywhere on a plugin card for package details, available/installed versions and the action's installation folder.<br>
 Double-tap the image in those details for a larger view; close it with **X**.<br>
+On MPC Live II, rotate the jogwheel to select cards, press to open details, then press again to open the highlighted image.<br>
 **Back** restores the list, and installing a plugin returns to the same catalog page.
 
 The top-right version belongs to the catalog release, local ZIP, on-device installation or saved history entry shown in that tab.<br>
@@ -193,7 +196,8 @@ History helps identify previous installations after wiping or changing a device;
 ![Saved installation history](site/assets/manager-history.png)
 
 Theme and welcome-message preferences stay on the source USB or SD card.<br>
-Each tab remembers its page, search, filters and sorting only while the manager is open.<br>
+Each tab remembers its page and search only while the manager is open.<br>
+Filters and sorting also stay between openings when **SETUP → Filters and sorting → Remember on opening** is enabled.<br>
 The catalog and downloaded packages are kept temporarily in RAM and discarded when the manager closes.
 
 ## What Changes on the MPC?

@@ -310,6 +310,13 @@ int main(int argc,char** argv){try{
     {std::ofstream prefs(manager.usb/"manager-preferences.json");prefs<<"{\"schema\":1,\"dark_theme\":false}";}
     check(!manager.hideWelcome(),"welcome shown by default with legacy theme preferences");manager.setHideWelcome(true);
     check(reopened.hideWelcome(),"hidden welcome persists across instances");manager.setDarkTheme(true);check(reopened.hideWelcome(),"theme change preserves hidden welcome");manager.setHideWelcome(false);check(reopened.darkTheme()&&!reopened.hideWelcome(),"welcome preference preserves theme and can be restored");manager.setDarkTheme(false);
+    check(!manager.browsePreferences().at("remember").get<bool>(),"filter retention is opt-in for existing preferences");
+    const Json browsing={{"catalog",{{"kind","effect"},{"updates_only",true},{"compatible_only",false},{"sort","reverse"}}},{"local",{{"kind","instrument"},{"updates_only",false},{"compatible_only",true},{"sort","updates"}}}};
+    manager.setBrowsePreferences(true,browsing);check(reopened.browsePreferences().at("remember")==true&&reopened.browsePreferences().at("views")==browsing,"filter retention and per-tab settings survive reopening");
+    manager.setDarkTheme(true);manager.setHideWelcome(true);check(reopened.browsePreferences().at("views")==browsing,"theme and welcome changes preserve remembered filters");
+    const auto beforeBrowsing=text(manager.usb/"manager-preferences.json");bool invalidBrowsing=false;try{manager.setBrowsePreferences(true,{{"catalog",{{"sort","invalid"}}}});}catch(const std::exception&){invalidBrowsing=true;}check(invalidBrowsing&&text(manager.usb/"manager-preferences.json")==beforeBrowsing,"invalid saved filters cannot alter existing preferences");
+    manager.setBrowsePreferences(false,browsing);check(!reopened.browsePreferences().at("remember").get<bool>()&&reopened.browsePreferences().at("views").empty()&&!Json::parse(text(manager.usb/"manager-preferences.json")).contains("filters_sort"),"disabling retention clears saved choices");
+    check(reopened.darkTheme()&&reopened.hideWelcome(),"filter retention preserves the other preferences");manager.setDarkTheme(false);manager.setHideWelcome(false);
     {std::ofstream prefs(manager.usb/"manager-preferences.json");prefs<<"{\"schema\":1,\"dark_theme\":false,\"hide_welcome\":\"bad\"}";}
     bool badPreference=false;try{manager.hideWelcome();}catch(const std::exception&){badPreference=true;}check(badPreference,"invalid welcome preference rejected");fs::remove(manager.usb/"manager-preferences.json");
     manager.openCatalog();check(manager.catalog.size()==1,"catalog stable plugin parsed");

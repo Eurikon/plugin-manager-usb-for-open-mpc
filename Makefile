@@ -30,6 +30,7 @@ arm-helper:
 
 test: arm
 	docker run --rm --pull never --platform linux/arm/v7 --network none -v "$(CURDIR):/work" -w /work $(ARM_IMAGE) build/catalog-view-test
+	docker run --rm --pull never --platform linux/arm/v7 --network none -v "$(CURDIR):/work" -w /work $(ARM_IMAGE) env LD_PRELOAD=/work/build/panel-input-fake.so build/panel-input-test
 	docker run --rm --pull never --platform linux/arm/v7 --network none -v "$(CURDIR):/work" -w /work $(ARM_IMAGE) build/settings-backups-test
 	docker run --rm --pull never --platform linux/arm/v7 --network none --tmpfs /limited:rw,size=1m -e PMU_TEST_SMALL_DRIVE=/limited -v "$(CURDIR):/work" -w /work $(ARM_IMAGE) build/plugin-transaction-test
 	docker run --rm --pull never --platform linux/arm/v7 --network none -v "$(CURDIR):/work" -w /work $(ARM_IMAGE) build/plugin-storage-test
@@ -40,6 +41,7 @@ test: arm
 
 test-arm64: arm64
 	docker run --rm --pull never --platform linux/arm64 --network none -v "$(CURDIR):/work" -w /work $(ARM64_IMAGE) build/aarch64/catalog-view-test
+	docker run --rm --pull never --platform linux/arm64 --network none -v "$(CURDIR):/work" -w /work $(ARM64_IMAGE) env LD_PRELOAD=/work/build/aarch64/panel-input-fake.so build/aarch64/panel-input-test
 	docker run --rm --pull never --platform linux/arm64 --network none -v "$(CURDIR):/work" -w /work $(ARM64_IMAGE) build/aarch64/settings-backups-test
 	docker run --rm --pull never --platform linux/arm64 --network none --tmpfs /limited:rw,size=1m -e PMU_TEST_SMALL_DRIVE=/limited -v "$(CURDIR):/work" -w /work $(ARM64_IMAGE) build/aarch64/plugin-transaction-test
 	docker run --rm --pull never --platform linux/arm64 --network none -v "$(CURDIR):/work" -w /work $(ARM64_IMAGE) build/aarch64/shortcut-environment-test

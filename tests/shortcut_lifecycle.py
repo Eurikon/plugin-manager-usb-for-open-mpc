@@ -18,7 +18,7 @@ shutil.copyfile(source/'setup.sh',test/'setup.sh')
 (test/'usb/autorun/runtime/aarch64').mkdir(parents=True)
 shutil.copyfile(source/'open.sh',test/'usb/autorun/open.sh')
 shutil.copyfile(build/'font.ttf',test/'font.ttf')
-(test/'manager').write_text('#!/bin/sh\n[ -d "$2" ] && [ "$(stat -c %a "$2")" = 700 ] || exit 91\necho opened >> /tmp/shortcut-test/launches\nwhile [ -e /tmp/shortcut-test/hold-manager ]; do sleep 0.025; done\nsleep 0.5\n')
+(test/'manager').write_text('#!/bin/sh\n[ \"$MPC_PANEL_PORT\" = hw:1,0,1 ] || exit 90\n[ -d "$2" ] && [ "$(stat -c %a "$2")" = 700 ] || exit 91\necho opened >> /tmp/shortcut-test/launches\nwhile [ -e /tmp/shortcut-test/hold-manager ]; do sleep 0.025; done\nsleep 0.5\n')
 (test/'manager').chmod(0o755)
 (bin_dir/'pidof').write_text('#!/bin/sh\nexit 1\n')
 (bin_dir/'systemctl').write_text('''#!/bin/sh

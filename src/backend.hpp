@@ -41,6 +41,8 @@ struct Manager {
     void remember(const Json& item, bool installed);
     bool hideWelcome();
     void setHideWelcome(bool hidden);
+    Json browsePreferences();
+    void setBrowsePreferences(bool remember,const Json& settings);
     bool darkTheme();
     void setDarkTheme(bool dark);
     std::string saveDiagnostics();

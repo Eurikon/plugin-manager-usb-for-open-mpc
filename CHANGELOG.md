@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.4.2 — 08-11-2026
+
+- Add optional filter and sort retention in **SETUP → Filters and sorting → Remember on opening**.
+- Add MPC Live II jogwheel navigation: rotate through cards, press for details, then press again for the full image. Other panel controls are ignored while the manager is open.
+- Show a red right-edge marker when FILTER or SORT has active settings; fill the button red only while its screen is open.
+- Match the top navigation gaps to Theme/Return spacing and give FILTER the same width as Theme.
+- Refresh the user guide screenshots and instructions for the updated controls.
+
 ## 1.4.1 — 08-11-2026
 
 - Fix automatic updates returning to the previous version when helper startup and the handover readiness check compete for the version lock. Readiness now observes verified state without blocking helper confirmation.

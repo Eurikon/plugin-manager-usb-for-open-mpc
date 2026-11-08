@@ -3,6 +3,7 @@
 #include "update_bundle.hpp"
 #include "plugin_transaction.hpp"
 #include "settings_backups.hpp"
+#include "catalog_view.hpp"
 #include <publisher_key.hpp>
 #include <archive.h>
 #include <gnu/libc-version.h>
@@ -520,6 +521,15 @@ bool Manager::darkTheme() {return preferences(usb).at("dark_theme").get<bool>();
 void Manager::setDarkTheme(bool dark) {auto value=preferences(usb);value["dark_theme"]=dark;atomicSave(usb/"manager-preferences.json",value.dump(2)+"\n");}
 bool Manager::hideWelcome() {return preferences(usb).value("hide_welcome",false);}
 void Manager::setHideWelcome(bool hidden) {auto value=preferences(usb);value["hide_welcome"]=hidden;atomicSave(usb/"manager-preferences.json",value.dump(2)+"\n");}
+Json Manager::browsePreferences(){
+    const auto value=preferences(usb);const bool remember=value.value("remember_filters_sort",false);auto settings=Json::object();
+    if(remember){settings=value.value("filters_sort",Json::object());pmu::decodeBrowseSettings(settings);}
+    return {{"remember",remember},{"views",settings}};
+}
+void Manager::setBrowsePreferences(bool remember,const Json& settings){
+    const auto canonical=pmu::encodeBrowseSettings(pmu::decodeBrowseSettings(settings));auto value=preferences(usb);value["remember_filters_sort"]=remember;
+    if(remember)value["filters_sort"]=canonical;else value.erase("filters_sort");atomicSave(usb/"manager-preferences.json",value.dump(2)+"\n");
+}
 static Json history(const fs::path& usb) {
     const auto path=usb/"plugin-history.json";
     if(!fs::exists(path))return {{"schema",1},{"plugins",Json::object()}};

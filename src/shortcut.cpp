@@ -255,7 +255,7 @@ struct Session {
         hold={};timer();
         std::string templatePath="/tmp/mpc-usb-manager.XXXXXX";std::vector<char> pattern(templatePath.begin(),templatePath.end());pattern.push_back(0);char* made=mkdtemp(pattern.data());require(made!=nullptr,"Create manager session");fs::path work=made;
         try{require(mkdir((work/"cache").c_str(),0700)==0,"Create private manager cache");for(const char* name:{"manager","font.ttf"})fs::copy_file(base/name,work/name);if(fs::exists(base/"runtime-context.json"))fs::copy_file(base/"runtime-context.json",work/"runtime-context.json");require(chmod((work/"manager").c_str(),0755)==0&&chmod((work/"font.ttf").c_str(),0644)==0,"Set manager file permissions");std::ofstream(work/"session.log");
-            const pid_t pid=fork();require(pid>=0,"Start manager");child=pid;opened=true;if(!child){sigset_t empty;sigemptyset(&empty);sigprocmask(SIG_SETMASK,&empty,nullptr);execl("/bin/sh","sh",(base/"launch.sh").c_str(),usb.c_str(),work.c_str(),nullptr);_exit(127);}
+            const pid_t pid=fork();require(pid>=0,"Start manager");child=pid;opened=true;if(!child){sigset_t empty;sigemptyset(&empty);sigprocmask(SIG_SETMASK,&empty,nullptr);if(setenv("MPC_PANEL_PORT",port.c_str(),1)!=0)_exit(127);execl("/bin/sh","sh",(base/"launch.sh").c_str(),usb.c_str(),work.c_str(),nullptr);_exit(127);}
         }catch(...){fs::remove_all(work);throw;}
         std::cerr<<"Opening USB manager\n";checkpoint();
     }

@@ -15,7 +15,7 @@ from prepare_fixtures import catalog_item, digest, package_manifest, prepare
 
 SOURCE = Path(__file__).resolve().parents[1]
 BINARIES = ("manager", "backend-test", "font.ttf", "shortcut", "shortcut-hook.so",
-            "shortcut-state-test", "shortcut-fake.so", "shortcut-hook-test", "shortcut-integration",
+            "panel-input-test", "panel-input-fake.so", "shortcut-state-test", "shortcut-fake.so", "shortcut-hook-test", "shortcut-integration",
             "shortcut-addin-first.so", "shortcut-addin-second.so", "shortcut-lookup.so", "shortcut-environment-test")
 
 
@@ -40,7 +40,7 @@ def preflight(root, package, legacy_package=None, *, legacy_os3_confirmed=False)
 
 def stage(root, package, legacy_package=None):
     prepare(root, package, legacy_package, legacy_os3_confirmed=legacy_package is not None)
-    for source, target in (("manager", "manager-ui"), ("backend-test", "manager-backend-test"), ("font.ttf", "manager-font.ttf")):
+    for source, target in (("manager", "manager-ui"), ("backend-test", "manager-backend-test"), ("font.ttf", "manager-font.ttf"), ("panel-input-test", "manager-panel-input-test"), ("panel-input-fake.so", "manager-panel-input-fake.so")):
         destination = root / "tmp" / target
         if destination.exists() or destination.is_symlink():
             destination.unlink()
@@ -100,6 +100,7 @@ def main(argv=None):
             raise ValueError(f"Missing build/{name}; run without --skip-build")
     results["manager_sha256"] = hashlib.sha256((SOURCE / "build/manager").read_bytes()).hexdigest()
     stage(root, package, legacy_package)
+    step("panel-input", runner.command("LD_PRELOAD=/tmp/manager-panel-input-fake.so /tmp/manager-panel-input-test"))
     step("backend", runner.command("PATH=/tmp/manager-test-bin:$PATH MPC_INSTALL_TEST=1 /tmp/manager-backend-test"))
     for mode in ("flow", "touch-flow"):
         stage(root, package, legacy_package)

@@ -16,6 +16,7 @@ def main():
     parser.add_argument("log", type=Path)
     parser.add_argument("--ui-mode", choices=("browser", "browser-dark", "browser-touch"))
     parser.add_argument("--font", type=Path)
+    parser.add_argument("--panel-input-library", type=Path)
     parser.add_argument("--full-backend", action="store_true")
     args = parser.parse_args()
     if args.full_backend and args.ui_mode:
@@ -69,6 +70,16 @@ def main():
         arguments = [] if args.full_backend else ["--plugin-recovery"]
         if args.ui_mode:
             environment.update(SDL_VIDEODRIVER="dummy", MPC_MANAGER_UI_TEST=args.ui_mode)
+            if args.panel_input_library:
+                shutil.copyfile(args.panel_input_library, root / "tmp/panel-input-fake.so")
+                environment.update(MPC_PANEL_PORT="hw:1,0,1", MPC_MANAGER_PANEL_FIXTURE="1")
+                panel = root / "sys/devices/panel"
+                (panel / "interface").mkdir(parents=True)
+                (panel / "idVendor").write_text("09e8\n")
+                (panel / "idProduct").write_text("0047\n")
+                card = root / "sys/class/sound/card1"
+                card.mkdir(parents=True)
+                (card / "device").symlink_to("/sys/devices/panel/interface")
             arguments = ["/tmp/manager-usb", "/tmp/manager-session", "/sdcard/Expansions", "/tmp/manager-settings.xml", "/tmp/manager-font.ttf"]
         args.log.parent.mkdir(parents=True, exist_ok=True)
         def expose_process():
@@ -76,7 +87,8 @@ def main():
             (root / "proc" / process).symlink_to("../real-proc/" + process)
 
         with args.log.open("w") as log:
-            result = subprocess.run([chroot, str(root), "/tmp/backend-test", *arguments], env=environment,
+            inner = (["/usr/bin/env", "LD_PRELOAD=/tmp/panel-input-fake.so"] if args.panel_input_library else [])
+            result = subprocess.run([chroot, str(root), *inner, "/tmp/backend-test", *arguments], env=environment,
                                     stdout=log, stderr=subprocess.STDOUT, timeout=180, preexec_fn=expose_process)
         if args.ui_mode:
             from sd_ui_test import compact_capture

@@ -2,12 +2,25 @@
 #include <algorithm>
 #include <cctype>
 #include <cstdint>
+#include <map>
 #include <nlohmann/json.hpp>
 #include <sstream>
 #include <string>
 #include <vector>
 
 namespace pmu {
+struct CatalogTabs {
+    static constexpr int gap=12;
+    int end;
+    int left(int index)const{return 28+(end-28-3*gap)*index/4+index*gap;}
+    int right(int index)const{return 28+(end-28-3*gap)*(index+1)/4+index*gap;}
+    int hit(int x)const{for(int i=0;i<4;++i)if(x>=left(i)&&x<right(i))return i;return -1;}
+};
+inline int wheelCard(int selected,int page,int count,int delta){
+    if(count<=0||delta==0)return selected;
+    if(selected<0||selected>=count)return std::min(std::max(page,0)*int64_t(6)+(delta<0?5:0),int64_t(count-1));
+    return int(std::clamp(int64_t(selected)+delta,int64_t(0),int64_t(count-1)));
+}
 struct CardTap {
     int previous=-1;
     uint32_t when=0;
@@ -23,6 +36,24 @@ struct BrowseOptions {
     enum class Order {Name,Reverse,Updates};
     Order order=Order::Name;
 };
+inline std::map<std::string,BrowseOptions> decodeBrowseSettings(const nlohmann::json& value){
+    if(!value.is_object()||value.size()>4)throw std::runtime_error("Invalid saved filter and sort settings");
+    std::map<std::string,BrowseOptions> result;
+    for(const auto& entry:value.items()){
+        if(entry.key()!="catalog"&&entry.key()!="local"&&entry.key()!="installed"&&entry.key()!="history")throw std::runtime_error("Unknown saved browsing tab");
+        const auto& saved=entry.value();
+        if(!saved.is_object()||saved.size()!=4||!saved.at("kind").is_string()||!saved.at("updates_only").is_boolean()||!saved.at("compatible_only").is_boolean()||!saved.at("sort").is_string())throw std::runtime_error("Invalid saved filter and sort settings");
+        auto& options=result[entry.key()];options.kind=saved.at("kind");options.updatesOnly=saved.at("updates_only");options.compatibleOnly=saved.at("compatible_only");const auto order=saved.at("sort").get<std::string>();
+        if(options.kind!=""&&options.kind!="instrument"&&options.kind!="effect")throw std::runtime_error("Unknown saved plugin type");
+        if(order=="name")options.order=BrowseOptions::Order::Name;else if(order=="reverse")options.order=BrowseOptions::Order::Reverse;else if(order=="updates")options.order=BrowseOptions::Order::Updates;else throw std::runtime_error("Unknown saved sort order");
+    }
+    return result;
+}
+inline nlohmann::json encodeBrowseSettings(const std::map<std::string,BrowseOptions>& options){
+    auto value=nlohmann::json::object();
+    for(const auto& entry:options){const auto& selected=entry.second;value[entry.first]={{"kind",selected.kind},{"updates_only",selected.updatesOnly},{"compatible_only",selected.compatibleOnly},{"sort",selected.order==BrowseOptions::Order::Name?"name":selected.order==BrowseOptions::Order::Reverse?"reverse":"updates"}};}
+    decodeBrowseSettings(value);return value;
+}
 inline std::string searchText(std::string value){for(char& c:value)if(static_cast<unsigned char>(c)<128)c=char(std::tolower(static_cast<unsigned char>(c)));return value;}
 inline void eraseSearchCharacter(std::string& value){if(value.empty())return;size_t at=value.size()-1;while(at>0&&(static_cast<unsigned char>(value[at])&0xc0)==0x80)--at;value.erase(at);}
 inline std::vector<nlohmann::json> browsePlugins(const std::vector<nlohmann::json>& source,const BrowseOptions& options){

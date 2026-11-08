@@ -1,7 +1,7 @@
 # Developer FAQ
 
-This guide describes the current source and the validation recorded on
-**29-10-2026**.
+This guide describes the current source and the validation recorded through
+**08-11-2026**.
 Start with [README.md](README.md) for USB use, build prerequisites,
 tested platforms and setup. Firmware, plugin packages
 and private device data are external inputs; none belongs in this repository.
@@ -627,8 +627,22 @@ When the manager cannot open, use the existing launch-result files below instead
 
 Catalog search/filter/sort is handled by [src/catalog_view.hpp](src/catalog_view.hpp) against the already loaded list.
 Keyboard taps do not trigger downloads or filesystem rescans.
-Browsing state is separate for each tab and lasts for the current opening; post-install refresh preserves the page and clamps it if the list shrinks.
+Browsing state is separate for each tab; post-install refresh preserves the page and clamps it if the list shrinks.
+**SETUP → Filters and sorting → Remember on opening** optionally saves type, update/compatibility filters and sort order in the source drive's existing `manager-preferences.json`.
+Disabling it clears the saved choices without changing the current view.
+Search text and page numbers remain session-only.
 One card tap selects it; a second tap anywhere on the same card within 450 ms opens details.
+The jogwheel rotates through cards across pages; pressing opens details, and pressing again opens the focused thumbnail.
+`src/panel_input.hpp` reads only the detected private hardware MIDI port while the manager is open, waits for input events and closes before MPC resumes.
+The existing shortcut observer remains unchanged.
+The validated Live II USB identity is matched through the detected ALSA card’s sysfs device.
+Its stock runtime activation command keeps wheel input available after MPC closes; no LED commands are sent.
+Configuration uses public output substream 0 on that card/device; wheel events use the detected private input.
+The reader opens these separately, matching stock MPC’s USB traffic.
+Unknown panel identities receive no activation command.
+Both MIDI handles close before the launcher resumes MPC and its normal panel initialization.
+Only wheel CC 100 and press note 111 are mapped; other panel controls cannot start manager actions.
+The offline runner tests MIDI framing, wheel direction/press handling and repeated reader shutdown using an isolated ALSA substitute.
 Paging, reloading and changing search/filter/sort criteria clear the selection and its description without clearing operation results.
 
 | Evidence or error | Check |
