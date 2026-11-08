@@ -17,6 +17,8 @@ public:
     nlohmann::json inspect(const std::filesystem::path& target) const;
     nlohmann::json folders(const std::filesystem::path& directory) const;
     std::vector<nlohmann::json> targets() const;
+    std::vector<std::filesystem::path> registeredLocations() const;
+    nlohmann::json diagnostics() const;
     void prepare(const std::filesystem::path& target,const std::string& identity) const;
 private:
     std::filesystem::path settings;

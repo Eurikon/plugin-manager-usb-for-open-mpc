@@ -20,6 +20,7 @@ IMAGE = (b'\x89PNG\r\n\x1a\n'
          + chunk(b'IHDR', struct.pack('>IIBBBBB', 16, 10, 8, 2, 0, 0, 0))
          + chunk(b'IDAT', zlib.compress((b'\0' + bytes((80, 140, 200)) * 16) * 10))
          + chunk(b'IEND', b''))
+LARGE_IMAGE = IMAGE[:33] + chunk(b'npAD', bytes(1024 * 1024)) + IMAGE[33:]
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -63,7 +64,7 @@ class Handler(BaseHTTPRequestHandler):
                 return
             self.send_response(200)
             if self.path == '/oversized-header':
-                self.send_header('Content-Length', str(1024 * 1024 + 1))
+                self.send_header('Content-Length', str(2 * 1024 * 1024 + 1))
                 self.end_headers()
                 return
             if self.path in ('/oversized-stream', '/stall'):
@@ -72,9 +73,9 @@ class Handler(BaseHTTPRequestHandler):
                 if self.path == '/stall':
                     time.sleep(3)
                     return
-                self.wfile.write(b'x' * (1024 * 1024 + 1))
+                self.wfile.write(b'x' * (2 * 1024 * 1024 + 1))
                 return
-            body = b'not an image' if self.path == '/invalid.png' else IMAGE
+            body = b'not an image' if self.path == '/invalid.png' else LARGE_IMAGE if self.path == '/large.png' else IMAGE
             self.send_header('Content-Length', str(len(body)))
             self.end_headers()
             self.wfile.write(body)

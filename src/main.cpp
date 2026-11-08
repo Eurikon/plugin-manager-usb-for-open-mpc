@@ -1,4 +1,5 @@
 #include "backend.hpp"
+#include "catalog_view.hpp"
 #include "helper_controller_update.hpp"
 #include "version.hpp"
 #include "sd_install.hpp"
@@ -34,6 +35,9 @@
 #include <map>
 #include <iomanip>
 #include <cerrno>
+#ifdef MPC_MANAGER_PACKAGE_FIXTURE
+#include <fstream>
+#endif
 #include <sys/stat.h>
 
 namespace Theme {
@@ -113,6 +117,7 @@ struct Screen {
         else if(kind==Icon::Right){line(x+22,y+11,x+13,y+2,color);line(x+22,y+11,x+13,y+20,color);line(x,y+11,x+22,y+11,color);}
     }
     void button(int x,int y,int w,const std::string& title,bool active=false,bool enabled=true,Icon glyph=Icon::None){box(x,y,w,58,active&&enabled?Theme::red:Theme::panel);const auto color=enabled?(active?Theme::white:Theme::ink):Theme::muted;const int inset=glyph==Icon::None?18:52;if(glyph!=Icon::None)icon(x+16,y+17,glyph,color);text(x+inset,y+38,title,color,25,w-inset-12);}
+    void compactButton(int x,int y,int w,const std::string& title,bool active,bool enabled){box(x,y,w,40,active&&enabled?Theme::red:Theme::panel);text(x+14,y+28,title,enabled?(active?Theme::white:Theme::ink):Theme::muted,23,w-28);}
 
     void themeButton(int x,int y,int w,bool dark,bool enabled){button(x,y,w,dark?"Light":"Dark",false,enabled,dark?Icon::Sun:Icon::Moon);}
     void badge(int x,int y,int w,const std::string& title,bool warning=false){box(x,y,w,30,warning?Theme::warning:Theme::panel,warning?0xffe0a100:Theme::line);text(x+9,y+22,title,warning?Theme::amber:Theme::muted,19,w-14);}
@@ -124,11 +129,12 @@ struct Screen {
         }
         if(row<lines)text(x,y+row*(size+7),line,color,size,width);
     }
-    void thumbnail(int x,int y,const Thumbnail* image){
-        box(x,y,128,80,image?Theme::lcd:Theme::panel);
-        if(!image){uint32_t color=0xff000000;for(int shift:{0,8,16})color|=((((Theme::muted>>shift)&255)*45+((Theme::panel>>shift)&255)*55)/100)<<shift;box(x+43,y+25,42,30,Theme::panel,color);const int points[][2]={{48,40},{53,40},{56,33},{61,48},{66,31},{70,45},{73,40},{79,40}};for(size_t i=1;i<8;++i)line(x+points[i-1][0],y+points[i-1][1],x+points[i][0],y+points[i][1],color);return;}
-        const int left=x+(128-image->width)/2,top=y+(80-image->height)/2;
-        for(int row=0;row<image->height;++row)for(int col=0;col<image->width;++col){const int px=left+col,py=top+row;if(px<0||px>=1280||py<0||py>=800)continue;const auto source=image->pixels[row*image->width+col];const unsigned alpha=source>>24;auto& target=pixels[py*1280+px];uint32_t result=0xff000000;for(int shift:{0,8,16})result|=((((source>>shift)&255)*alpha+((target>>shift)&255)*(255-alpha))/255)<<shift;target=result;}
+    void thumbnail(int x,int y,const Thumbnail* image,int width=128,int height=80){
+        if(image&&(image->width<1||image->height<1||image->width>1280||image->height>800||image->pixels.size()!=size_t(image->width)*size_t(image->height)))image=nullptr;
+        box(x,y,width,height,image?Theme::lcd:Theme::panel);
+        if(!image){x+=(width-128)/2;y+=(height-80)/2;uint32_t color=0xff000000;for(int shift:{0,8,16})color|=((((Theme::muted>>shift)&255)*45+((Theme::panel>>shift)&255)*55)/100)<<shift;box(x+43,y+25,42,30,Theme::panel,color);const int points[][2]={{48,40},{53,40},{56,33},{61,48},{66,31},{70,45},{73,40},{79,40}};for(size_t i=1;i<8;++i)line(x+points[i-1][0],y+points[i-1][1],x+points[i][0],y+points[i][1],color);return;}
+        const double scale=std::min(double(width-2)/image->width,double(height-2)/image->height);const int w=std::max(1,int(image->width*scale)),h=std::max(1,int(image->height*scale));const int left=x+1+(width-2-w)/2,top=y+1+(height-2-h)/2;
+        for(int row=0;row<h;++row)for(int col=0;col<w;++col){const int px=left+col,py=top+row;if(px<0||px>=1280||py<0||py>=800)continue;const auto source=image->pixels[(row*image->height/h)*image->width+col*image->width/w];const unsigned alpha=source>>24;auto& target=pixels[py*1280+px];uint32_t result=0xff000000;for(int shift:{0,8,16})result|=((((source>>shift)&255)*alpha+((target>>shift)&255)*(255-alpha))/255)<<shift;target=result;}
     }
     void installedVersion(int x,int y,const std::string& version){
         box(x,y,116,30,Theme::panel);const int dx=x+8,dy=y+4;const auto color=Theme::ink;
@@ -163,10 +169,16 @@ static int app(int argc,char**argv) {
 #ifdef MPC_MANAGER_PLUGIN_STORAGE_FIXTURE
     storagePaths=pluginStorageFixture(argv[2],argv[4],std::getenv("MPC_MANAGER_UI_TEST")&&std::string(std::getenv("MPC_MANAGER_UI_TEST"))=="plugin-location-blocked");
 #endif
-    Manager manager(argv[1],argv[2],argv[3],argv[4],managerArchitecture(),storagePaths);bool dark=false;try{dark=manager.darkTheme();}catch(const std::exception& e){std::fprintf(stderr,"Theme preference: %s\n",e.what());}Theme::set(dark);Screen screen(argv[5],argv[1]);
+#ifdef MPC_MANAGER_PACKAGE_FIXTURE
+    const auto architecture=Json::parse(std::ifstream("/tmp/manager-fixtures/fixture.json")).at("primary").at("arch").get<std::string>();
+#else
+    const std::string architecture=managerArchitecture();
+#endif
+    Manager manager(argv[1],argv[2],argv[3],argv[4],architecture,storagePaths);bool dark=false;try{dark=manager.darkTheme();}catch(const std::exception& e){std::fprintf(stderr,"Theme preference: %s\n",e.what());}Theme::set(dark);Screen screen(argv[5],argv[1]);
     ThumbnailCache thumbnails({},manager.usb/"thumbnails");uint64_t artworkRevision=0;
     auto labelWidth=[&](const std::string& label,int size){int width=0;FT_Set_Pixel_Sizes(screen.face,0,size);for(unsigned char letter:label)if(!FT_Load_Char(screen.face,letter,FT_LOAD_DEFAULT))width+=screen.face->glyph->advance.x>>6;return width;};
     const int setupWidth=12+24+12+labelWidth("SETUP",23)+12,setupX=1252-setupWidth;
+    const int browseToolsX=setupX-360;
     const int themeWidth=16+24+12+std::max(labelWidth("Light",25),labelWidth("Dark",25))+12,themeX=995-themeWidth;
     const int welcomeHideX=1222-12-labelWidth("Hide message",25);
     // Device clocks may be unset, so copyright follows the build year.
@@ -188,10 +200,15 @@ static int app(int argc,char**argv) {
     auto amount=[&](float value){std::lock_guard<std::mutex> lock(progressMutex);progressValue=value;};
     auto progress=[&](const std::string& text){std::lock_guard<std::mutex> lock(progressMutex);progressText=text;};
     struct Result {std::vector<Json> items;std::string status,catalogError;Json offer=Json::object();Json storage=Json::object();std::vector<Json> cards={};Json managerUpdate=Json::object();Json pluginLocation=Json::object();};
-    enum class Work {Open,List,Offer,Preferences,Mutation,SdRead,SdInstall,SdRemove,ManagerCheck,ManagerUpdate,PluginLocationRead,PluginLocationSelect,PluginLocationBrowse};
-    std::string view="catalog",status="Loading catalog once for this session...",catalogError;std::vector<Json> items;
-    std::map<std::string,int> pages;int selected=-1,page=0;bool confirming=false,busy=true,initial=true,completed=false,failed=false,mutating=false,listReady=false,listPending=false,returning=false,dirty=true,finishFade=false;std::string operation;
+    enum class Work {Open,List,Offer,Preferences,Mutation,SdRead,SdInstall,SdRemove,ManagerCheck,ManagerUpdate,PluginLocationRead,PluginLocationSelect,PluginLocationBrowse,Diagnostics};
+    std::string view="catalog",status="Loading catalog once for this session...",catalogError;std::vector<Json> items,allItems;
+    enum class BrowsePanel {None,Find,Filter,Sort,Details,Image};BrowsePanel browsePanel=BrowsePanel::None;
+    std::map<std::string,pmu::BrowseOptions> browseOptions;std::string queryDraft;
+    std::map<std::string,int> pages,pageTotals;std::string loadedView;int selected=-1,page=0;bool confirming=false,busy=true,initial=true,completed=false,failed=false,mutating=false,listReady=false,listPending=false,returning=false,dirty=true,finishFade=false;std::string operation;
+    pmu::CardTap cardTap,imageTap;std::string selectionStatus;
+    auto clearSelection=[&]{selected=-1;selectionStatus.clear();cardTap.clear();imageTap.clear();};
     bool managerCheckPending=false,managerCheckFailed=false,managerUpdateConfirm=false,managerUpdated=false;std::string managerUpdateStatus="Not checked";Json managerUpdate=Json::object();
+    bool diagnosticsPending=false;
     bool offerPending=false,themePending=false,hidePending=false,savedDark=dark,savedHidden=!welcome,activeDark=dark,activeHidden=!welcome;
     bool saveTheme=false,saveHidden=false;std::string activeView;unsigned long request=0,activeRequest=0;
     Json welcomeOffer={{"label","Install"},{"allowed",false},{"reason","Checking the latest manager release..."}};
@@ -199,7 +216,9 @@ static int app(int argc,char**argv) {
     Work work=Work::Open;
     std::future<Result> job=std::async(std::launch::async,[&]{manager.openCatalog();manager.recordInstalled();Result result{{},manager.catalogError.empty()?"Catalog ready. Choose a package.":manager.catalogError,manager.catalogError,currentOffer()};if(manager.arch=="aarch64")result.pluginLocation=manager.pluginStorageInfo();if(sdAvailable){try{result.storage=sdInstaller.inspect();}catch(const std::exception& e){result.storage={{"reason",e.what()}};}}return result;});
     const char* renderView=std::getenv("MPC_MANAGER_RENDER_VIEW");if(renderView)view=renderView;
-    auto reload=[&]{++request;listPending=true;listReady=false;items.clear();selected=-1;page=pages[view];confirming=false;dirty=true;};
+    auto pageLabel=[&]{return pageTotals.count(view)?"Page "+std::to_string(page+1)+" / "+std::to_string(pageTotals.at(view)):std::string();};
+    auto applyView=[&](bool reset){if(reset)pages[view]=0;items=pmu::browsePlugins(allItems,browseOptions[view]);pageTotals[view]=std::max(1,(int(items.size())+5)/6);page=std::clamp(pages[view],0,pageTotals[view]-1);pages[view]=page;clearSelection();dirty=true;};
+    auto reload=[&]{++request;listPending=true;listReady=false;if(loadedView!=view){items.clear();allItems.clear();}clearSelection();page=pages[view];confirming=false;browsePanel=BrowsePanel::None;SDL_StopTextInput();dirty=true;};
     Uint32 lastTouch=SDL_GetTicks(),progressEnded=0;bool progressFading=false;
     auto startNext=[&]{
         if(busy||quitting)return;
@@ -219,6 +238,9 @@ static int app(int argc,char**argv) {
         }else if(managerCheckPending&&!returning){
             work=Work::ManagerCheck;busy=true;managerCheckPending=false;
             job=std::async(std::launch::async,[&]{Result result;result.managerUpdate=manager.checkManagerUpdate();return result;});
+        }else if(diagnosticsPending&&!returning){
+            work=Work::Diagnostics;busy=true;diagnosticsPending=false;
+            job=std::async(std::launch::async,[&]{Result result;result.status=manager.saveDiagnostics();return result;});
         }else if(offerPending&&!returning){
             work=Work::Offer;busy=mutating=true;offerPending=false;completed=false;failed=false;progressFading=false;amount(-1);
             job=std::async(std::launch::async,[&]{manager.installReleasePlugin(MPC_PM_ID,{MPC_PM_REPO,MPC_PM_TAG_PREFIX,MPC_PM_ASSET_PREFIX},progress,amount);return Result{};});
@@ -238,13 +260,18 @@ static int app(int argc,char**argv) {
     const bool sdTest=false;
 #endif
     const bool pluginLocationTest=testMode&&std::string(testMode).rfind("plugin-location",0)==0;
+    const bool browserTest=testMode&&std::string(testMode).rfind("browser",0)==0;
+    if(browserTest&&(!std::getenv("MPC_INSTALL_TEST")||!fs::is_regular_file("/tmp/manager-fixtures/fixture.json")))throw std::runtime_error("Browser tests require an isolated package fixture");
+    std::string browserPackageId;int browserRefreshFrames=0;
+    if(browserTest){Thumbnail image;image.width=image.height=2;image.pixels={0xffff0000,0xff00ff00,0xff0000ff,0xffffffff};screen.thumbnail(0,0,&image,256,160);if(screen.pixels[1*1280+49]!=0xffff0000||screen.pixels[1*1280+129]!=0xff00ff00||screen.pixels[81*1280+49]!=0xff0000ff)throw std::runtime_error("Details thumbnail scaling failed");for(const auto& size:{std::pair{128,80},std::pair{256,160}}){screen.thumbnail(0,0,&image,size.first,size.second);for(int x=0;x<size.first;++x)if(screen.pixels[x]!=Theme::line||screen.pixels[(size.second-1)*1280+x]!=Theme::line)throw std::runtime_error("Thumbnail overwrote horizontal border");for(int y=0;y<size.second;++y)if(screen.pixels[y*1280]!=Theme::line||screen.pixels[y*1280+size.first-1]!=Theme::line)throw std::runtime_error("Thumbnail overwrote vertical border");}image.pixels.clear();screen.thumbnail(0,0,&image,256,160);}
     const bool test=testMode!=nullptr, flow=test&&(std::string(testMode)=="flow"||std::string(testMode)=="touch-flow"),responsive=test&&std::string(testMode)=="responsive",direct=test&&std::string(testMode).rfind("welcome-",0)==0;int frames=0,step=0,welcomeStep=0,presents=0,idlePresents=0;std::string updateTestResult;Uint32 probeStarted=0;const bool startingDark=dark;
-    auto click=[&](int x,int y){SDL_Event event{};const auto point=screen.geometry.output(x,y);if(std::string(testMode)=="touch-flow"){event.type=SDL_FINGERUP;int wx,wy,ww,wh;SDL_RenderLogicalToWindow(screen.renderer,float(point.first),float(point.second),&wx,&wy);SDL_GetWindowSize(screen.window,&ww,&wh);event.tfinger.x=float(wx)/ww;event.tfinger.y=float(wy)/wh;SDL_PushEvent(&event);return;}event.type=SDL_MOUSEBUTTONUP;event.button.button=SDL_BUTTON_LEFT;event.button.x=point.first;event.button.y=point.second;SDL_PushEvent(&event);};
+    auto click=[&](int x,int y){SDL_Event event{};const auto point=screen.geometry.output(x,y);if(std::string(testMode)=="touch-flow"||std::string(testMode)=="browser-touch"){event.type=SDL_FINGERUP;int wx,wy,ww,wh;SDL_RenderLogicalToWindow(screen.renderer,float(point.first),float(point.second),&wx,&wy);SDL_GetWindowSize(screen.window,&ww,&wh);event.tfinger.x=float(wx)/ww;event.tfinger.y=float(wy)/wh;SDL_PushEvent(&event);return;}event.type=SDL_MOUSEBUTTONUP;event.button.button=SDL_BUTTON_LEFT;event.button.x=point.first;event.button.y=point.second;SDL_PushEvent(&event);};
     const auto testStarted=SDL_GetTicks();
     auto capture=[&](const char* name){SDL_Surface* surface=SDL_CreateRGBSurfaceWithFormatFrom(screen.pixels.data(),1280,800,32,1280*4,SDL_PIXELFORMAT_ARGB8888);if(!surface)throw std::runtime_error(SDL_GetError());const int result=SDL_SaveBMP(surface,(manager.session/name).c_str());SDL_FreeSurface(surface);if(result!=0)throw std::runtime_error(SDL_GetError());};
     while(!quitting) {
         if(startupHealth.valid()&&startupHealth.wait_for(std::chrono::milliseconds(0))==std::future_status::ready){startupHealth.get();dirty=true;}
         if(pluginLocationTest&&SDL_GetTicks()-testStarted>15000)throw std::runtime_error("Plugin location UI test timed out at step "+std::to_string(step)+": "+status);
+        if(browserTest&&SDL_GetTicks()-testStarted>30000)throw std::runtime_error("Catalog UI test timed out at step "+std::to_string(step)+": "+status);
         if(!sdSourceRemoval&&!fs::is_regular_file(manager.usb/".mpc-manager-id")) {status=sourceOnSd?"SD card removed. Returning to MPC.":"USB removed. Returning to MPC.";quitting=1;}
         if(busy&&mutating){std::lock_guard<std::mutex> lock(progressMutex);if(!progressText.empty()){status=progressText;progressText.clear();dirty=true;}}
         if(busy&&job.wait_for(std::chrono::milliseconds(0))==std::future_status::ready){
@@ -278,22 +305,28 @@ static int app(int argc,char**argv) {
                 else sdSourceRemoval=false;
                 progressEnded=SDL_GetTicks();progressFading=true;
             }else if(work==Work::List&&activeRequest==request&&activeView==view){
-                if(success){items=std::move(result.items);listReady=true;page=std::clamp(pages[view],0,std::max(0,(int(items.size())-1)/6));pages[view]=page;if(status=="Loading plugins...")status=view=="catalog"?(catalogError.empty()?"Catalog ready. Choose a package.":catalogError):view=="local"?"Local packages ready. Choose a package.":view=="installed"?"Installed plugins ready. Choose a plugin.":"Installation history ready. Choose a plugin.";}
+                if(success){loadedView=view;allItems=std::move(result.items);listReady=true;applyView(false);if(status=="Loading plugins...")status=view=="catalog"?(catalogError.empty()?"Catalog ready. Choose a package.":catalogError):view=="local"?"Local packages ready. Choose a package.":view=="installed"?"Installed plugins ready. Choose a plugin.":"Installation history ready. Choose a plugin.";}
                 if(finishFade){progressEnded=SDL_GetTicks();progressFading=true;finishFade=false;}
-            }else if(work==Work::Mutation){mutating=false;if(success){status=operation=="Uninstall"?"Plugin uninstalled.":"Plugin installed. Ready for another selection.";completed=true;failed=false;}finishFade=true;reload();lastTouch=SDL_GetTicks();}
+            }else if(work==Work::Diagnostics){if(success){status=result.status;completed=true;failed=false;}}
+            else if(work==Work::Mutation){mutating=false;if(success){status=operation=="Uninstall"?"Plugin uninstalled.":"Plugin installed. Ready for another selection.";completed=true;failed=false;}finishFade=true;reload();lastTouch=SDL_GetTicks();}
             if(returning)status="Returning to MPC...";
         }
         startNext();
+        if(browserTest&&step==24&&completed&&!mutating&&!listReady){if(pageLabel()!="Page 3 / 3"||items.size()!=13||selected!=-1)throw std::runtime_error("Post-install refresh flashed an empty list or incorrect page counter");++browserRefreshFrames;}
         std::vector<std::string> artworkUrls;
-        if(!welcome&&!sdView&&!confirming&&!returning&&!mutating&&listReady)for(int i=page*6;i<std::min(int(items.size()),page*6+6);++i)artworkUrls.push_back(items[i].value("screenshot",""));
-        thumbnails.visible(artworkUrls);const auto revision=thumbnails.revision();if(revision!=artworkRevision){artworkRevision=revision;dirty=true;}
+        if(!welcome&&!sdView&&!confirming&&!returning&&!mutating&&(listReady||(loadedView==view&&!items.empty()))){if((browsePanel==BrowsePanel::Details||browsePanel==BrowsePanel::Image)&&selected>=0)artworkUrls.push_back(items[selected].value("screenshot",""));else if(browsePanel==BrowsePanel::None)for(int i=page*6;i<std::min(int(items.size()),page*6+6);++i)artworkUrls.push_back(items[i].value("screenshot",""));}
+        thumbnails.visible(artworkUrls,browsePanel==BrowsePanel::Image);const auto revision=thumbnails.revision();if(revision!=artworkRevision){artworkRevision=revision;dirty=true;}
         if(quitting||returning)thumbnails.clear();
         if(returning&&!busy&&!themePending&&!hidePending)quitting=1;
         const Uint32 fadeElapsed=SDL_GetTicks()-progressEnded;if(progressFading&&fadeElapsed>=600){progressFading=false;dirty=true;}
         if(SDL_GetTicks()-lastTouch>=300000&&!busy)quitting=1;
         if(dirty||progressFading||(!welcome&&busy)||(welcome&&mutating)){
         screen.rect(0,0,1280,800,Theme::background);
-        if(sdView){
+        if(browsePanel==BrowsePanel::Image&&selected>=0){
+            screen.text(28,43,items[selected].value("name","Plugin"),Theme::ink,31,1140);
+            screen.box(1194,8,58,58,Theme::panel);screen.line(1212,26,1234,48,Theme::ink);screen.line(1234,26,1212,48,Theme::ink);
+            const auto image=thumbnails.get(items[selected].value("screenshot",""));screen.thumbnail(28,82,image.get(),1224,690);
+        }else if(sdView){
             screen.text(28,43,pluginLocationView?"PLUGIN INSTALLATION LOCATION":managerUpdateConfirm?"CONFIRM MANAGER UPDATE":sdConfirm?(sdOperation=="Remove"?"REMOVE MANAGER FROM SD":"INSTALL MANAGER ON SD"):sdPicker?"CHOOSE SD CARD":"PLUGIN MANAGER SETUP",Theme::ink,31);
             screen.rect(28,55,1224,1,Theme::line);
             screen.button(28,65,180,"Back",false,!mutating,Icon::Return);
@@ -345,7 +378,7 @@ static int app(int argc,char**argv) {
                 screen.wrapped(96,217,detail,790,2,Theme::muted,22);
                 if(sdAvailable&&sdReady){
                     screen.text(96,274,"Plugin Manager folder: Plugin Manager USB",Theme::muted,22,790);
-                    screen.button(918,155,310,installed?(sdState.value("installed",false)?"Update manager":"Reinstall manager"):"Install to SD",true,!busy&&!sdState.value("current",false)&&(!installed||(sdState.value("can_remove",false)&&!sdState.value("removing",false))),Icon::Download);
+                    screen.button(918,155,310,"Install manager",true,!busy&&!sdState.value("current",false)&&(!installed||(sdState.value("can_remove",false)&&!sdState.value("removing",false))),Icon::Download);
                     if(installed)screen.button(918,225,310,"Uninstall manager",false,!busy&&sdState.value("can_remove",false),Icon::Trash);
                 }
                 screen.box(28,309,1224,150,Theme::panel);screen.icon(52,333,Icon::History,Theme::red);screen.text(96,349,"Plugin Manager updates",Theme::ink,28,790);
@@ -356,6 +389,7 @@ static int app(int argc,char**argv) {
                 screen.box(28,475,1224,110,Theme::panel);screen.icon(52,499,Icon::Grid,Theme::red);screen.text(96,515,"Welcome message",Theme::ink,28,790);
                 screen.text(96,551,"Show the welcome screen when the manager opens.",Theme::muted,22,790);
                 screen.box(918,518,30,30,!hideNext?Theme::red:Theme::background);if(!hideNext)screen.icon(921,521,Icon::Check,Theme::white);screen.text(964,542,"Show on opening",Theme::ink,25,264);
+                screen.button(28,605,220,"Save report",false,!busy&&!diagnosticsPending,Icon::Download);
             }
             screen.box(28,682,1224,98,Theme::lcd,Theme::lcd);
             screen.wrapped(46,713,status,1180,2,failed?0xffffbd91:Theme::white,22);
@@ -385,6 +419,7 @@ static int app(int argc,char**argv) {
         }else{
         screen.text(28,43,confirming?(operation=="Uninstall"?"REMOVE PLUGIN":operation=="Update"?"UPDATE PLUGIN":"INSTALL PLUGIN"):"OPEN MPC PLUGIN CATALOG",Theme::ink,31);
         screen.box(setupX,8,setupWidth,40,Theme::panel);screen.icon(setupX+12,16,Icon::Cog,mutating?Theme::muted:Theme::ink);screen.text(setupX+48,36,"SETUP",mutating?Theme::muted:Theme::ink,23,setupWidth-60);
+        if(!confirming){const auto& options=browseOptions[view];screen.compactButton(browseToolsX,8,108,"FIND",!options.query.empty()||browsePanel==BrowsePanel::Find,!mutating&&listReady);screen.compactButton(browseToolsX+120,8,108,"FILTER",!options.kind.empty()||options.updatesOnly||options.compatibleOnly||browsePanel==BrowsePanel::Filter,!mutating&&listReady);screen.compactButton(browseToolsX+240,8,108,"SORT",options.order!=pmu::BrowseOptions::Order::Name||browsePanel==BrowsePanel::Sort,!mutating&&listReady);}
         screen.rect(28,55,1224,1,Theme::line);
         screen.button(28,65,175,"Catalog",view=="catalog",!mutating,Icon::Grid);screen.button(215,65,175,"Local",view=="local",!mutating,Icon::Folder);screen.button(402,65,175,"On MPC",view=="installed",!mutating,Icon::Check);screen.button(589,65,175,"History",view=="history",!mutating,Icon::History);screen.button(1007,65,245,"Return to MPC",false,!mutating,Icon::Return);screen.themeButton(themeX,65,themeWidth,dark,!mutating);
         if(confirming){
@@ -392,8 +427,31 @@ static int app(int argc,char**argv) {
             screen.text(52,205,operation+" "+items[selected].value("name","Plugin")+"?",Theme::ink,34,1150);
             screen.text(52,260,"Your other plugins will stay installed.",Theme::muted,22);
             screen.text(52,310,operation=="Uninstall"?"Remove this plugin from its installation location?":"Verify and install into the plugin installation location?",Theme::ink,22);
-            screen.text(52,359,manager.synths.empty()?"No plugin installation location selected. Open SETUP.":manager.synths.string(),Theme::muted,22,1150);
+            const auto target=items[selected].value("install_target",manager.synths.string());
+            screen.text(52,359,target.empty()?"No plugin installation location selected. Open SETUP.":target,Theme::muted,22,1150);
             screen.button(28,605,340,"Confirm "+operation,true,!busy);screen.button(380,605,220,"Cancel");
+        }else if(browsePanel==BrowsePanel::Find){
+            screen.box(28,143,1224,442,Theme::panel);screen.box(44,159,1192,58,Theme::background);screen.text(62,198,queryDraft.empty()?"Search names, authors and descriptions":queryDraft,queryDraft.empty()?Theme::muted:Theme::ink,27,1154);
+            const std::string rows[]={"1234567890","QWERTYUIOP","ASDFGHJKL","ZXCVBNM"};
+            for(int row=0;row<4;++row)for(size_t col=0;col<rows[row].size();++col)screen.button(46+int(col)*120,235+row*90,108,std::string(1,rows[row][col]));
+            screen.button(1126,415,108,"DEL");screen.button(886,505,348,"Space");screen.button(28,605,180,"Cancel");screen.button(220,605,180,"Clear");screen.button(942,605,310,"Search",true);
+        }else if(browsePanel==BrowsePanel::Filter){
+            const auto& options=browseOptions[view];screen.box(28,143,1224,442,Theme::panel);
+            screen.button(52,165,376,"All types",options.kind.empty());screen.button(452,165,376,"Instruments",options.kind=="instrument");screen.button(852,165,376,"Effects",options.kind=="effect");
+            const auto count=std::count_if(allItems.begin(),allItems.end(),[](const Json& item){return item.value("update_available",false);});
+            screen.text(52,292,"Updates only ("+std::to_string(count)+")",Theme::ink,28);screen.box(1198,265,30,30,options.updatesOnly?Theme::red:Theme::background);if(options.updatesOnly)screen.icon(1201,268,Icon::Check,Theme::white);
+            screen.text(52,372,"Compatible packages only",Theme::ink,28);screen.box(1198,345,30,30,options.compatibleOnly?Theme::red:Theme::background);if(options.compatibleOnly)screen.icon(1201,348,Icon::Check,Theme::white);
+            screen.button(28,605,180,"Back",false,true,Icon::Return);screen.button(942,605,310,"Clear filters");
+        }else if(browsePanel==BrowsePanel::Sort){
+            const auto order=browseOptions[view].order;screen.box(28,143,1224,442,Theme::panel);screen.button(52,165,1176,"Name A–Z",order==pmu::BrowseOptions::Order::Name);screen.button(52,245,1176,"Name Z–A",order==pmu::BrowseOptions::Order::Reverse);screen.button(52,325,1176,"Updates first",order==pmu::BrowseOptions::Order::Updates);screen.button(28,605,180,"Back",false,true,Icon::Return);
+        }else if(browsePanel==BrowsePanel::Details&&selected>=0){
+            const auto& item=items[selected];screen.box(28,143,1224,442,Theme::panel);const auto image=thumbnails.get(item.value("screenshot",""));screen.thumbnail(52,167,image.get(),256,160);
+            screen.text(340,193,item.value("name","Plugin"),Theme::ink,34,884);screen.text(340,232,"by "+item.value("author",item.value("manufacturer","Not listed")),Theme::muted,23,884);
+            screen.badge(340,252,128,item.value("kind","")=="effect"?"EFFECT":"INSTRUMENT");screen.badge(480,252,190,item.value("origin","")=="local"?"LOCAL PACKAGE":"CATALOG PACKAGE");
+            screen.text(340,325,"Available v"+item.value("version","Unknown"),Theme::ink,27,884);screen.text(340,365,item.value("installed",false)?"Installed v"+item.value("installed_version","Unknown"):"Not installed",Theme::muted,25,884);
+            screen.wrapped(340,411,item.value("summary",""),884,3,Theme::ink,23);screen.wrapped(52,365,item.value("license","License not listed"),256,2,Theme::muted,23);
+            if(item.contains("saved_version"))screen.text(52,440,"Saved v"+item.value("saved_version",""),Theme::muted,23,256);
+            screen.wrapped(52,517,item.value("install_target","").empty()?"No installation location selected":item.value("install_target",""),1176,2,Theme::muted,22);screen.button(28,605,180,"Back",false,true,Icon::Return);
         } else {
             for(int row=0;row<6;++row){int index=page*6+row;if(index>=int(items.size()))break;const auto& item=items[index];const int x=28+(row%2)*620,y=143+(row/2)*151;
                 const bool blocked=!item.value("blocked_reason","").empty();
@@ -409,19 +467,20 @@ static int app(int argc,char**argv) {
                 else if(view=="history"){screen.box(x+278,y+98,139,30,Theme::panel);screen.text(x+287,y+120,"NOT INSTALLED",Theme::muted,17,121);}
                 const auto artwork=thumbnails.get(item.value("screenshot",""));screen.thumbnail(x+459,y+48,artwork.get());
             }
-            if(!initial&&items.empty())screen.wrapped(28,230,!listReady?(failed?status:"Loading plugins..."):view=="catalog"&&!catalogError.empty()?catalogError:"No plugins in this view.",1100,3);
-            screen.button(28,605,180,"Previous",false,listReady&&(!busy||work==Work::Preferences)&&page>0,Icon::Left);screen.button(220,605,180,"Next",false,listReady&&(!busy||work==Work::Preferences)&&(page+1)*6<int(items.size()),Icon::Right);screen.text(430,643,"Page "+std::to_string(page+1)+" / "+std::to_string(std::max(1,(int(items.size())+5)/6)),Theme::muted);
-            if(selected>=0&&listReady&&(!busy||work==Work::Preferences)) {
+            if(!initial&&items.empty())screen.wrapped(28,230,!listReady?(failed?status:"Loading plugins..."):view=="catalog"&&!catalogError.empty()?catalogError:!allItems.empty()?"No plugins match this search or filter.":"No plugins in this view.",1100,3);
+            screen.button(28,605,180,"Previous",false,listReady&&(!busy||work==Work::Preferences)&&page>0,Icon::Left);screen.button(220,605,180,"Next",false,listReady&&(!busy||work==Work::Preferences)&&(page+1)*6<int(items.size()),Icon::Right);screen.text(430,643,pageLabel(),Theme::muted);
+        }
+            if((browsePanel==BrowsePanel::None||browsePanel==BrowsePanel::Details)&&!confirming&&selected>=0&&listReady&&(!busy||work==Work::Preferences)) {
                 const auto& choice=items[selected];const bool installed=choice.value("installed",false),allowed=choice.value("blocked_reason","").empty();
                 if(installed){
-                    const auto device=choice.value("device_item",Json::object());const bool removable=device.value("device_target","")==manager.synths.string();screen.button(660,605,250,removable?"Uninstall":"External",false,removable,removable?Icon::Trash:Icon::Folder);
+                    const bool removable=choice.value("removal_available",false);screen.button(660,605,250,removable?"Uninstall":"External",false,removable,removable?Icon::Trash:Icon::Folder);
                     screen.button(922,605,330,choice.value("update_available",false)?"Update":"Installed",true,allowed&&choice.value("update_available",false),Icon::Download);
                 }else screen.button(830,605,422,allowed?"Download & install":"Unavailable",true,allowed,Icon::Download);
             }
-        }
         screen.box(28,682,1224,98,Theme::lcd,Theme::lcd);
-        screen.wrapped(46,713,confirming?"Confirm "+operation+" to continue, or Cancel.":status,1180,2,failed&&!confirming?0xffffbd91:Theme::white,22);
-        if(completed&&!busy&&!confirming)screen.text(46,761,"Choose another plugin to download and install, or Return to MPC.",Theme::white,22,1180);
+        std::string footer=!failed&&!completed&&selected>=0&&!selectionStatus.empty()?selectionStatus:status;if(!failed&&!completed&&!confirming&&browsePanel!=BrowsePanel::None)footer=browsePanel==BrowsePanel::Filter?std::to_string(items.size())+" matching plugins.":"";
+        screen.wrapped(46,713,confirming?"Confirm "+operation+" to continue, or Cancel.":footer,1180,2,failed&&!confirming?0xffffbd91:Theme::white,22);
+        if(completed&&!busy&&!confirming&&browsePanel==BrowsePanel::None)screen.text(46,761,"Choose another plugin to download and install, or Return to MPC.",Theme::white,22,1180);
 
         }
         if((!welcome&&(busy||progressFading))||(welcome&&(mutating||progressFading))){float value;{std::lock_guard<std::mutex> lock(progressMutex);value=progressValue;}const bool working=welcome?mutating:busy;const float t=working?1.0f:1.0f-float(fadeElapsed)/600;const float opacity=t*t*(3-2*t);const auto background=Theme::lcd;const int x=46,y=770,width=1180;auto faded=[&](uint32_t color){uint32_t result=0xff000000;for(int shift:{0,8,16})result|=uint32_t(((color>>shift)&255)*opacity+((background>>shift)&255)*(1-opacity))<<shift;return result;};screen.rect(x,y,width,8,faded(Theme::line));if(!working&&completed)screen.rect(x,y,width,8,faded(Theme::red));else if(value>=0)screen.rect(x,y,int(width*std::clamp(value,0.0f,1.0f)),8,faded(Theme::red));else screen.rect(x+int(((working?SDL_GetTicks():progressEnded)/4)%(width-140)),y,140,8,faded(Theme::red));}
@@ -435,6 +494,40 @@ static int app(int argc,char**argv) {
                 runtime.confirm(startupGeneration,startupSourceId);
             });
         }
+        }
+        if(browserTest&&!busy&&listReady&&!progressFading&&!returning){
+            if(welcome){click(150,634);}
+            else switch(step++){
+                case 0:{auto sample=manager.catalog.at(0);browserPackageId=sample.at("id").get<std::string>();sample["screenshot"]="https://example.invalid/browser.png";manager.catalog.clear();for(int i=0;i<12;++i){auto item=sample;item["id"]="browser-item-"+std::to_string(i);item["skin"]="browser-item-"+std::to_string(i);char uid[9];std::snprintf(uid,sizeof uid,"%08x",i+4096);item["uid"]=uid;item["name"]="Browser item "+std::to_string(i);item["kind"]=i%2?"effect":"instrument";manager.catalog.push_back(item);}sample["name"]="ZZZ "+sample.at("name").get<std::string>();manager.catalog.push_back(sample);reload();break;}
+                case 1:if(items.size()!=13)throw std::runtime_error("Catalog fixture did not load");capture("catalog-browser.bmp");click(100,215);click(browseToolsX+54,28);break;
+                case 2:{if(browsePanel!=BrowsePanel::Find||selected!=-1||!selectionStatus.empty())throw std::runtime_error("Find did not open");capture("search-browser.bmp");click(580,534);SDL_Event event{};event.type=SDL_TEXTINPUT;std::snprintf(event.text.text,sizeof event.text.text,"ROWSER");SDL_PushEvent(&event);break;}
+                case 3:if(queryDraft!="BROWSER")throw std::runtime_error("Touch keyboard or text input failed");click(1100,630);break;
+                case 4:if(browsePanel!=BrowsePanel::None||browseOptions[view].query!="BROWSER"||items.size()<12)throw std::runtime_error("Search results did not apply");click(320,90);break;
+                case 5:if(view!="local"||!browseOptions[view].query.empty())throw std::runtime_error("Search leaked between tabs");click(110,90);break;
+                case 6:if(view!="catalog"||browseOptions[view].query!="BROWSER")throw std::runtime_error("Catalog search was lost on tab return");click(browseToolsX+54,28);break;
+                case 7:click(300,630);click(1100,630);break;
+                case 8:if(items.size()!=13)throw std::runtime_error("Search clearing failed");click(browseToolsX+174,28);break;
+                case 9:if(browsePanel!=BrowsePanel::Filter)throw std::runtime_error("Filter did not open");click(1040,190);break;
+                case 10:if(browseOptions[view].kind!="effect"||std::any_of(items.begin(),items.end(),[](const Json& item){return item.value("kind","")!="effect";}))throw std::runtime_error("Type filter failed");capture("filter-browser.bmp");click(110,630);click(100,215);click(browseToolsX+294,28);break;
+                case 11:if(browsePanel!=BrowsePanel::Sort||selected!=-1||!selectionStatus.empty())throw std::runtime_error("Sort did not open");capture("sort-browser.bmp");click(300,270);break;
+                case 12:if(browseOptions[view].order!=pmu::BrowseOptions::Order::Reverse||browsePanel!=BrowsePanel::None)throw std::runtime_error("Reverse sorting failed");click(browseToolsX+174,28);break;
+                case 13:click(1100,630);click(110,630);click(browseToolsX+294,28);break;
+                case 14:click(300,190);break;
+                case 15:if(items.size()!=13||browseOptions[view].order!=pmu::BrowseOptions::Order::Name)throw std::runtime_error("Cleared catalog did not return");click(100,215);click(300,630);click(300,630);break;
+                case 16:if(page!=2||selected!=-1||!selectionStatus.empty())throw std::runtime_error("Paging retained an old card selection or description");click(551,231);break;
+                case 17:if(browsePanel!=BrowsePanel::None||selected<0||selectionStatus.empty())throw std::runtime_error("Single thumbnail tap did not select without opening details");click(100,175);break;
+                case 18:if(browsePanel!=BrowsePanel::Details||selected<0||items[selected].at("id")!=browserPackageId)throw std::runtime_error("Thumbnail details did not open");capture("details-browser.bmp");click(100,230);break;
+                case 19:if(browsePanel!=BrowsePanel::Details)throw std::runtime_error("Single medium-image tap opened the viewer");click(140,260);break;
+                case 20:if(browsePanel!=BrowsePanel::Image)throw std::runtime_error("Medium-image double tap did not open the viewer");capture("image-viewer-browser.bmp");click(1220,36);break;
+                case 21:if(browsePanel!=BrowsePanel::Details)throw std::runtime_error("Image close did not restore details");click(110,630);break;
+                case 22:if(page!=2||browsePanel!=BrowsePanel::None)throw std::runtime_error("Details return lost the catalog page");click(100,175);click(400,240);click(1100,630);break;
+                case 23:if(!confirming)throw std::runtime_error("Details install did not request confirmation");capture("confirmation-browser.bmp");click(180,630);break;
+                case 24:if(!completed||failed||page!=2||pages[view]!=2||browsePanel!=BrowsePanel::None||browserRefreshFrames<1)throw std::runtime_error("Installation did not retain the catalog page throughout refresh: "+status);capture("after-install-browser.bmp");click(setupX+60,28);break;
+                case 25:if(!sdView)throw std::runtime_error("SETUP did not open");click(110,630);break;
+                case 26:if(!completed||failed||!fs::is_regular_file(manager.usb/"diagnostics/manager-report.txt"))throw std::runtime_error("SETUP report did not save: "+status);capture("setup-report-browser.bmp");click(110,90);break;
+                case 27:if(sdView||page!=2)throw std::runtime_error("SETUP return lost the browser page");std::fprintf(stderr,"PASS: catalog keyboard, filters, sorting, whole-card double taps, cleared selection descriptions, details, image viewer and close, per-tab search, stable post-install page counter throughout refresh and manual report\n");click(1100,90);break;
+                default:break;
+            }
         }
         if(flow&&welcome&&!busy&&!returning){
             if(welcomeStep==0){click(1070,565);++welcomeStep;}
@@ -612,6 +705,9 @@ static int app(int argc,char**argv) {
         SDL_Event event;
         while(SDL_PollEvent(&event)) {
             if(event.type==SDL_QUIT)quitting=1;
+            if(browsePanel==BrowsePanel::Image&&event.type==SDL_KEYDOWN&&event.key.keysym.sym==SDLK_ESCAPE){browsePanel=BrowsePanel::Details;imageTap.clear();lastTouch=SDL_GetTicks();dirty=true;continue;}
+            if(browsePanel==BrowsePanel::Find&&event.type==SDL_TEXTINPUT){const std::string text=event.text.text;if(queryDraft.size()+text.size()<=64)queryDraft+=text;lastTouch=SDL_GetTicks();dirty=true;continue;}
+            if(browsePanel==BrowsePanel::Find&&event.type==SDL_KEYDOWN){if(event.key.keysym.sym==SDLK_BACKSPACE)pmu::eraseSearchCharacter(queryDraft);else if(event.key.keysym.sym==SDLK_RETURN){browseOptions[view].query=queryDraft;applyView(true);browsePanel=BrowsePanel::None;SDL_StopTextInput();}else if(event.key.keysym.sym==SDLK_ESCAPE){browsePanel=BrowsePanel::None;SDL_StopTextInput();}lastTouch=SDL_GetTicks();dirty=true;continue;}
             if(event.type==SDL_FINGERDOWN||event.type==SDL_FINGERMOTION){lastTouch=SDL_GetTicks();continue;}
             int x,y;
             if(event.type==SDL_FINGERUP){const auto point=screen.geometry.input(event.tfinger.x*screen.geometry.width(),event.tfinger.y*screen.geometry.height());x=point.first;y=point.second;}
@@ -619,6 +715,10 @@ static int app(int argc,char**argv) {
             else continue;
             lastTouch=SDL_GetTicks();dirty=true;
             if(returning)continue;
+            int cardIndex=-1;
+            if(!welcome&&!sdView&&!confirming&&browsePanel==BrowsePanel::None&&listReady&&(!busy||work==Work::Preferences)&&y>=143&&y<585&&x>=28&&x<1252&&(x-28)%620<604&&(y-143)%151<140){const int index=page*6+(y-143)/151*2+(x-28)/620;if(index<int(items.size()))cardIndex=index;}
+            if(cardIndex<0)cardTap.clear();
+            if(browsePanel==BrowsePanel::Image){if(x>=1194&&x<1252&&y>=8&&y<66){browsePanel=BrowsePanel::Details;imageTap.clear();}continue;}
             if(sdView){
                 if(mutating)continue;
                 if(y>=65&&y<123){if(x>=28&&x<208){closeSd();continue;}if(x>=220&&x<400&&(sdAvailable||pluginLocationView)&&!busy&&!sdConfirm&&!managerUpdateConfirm){if(pluginLocationView){pluginLocationPending=true;pluginLocationChoice.clear();pluginLocationPage=0;status="Checking plugin installation locations...";}else{sdPending=true;sdReady=false;sdSelected.clear();status="Checking SD installation...";}failed=completed=false;continue;}if(x>=412&&x<712&&manager.arch=="aarch64"&&!pluginLocationView&&!busy&&!sdPicker&&!sdConfirm&&!managerUpdateConfirm){pluginLocationView=true;pluginLocationPending=true;pluginLocationChoice.clear();pluginLocationPage=0;status="Checking plugin installation locations...";continue;}if(x>=themeX&&x<995){dark=!dark;Theme::set(dark);themePending=true;continue;}if(x>=1007){returnToMpc();break;}}
@@ -659,6 +759,7 @@ static int app(int argc,char**argv) {
                     continue;
                 }
                 if(!sdPicker){
+                    if(y>=605&&y<663&&x>=28&&x<248&&!busy&&!diagnosticsPending){diagnosticsPending=true;failed=completed=false;status="Preparing diagnostic report...";continue;}
                     if(y>=500&&y<568&&x>=918&&x<1228){hideNext=!hideNext;hidePending=true;failed=false;continue;}
                     if(y>=321&&y<379&&x>=918&&x<1228&&!managerUpdated&&!managerCheckPending&&!(busy&&work==Work::ManagerCheck)){managerCheckPending=true;managerCheckFailed=false;managerUpdateStatus="Checking GitHub Releases...";continue;}
                     if(y>=391&&y<449&&x>=918&&x<1228&&!busy&&!managerCheckPending&&!managerUpdated&&managerUpdate.value("update_available",false)&&managerUpdate.value("downloadable",false)){managerUpdateConfirm=true;continue;}
@@ -684,7 +785,8 @@ static int app(int argc,char**argv) {
                 continue;
             }
             if(mutating)continue;
-            if(x>=setupX&&x<1252&&y>=8&&y<48){openSd();continue;}
+            if(x>=setupX&&x<1252&&y>=8&&y<48){browsePanel=BrowsePanel::None;SDL_StopTextInput();openSd();continue;}
+            if(!confirming&&listReady&&(!busy||work==Work::Preferences)&&y>=8&&y<48&&x>=browseToolsX&&x<browseToolsX+348){const int index=(x-browseToolsX)/120;if((x-browseToolsX)%120>=108)continue;clearSelection();SDL_StopTextInput();browsePanel=index==0?BrowsePanel::Find:index==1?BrowsePanel::Filter:BrowsePanel::Sort;if(index==0){queryDraft=browseOptions[view].query;SDL_StartTextInput();}continue;}
             if(y>=65&&y<123){if(x>=themeX&&x<995){dark=!dark;Theme::set(dark);themePending=true;continue;}if(x>=1007){returnToMpc();break;}if(x>=28&&x<764){std::string target;if(x<203)target="catalog";else if(x>=215&&x<390)target="local";else if(x>=402&&x<577)target="installed";else if(x>=589)target="history";else continue;if(target==view&&!failed)continue;pages[view]=page;view=target;reload();completed=false;failed=false;status="Loading plugins...";}continue;}
             if(!listReady||(busy&&work!=Work::Preferences))continue;
             if(confirming) {
@@ -692,15 +794,26 @@ static int app(int argc,char**argv) {
                 if(!busy&&y>=605&&y<663&&x>=28&&x<368){Json chosen=items[selected];const bool remove=operation=="Uninstall";busy=mutating=true;work=Work::Mutation;confirming=false;completed=false;failed=false;progressFading=false;amount(-1);status=remove?(sourceOnSd?"Uninstalling. Keep the SD card inserted...":"Uninstalling. Keep the USB inserted..."):"Preparing package checks...";job=std::async(std::launch::async,[&,chosen,remove]{if(remove)manager.remove(chosen);else manager.install(chosen,progress,amount);return Result{};});}
                 continue;
             }
-            if(y>=143&&y<585&&x>=28&&x<1252){int row=(y-143)/151,col=(x-28)/620;if((x-28)%620>=604||(y-143)%151>=140)continue;int index=page*6+row*2+col;if(index<int(items.size())){selected=index;if(!items[index].value("blocked_reason","").empty())status="Download blocked: "+items[index].value("blocked_reason","");else if(!items[index].value("summary","").empty()){status=items[index].value("summary","");completed=false;}}}
-            if(y>=605&&y<663){if(x>=28&&x<208&&page>0){--page;selected=-1;}else if(x>=220&&x<400&&(page+1)*6<int(items.size())){++page;selected=-1;}else if(selected>=0){const auto& choice=items[selected];const bool installed=choice.value("installed",false);
-                if(installed&&x>=660&&x<910){if(choice.at("device_item").value("device_target","")!=manager.synths.string()){status="Use this plugin's original installer to remove it.";continue;}operation="Uninstall";confirming=true;}
+            if(browsePanel==BrowsePanel::Find){
+                if(y>=605&&y<663){if(x>=28&&x<208){browsePanel=BrowsePanel::None;SDL_StopTextInput();}else if(x>=220&&x<400)queryDraft.clear();else if(x>=942&&x<1252){browseOptions[view].query=queryDraft;applyView(true);browsePanel=BrowsePanel::None;SDL_StopTextInput();}continue;}
+                if(y>=235&&y<581&&x>=46&&x<1234){const int row=(y-235)/90,col=(x-46)/120;if((y-235)%90>=58)continue;if(row==2&&col==9){pmu::eraseSearchCharacter(queryDraft);continue;}if(row==3&&col>=7){if(queryDraft.size()<64)queryDraft+=' ';continue;}const std::string rows[]={"1234567890","QWERTYUIOP","ASDFGHJKL","ZXCVBNM"};if(row<4&&(x-46)%120<108&&col<int(rows[row].size())&&queryDraft.size()<64)queryDraft+=rows[row][col];}continue;
+            }
+            if(browsePanel==BrowsePanel::Filter){auto& options=browseOptions[view];if(y>=165&&y<223){if(x>=52&&x<428)options.kind.clear();else if(x>=452&&x<828)options.kind="instrument";else if(x>=852&&x<1228)options.kind="effect";else continue;applyView(true);}else if(x>=52&&x<1228&&y>=255&&y<315){options.updatesOnly=!options.updatesOnly;applyView(true);}else if(x>=52&&x<1228&&y>=335&&y<395){options.compatibleOnly=!options.compatibleOnly;applyView(true);}else if(y>=605&&y<663){if(x>=28&&x<208)browsePanel=BrowsePanel::None;else if(x>=942&&x<1252){options.kind.clear();options.updatesOnly=options.compatibleOnly=false;applyView(true);}}continue;}
+            if(browsePanel==BrowsePanel::Sort){if(x>=52&&x<1228&&y>=165&&y<383&&(y-165)%80<58){const int index=(y-165)/80;browseOptions[view].order=index==0?pmu::BrowseOptions::Order::Name:index==1?pmu::BrowseOptions::Order::Reverse:pmu::BrowseOptions::Order::Updates;applyView(true);browsePanel=BrowsePanel::None;}else if(y>=605&&y<663&&x>=28&&x<208)browsePanel=BrowsePanel::None;continue;}
+            if(browsePanel==BrowsePanel::Details){
+                if(x>=52&&x<308&&y>=167&&y<327&&selected>=0&&ThumbnailCache::validUrl(items[selected].value("screenshot",""))){if(imageTap.open(selected,SDL_GetTicks()))browsePanel=BrowsePanel::Image;continue;}
+                imageTap.clear();
+                if(y>=605&&y<663&&x>=28&&x<208){browsePanel=BrowsePanel::None;continue;}
+            }
+            if(cardIndex>=0){selected=cardIndex;completed=false;failed=false;selectionStatus=items[selected].value("blocked_reason","").empty()?items[selected].value("summary",""):"Download blocked: "+items[selected].value("blocked_reason","");if(cardTap.open(selected,SDL_GetTicks()))browsePanel=BrowsePanel::Details;}
+            if(y>=605&&y<663){if(browsePanel==BrowsePanel::None&&x>=28&&x<208&&page>0){--page;pages[view]=page;clearSelection();}else if(browsePanel==BrowsePanel::None&&x>=220&&x<400&&(page+1)*6<int(items.size())){++page;pages[view]=page;clearSelection();}else if(selected>=0){const auto& choice=items[selected];const bool installed=choice.value("installed",false);
+                if(installed&&x>=660&&x<910){if(!choice.value("removal_available",false)){status="Removal needs its installation record or matching local ZIP.";continue;}operation="Uninstall";confirming=true;}
                 else if(!choice.value("blocked_reason","").empty())continue;
                 else if(installed&&x>=922&&choice.value("update_available",false)){operation="Update";confirming=true;}
                 else if(!installed&&x>=830){operation="Install";confirming=true;}
             }}
         }
-        if(test&&((!flow&&!responsive&&!direct&&!sdTest&&!pluginLocationTest&&!busy&&++frames==30)||((flow||direct||sdTest||pluginLocationTest)&&quitting))){capture("screen.bmp");quitting=1;}
+        if(test&&((!flow&&!responsive&&!direct&&!sdTest&&!pluginLocationTest&&!browserTest&&!busy&&++frames==30)||((flow||direct||sdTest||pluginLocationTest||browserTest)&&quitting))){capture("screen.bmp");quitting=1;}
         startNext();
         SDL_Delay(30);
     }

@@ -154,7 +154,7 @@ ThumbnailCache::Response download(const ThumbnailCache::Request& request,const T
     std::string conditional=!request.etag.empty()?"If-None-Match: "+request.etag:!request.lastModified.empty()?"If-Modified-Since: "+request.lastModified:"";
     curl_slist header{conditional.data(),nullptr};
     std::unique_ptr<CURL,void(*)(CURL*)> handle(api.init(),api.cleanup);need(bool(handle),"Cannot allocate thumbnail download");
-    Download state{{},cancelled,{},{}};state.data.reserve(ThumbnailCache::inputLimit);
+    Download state{{},cancelled,{},{}};state.data.reserve(64*1024);
     auto set=[&](CURLoption option,auto value){need(api.set(handle.get(),option,value)==CURLE_OK,"Cannot configure thumbnail download");};
     set(CURLOPT_URL,request.url.c_str());set(CURLOPT_NOSIGNAL,1L);set(CURLOPT_CONNECTTIMEOUT_MS,4000L);set(CURLOPT_TIMEOUT_MS,12000L);
     if(!conditional.empty())set(CURLOPT_HTTPHEADER,&header);
@@ -188,13 +188,13 @@ bool ThumbnailCache::validUrl(const std::string& url){
     if(host.empty()||host.find('.')==std::string::npos||host.front()=='.'||host.back()=='.'||host.find_first_not_of("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-.")!=std::string::npos)return false;
     return host.find_first_not_of("0123456789.")!=std::string::npos;
 }
-Thumbnail ThumbnailCache::decode(const std::vector<unsigned char>& encoded){
+Thumbnail ThumbnailCache::decode(const std::vector<unsigned char>& encoded,bool detailed){
     need(!encoded.empty()&&encoded.size()<=inputLimit,"Thumbnail input exceeds limit");Pixels source;
     if(encoded.size()>=8&&png_sig_cmp(encoded.data(),0,8)==0)source=decodePng(encoded);
     else if(encoded.size()>=3&&encoded[0]==0xff&&encoded[1]==0xd8&&encoded[2]==0xff)source=decodeJpeg(encoded);
     else throw std::runtime_error("Unsupported thumbnail format");
     Thumbnail result;
-    constexpr int fittedWidth=width-2,fittedHeight=height-2;
+    const int fittedWidth=(detailed?detailWidth:width)-2,fittedHeight=(detailed?detailHeight:height)-2;
     if(source.width*fittedHeight>=source.height*fittedWidth){result.width=fittedWidth;result.height=std::max(1,source.height*fittedWidth/source.width);}else{result.height=fittedHeight;result.width=std::max(1,source.width*fittedHeight/source.height);}
     result.pixels.resize(size_t(result.width)*result.height);
     for(int y=0;y<result.height;++y)for(int x=0;x<result.width;++x){
@@ -212,7 +212,7 @@ struct ThumbnailCache::Storage {
     size_t budget;
     uint64_t sequence=0;
     bool reported=false;
-    static constexpr size_t entryLimit=48*1024;
+    static constexpr size_t entryLimit=4*1024*1024;
     static std::string name(const std::string& url){return "pmu-"+pmu::sha256Text(url)+".thumb";}
     static bool owned(const std::string& value){return value.size()==74&&value.compare(0,4,"pmu-")==0&&value.compare(68,6,".thumb")==0&&value.substr(4,64).find_first_not_of("0123456789abcdef")==std::string::npos;}
     explicit Storage(const std::filesystem::path& path,size_t bytes):budget(std::min(bytes,storageLimit)){
@@ -235,10 +235,10 @@ struct ThumbnailCache::Storage {
     std::optional<Record> load(const std::string& url){
         try{
             auto value=bytes(name(url));if(!value)return {};const size_t end=value->size()-64;
-            if(pmu::sha256Text(std::string_view(*value).substr(0,end))!=value->substr(end))return {};
+            if(pmu::sha256Data(std::string_view(*value).substr(0,end))!=value->substr(end))return {};
             const auto newline=value->find('\n');if(newline==std::string::npos||newline>8192||newline>=end)return {};
             std::istringstream header(value->substr(0,newline));std::string magic,stored,etag,modified;int width=0,height=0;
-            if(!(header>>magic>>width>>height>>std::quoted(stored)>>std::quoted(etag)>>std::quoted(modified))||magic!="PMU-THUMBNAIL-LE-1"||stored!=url||width<1||width>ThumbnailCache::width-2||height<1||height>ThumbnailCache::height-2||!validator(etag)||!validator(modified))return {};
+            if(!(header>>magic>>width>>height>>std::quoted(stored)>>std::quoted(etag)>>std::quoted(modified))||(magic!="PMU-THUMBNAIL-LE-1"&&magic!="PMU-THUMBNAIL-LE-2")||stored!=url||width<1||width>(magic=="PMU-THUMBNAIL-LE-1"?ThumbnailCache::width:ThumbnailCache::detailWidth)-2||height<1||height>(magic=="PMU-THUMBNAIL-LE-1"?ThumbnailCache::height:ThumbnailCache::detailHeight)-2||!validator(etag)||!validator(modified))return {};
             header>>std::ws;if(!header.eof()||end-newline-1!=size_t(width)*height*4)return {};
             auto image=std::make_shared<Thumbnail>();image->width=width;image->height=height;image->pixels.resize(size_t(width)*height);std::memcpy(image->pixels.data(),value->data()+newline+1,image->pixels.size()*4);
             return Record{std::move(image),std::move(etag),std::move(modified)};
@@ -259,8 +259,9 @@ struct ThumbnailCache::Storage {
     void save(const std::string& url,const Record& record){
         try{
             need(record.image&&validator(record.etag)&&validator(record.lastModified),"Invalid cached thumbnail");
-            std::ostringstream header;header<<"PMU-THUMBNAIL-LE-1 "<<record.image->width<<' '<<record.image->height<<' '<<std::quoted(url)<<' '<<std::quoted(record.etag)<<' '<<std::quoted(record.lastModified)<<'\n';
-            std::string body=header.str();body.append(reinterpret_cast<const char*>(record.image->pixels.data()),record.image->pixels.size()*4);body+=pmu::sha256Text(body);need(body.size()<=entryLimit&&body.size()<=budget,"Thumbnail storage limit reached");
+            const bool detailed=record.image->width>ThumbnailCache::width-2||record.image->height>ThumbnailCache::height-2;
+            std::ostringstream header;header<<(detailed?"PMU-THUMBNAIL-LE-2 ":"PMU-THUMBNAIL-LE-1 ")<<record.image->width<<' '<<record.image->height<<' '<<std::quoted(url)<<' '<<std::quoted(record.etag)<<' '<<std::quoted(record.lastModified)<<'\n';
+            std::string body=header.str();body.append(reinterpret_cast<const char*>(record.image->pixels.data()),record.image->pixels.size()*4);body+=pmu::sha256Data(body);need(body.size()<=entryLimit&&body.size()<=budget,"Thumbnail storage limit reached");
             const auto target=name(url);const auto before=bytes(target);if(before&&*before==body)return;
             struct stat info{};if(fstatat(directory,target.c_str(),&info,AT_SYMLINK_NOFOLLOW)==0)need(S_ISREG(info.st_mode)&&info.st_nlink==1,"Linked thumbnail cache entry preserved");else need(errno==ENOENT,"Cannot inspect cached thumbnail");
             const auto temporary="."+target+"."+std::to_string(getpid())+"."+std::to_string(++sequence);
@@ -275,9 +276,9 @@ struct ThumbnailCache::Storage {
 
 ThumbnailCache::ThumbnailCache(Fetch supplied,std::filesystem::path storage,size_t budget):fetch(supplied?std::move(supplied):download),storagePath(std::move(storage)),storageBudget(budget){try{worker=std::thread(&ThumbnailCache::run,this);}catch(const std::system_error&){stopped=true;}}
 ThumbnailCache::~ThumbnailCache(){stopped=true;wake.notify_all();if(worker.joinable())worker.join();}
-void ThumbnailCache::visible(const std::vector<std::string>& urls){
+void ThumbnailCache::visible(const std::vector<std::string>& urls,bool detailed){
     std::vector<std::string> filtered;for(const auto& url:urls)if(validUrl(url)&&std::find(filtered.begin(),filtered.end(),url)==filtered.end()&&filtered.size()<6)filtered.push_back(url);
-    {std::lock_guard<std::mutex> lock(mutex);if(wanted==filtered)return;wanted=std::move(filtered);}wake.notify_one();
+    {std::lock_guard<std::mutex> lock(mutex);if(wanted==filtered&&wantedDetailed==detailed)return;if(wantedDetailed!=detailed){++generation;failed.clear();}wantedDetailed=detailed;wanted=std::move(filtered);}wake.notify_one();
 }
 std::shared_ptr<const Thumbnail> ThumbnailCache::get(const std::string& url){std::lock_guard<std::mutex> lock(mutex);const auto found=cache.find(url);if(found==cache.end())return {};found->second.used=++clock;return found->second.image;}
 size_t ThumbnailCache::bytes() const {std::lock_guard<std::mutex> lock(mutex);return pixelBytes;}
@@ -286,6 +287,8 @@ void ThumbnailCache::run(){
     std::unique_ptr<Storage> storage;
     if(!storagePath.empty())try{storage=std::make_unique<Storage>(storagePath,storageBudget);}catch(const std::exception& error){std::fprintf(stderr,"Thumbnail storage unavailable: %s\n",error.what());}
     std::set<std::string> checked;uint64_t checkedGeneration=0;
+    auto large=[](const Thumbnail& image){return image.width>width-2||image.height>height-2;};
+    auto needs=[&](const std::string& key){const auto found=cache.find(key);return !failed.count(key)&&(found==cache.end()||(!checked.count(key)&&(storage||(wantedDetailed&&!large(*found->second.image)))));};
     auto publish=[&](const std::string& url,uint64_t epoch,std::shared_ptr<const Thumbnail> image){
         std::lock_guard<std::mutex> lock(mutex);if(stopped||epoch!=generation||std::find(wanted.begin(),wanted.end(),url)==wanted.end())return;
         if(!image){failed.insert(url);changed.fetch_add(1);return;}const size_t size=image->pixels.size()*sizeof(uint32_t);
@@ -294,8 +297,8 @@ void ThumbnailCache::run(){
         cache[url]={std::move(image),++clock};pixelBytes+=size;changed.fetch_add(1);
     };
     try{for(;;){
-        uint64_t epoch;std::vector<std::string> visible;
-        {std::unique_lock<std::mutex> lock(mutex);wake.wait(lock,[&]{return stopped||generation!=checkedGeneration||(failed.size()<256&&std::any_of(wanted.begin(),wanted.end(),[&](const auto& key){return !failed.count(key)&&(!cache.count(key)||(storage&&!checked.count(key)));}));});if(stopped)return;epoch=generation;visible=wanted;}
+        uint64_t epoch;std::vector<std::string> visible;bool detailed;
+        {std::unique_lock<std::mutex> lock(mutex);wake.wait(lock,[&]{return stopped||generation!=checkedGeneration||(failed.size()<256&&std::any_of(wanted.begin(),wanted.end(),needs));});if(stopped)return;epoch=generation;visible=wanted;detailed=wantedDetailed;}
         if(epoch!=checkedGeneration){checked.clear();checkedGeneration=epoch;}
         std::map<std::string,Storage::Record> saved;
         if(storage)for(const auto& url:visible){
@@ -304,16 +307,17 @@ void ThumbnailCache::run(){
             if(auto record=storage->load(url)){if(!present)publish(url,epoch,record->image);saved.emplace(url,std::move(*record));}
         }
         std::string url;
-        {std::lock_guard<std::mutex> lock(mutex);if(epoch!=generation||visible!=wanted)continue;for(const auto& key:wanted)if(!failed.count(key)&&(!cache.count(key)||(storage&&!checked.count(key)))){url=key;break;}}
+        {std::lock_guard<std::mutex> lock(mutex);if(epoch!=generation||visible!=wanted)continue;for(const auto& key:wanted)if(needs(key)){url=key;break;}}
         if(url.empty())continue;
         auto cancelled=[&]{if(stopped)return true;std::lock_guard<std::mutex> lock(mutex);return epoch!=generation||std::find(wanted.begin(),wanted.end(),url)==wanted.end();};
         if(cancelled())continue;
         const auto found=saved.find(url);const auto* prior=found==saved.end()?nullptr:&found->second;
         try{
-            const auto response=fetch({url,prior?prior->etag:"",prior?prior->lastModified:""},cancelled);if(cancelled())continue;
+            const bool upgrade=detailed&&prior&&!large(*prior->image);
+            const auto response=fetch({url,prior&&!upgrade?prior->etag:"",prior&&!upgrade?prior->lastModified:""},cancelled);if(cancelled())continue;
             std::shared_ptr<const Thumbnail> image;
             if(response.unchanged){need(prior!=nullptr,"Unchanged thumbnail has no saved image");image=prior->image;}
-            else image=std::make_shared<Thumbnail>(decode(response.data));
+            else image=std::make_shared<Thumbnail>(decode(response.data,detailed||(prior&&large(*prior->image))));
             const bool same=prior&&prior->image->width==image->width&&prior->image->height==image->height&&prior->image->pixels==image->pixels;
             if(storage)storage->save(url,{image,response.unchanged&&response.etag.empty()?prior->etag:response.etag,response.unchanged&&response.lastModified.empty()?prior->lastModified:response.lastModified});
             if(!same)publish(url,epoch,std::move(image));

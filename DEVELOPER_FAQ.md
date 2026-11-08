@@ -336,22 +336,44 @@ Gen 2 automatic selection reads the scalar `Content.Manager.Directory` preferenc
 It never falls back to a guessed absolute location.
 Manual selection can use an existing folder with another name; the choice lasts for the current session and does not change MPC's content-drive preference.
 The destination's mount identity is checked again before installation, so a removed or replaced drive requires reselection.
+Updates and removals resolve the existing plugin from current device inventory across registered content folders.
+They use a separate operation context, leaving the destination selected for new installations unchanged.
+Conflicting identities, duplicate installed copies and unusable original drives are refused before a package script runs.
 After package validation, missing standard `Synths` folders are created and unregistered content folders are added to `SynthContentLocations`.
 Registration preserves unrelated settings and retains an exact original settings backup beside `MPC.settings` as `MPC.settings.pmu-*`.
+After a manager operation, newly created settings backups are collected into `MPC.settings.pmu-backups/` beside the settings file.
+The owned folder retains the ten newest recognized backups; modified files, links, unknown entries and backups that predate the operation are preserved.
+Backup filenames include a content checksum. A changed settings directory or invalid ownership marker stops cleanup and leaves the backups available for inspection.
 Choosing a location or rejecting a package does not perform those writes.
 It exports `MPC_SETTINGS` and invokes the package's installer or uninstaller with
 `-y -n -t` followed by that validated location.
 
-Those external scripts perform the payload and settings edits. Standard
-community scripts back up settings, but the GUI does not provide a universal
-rollback transaction around every package. Script failure can leave partial
-changes; checksum success only means the validated files were intact.
+Those external scripts perform the payload and settings edits.
+Before running them, [src/plugin_transaction.hpp](src/plugin_transaction.hpp) checks free space and, when required by the payload, actual symbolic-link support.
+The space check includes recovery copies, staging space and an 8 MiB allowance for script bookkeeping.
+It saves verified copies of the affected plugin folders, manager uninstall records, settings and installation history beside their original locations.
+Recovery copies remain on storage rather than filling RAM.
+Updates must use the plugin's existing content location; moving it between drives is a separate operation.
 
-The separate [tools/deploy.cpp](tools/deploy.cpp) helper validates current and
-previous identities, snapshots payload/registry/settings/history, verifies
-installed files and unrelated settings, and attempts restoration after failure.
-It is used by development consumers and **is absent from the default USB
-bundle**. Do not attribute its guarantees to ordinary GUI installations.
+Installation verifies the copied library, its registration and the saved uninstall record.
+Both installation and removal check that unrelated settings and other plugin registrations are preserved.
+If the script or record saving fails, the manager checks every recovery copy before restoring the protected paths, then verifies the restored contents.
+If restoration cannot be verified, it reports incomplete recovery and retains the recovery folders with an `original-path` receipt.
+Do not remove those folders until the installation has been recovered.
+These checks cover reported operation failures, not automatic recovery after power loss or arbitrary changes outside the protected paths by a package script.
+Checksums establish file integrity; they do not guarantee that third-party scripts behave correctly.
+
+The separate [tools/deploy.cpp](tools/deploy.cpp) development helper remains outside the default USB bundle.
+
+### How can I test plugin install recovery?
+
+Build with `make arm` or `make arm64`, then supply your own trusted ARMv7 OS 3 package:
+`make test-plugin-recovery TEST_PACKAGE_ZIP=/absolute/path/to/package.zip`.
+For the ARM64 backend, add `RECOVERY_ARCH=aarch64`.
+The package is used as filesystem test input; its DSP is not loaded by this check.
+The offline container tests install/update/uninstall failures, library and registration verification, history/registry write failures and user-file preservation.
+It does not contact or modify an MPC.
+The normal `make test` and `make test-arm64` targets also run the standalone recovery checks, including insufficient storage, unsupported links, damaged snapshots and replaced directories.
 
 ### Where are plugins installed, and what does uninstall remove?
 
@@ -398,6 +420,10 @@ ETag takes precedence over Last-Modified.
 A server providing neither marker requires downloading its image to check for changes.
 Unavailable servers retain the saved picture, while malformed cache entries are replaced after a successful image download and decode.
 The pixel cache in RAM remains capped at 4 MiB; persistent storage is capped at 32 MiB and removes the oldest stored entries when needed.
+Image downloads are capped at 2 MiB, with decoded images limited to two megapixels and 2048 pixels per side.
+Rendering fits the image inside its frame without overwriting the one-pixel outline.
+The enlarged viewer requests more detailed pixels only when needed, replacing that URL's small cached image within the same RAM and storage budgets.
+It uses a version 2 cache record for larger images and continues to read existing version 1 card thumbnails.
 Only managed thumbnail records are pruned; links and unrelated files are preserved.
 USB and SD copies keep separate caches.
 `tests/run_thumbnail_tests.py` covers persistence, changes, offline use, corruption, storage bounds, HTTPS validation, redirects and cancellation on both architectures, including fatal sanitizer runs.
@@ -414,7 +440,7 @@ The 3.10 helper capability, supported firmware, removable SD identity, mount sta
 Internal disks and SSDs are excluded.
 The internal helper records the SD UUID; this selection does not change the plugin package target described above.
 
-SETUP's **Update manager** copies the current runtime to SD.
+SETUP's **Install manager** copies the current USB runtime to SD; this is optional when running from USB.
 It is disabled for the active SD installation, and the backend rejects copying a directory onto itself before changing the SD files or helper selection.
 An SD session uses **Check for updates** to download a newer published release.
 Removal validates the installation receipt and owned file identities before deleting recognized application files and clearing the SD selection.
@@ -443,7 +469,7 @@ USB and SD have independent selections and saved data.
 A universal source also has separate ARMv7 and ARM64 health records, so success on one device generation cannot confirm the other.
 SD installation copies the selected complete generation and retains the card’s previous working version.
 Absent secondary storage does not prevent updating the current source.
-Return to the updated USB copy and use **Update manager** to reconcile an older SD copy.
+Return to the updated USB copy and use **Install manager** to reconcile an older SD copy.
 
 Automatic recovery requires readable original media and a supported functioning controller loader.
 Physical media failure and firmware that stops that loader from running still need recovery from the complete bundle.
@@ -592,6 +618,18 @@ performance. Record those separately against the installed artifact. Never run
 test-mode environment settings against a real device as ordinary installation.
 
 ### Where should I look when startup or installation fails?
+
+**SETUP → Save report** writes a bounded JSON report to `diagnostics/manager-report.txt` on the active source.
+The report includes build/ABI identity, anonymous filesystem flags, inventory counts, the last package-operation stage/outcome and log availability/size.
+It does not read raw log contents into the report or export settings, network identities, drive labels, plugin lists or local package filenames.
+The last operation summary is one small RAM-session file; there is no background logger or automatic upload.
+When the manager cannot open, use the existing launch-result files below instead.
+
+Catalog search/filter/sort is handled by [src/catalog_view.hpp](src/catalog_view.hpp) against the already loaded list.
+Keyboard taps do not trigger downloads or filesystem rescans.
+Browsing state is separate for each tab and lasts for the current opening; post-install refresh preserves the page and clamps it if the list shrinks.
+One card tap selects it; a second tap anywhere on the same card within 450 ms opens details.
+Paging, reloading and changing search/filter/sort criteria clear the selection and its description without clearing operation results.
 
 | Evidence or error | Check |
 | --- | --- |

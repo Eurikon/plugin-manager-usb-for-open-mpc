@@ -12,7 +12,7 @@ static void ready(ThumbnailCache& cache,uint64_t revision){const auto until=std:
 int main(){try{
     ThumbnailCache cache;
     auto request=[&](const char* path,bool accepted){const std::string url="https://artwork.invalid"+std::string(path);const auto revision=cache.revision();cache.visible({url});ready(cache,revision);check(bool(cache.get(url))==accepted,path);};
-    request("/valid.png",true);request("/redirect",true);request("/insecure-redirect",false);request("/redirect-loop",false);request("/oversized-header",false);request("/oversized-stream",false);request("/invalid.png",false);request("/missing",false);request("/untrusted",false);
+    request("/valid.png",true);request("/large.png",true);request("/redirect",true);request("/insecure-redirect",false);request("/redirect-loop",false);request("/oversized-header",false);request("/oversized-stream",false);request("/invalid.png",false);request("/missing",false);request("/untrusted",false);
     cache.visible({"https://artwork.invalid/stall"});std::this_thread::sleep_for(std::chrono::milliseconds(150));const auto revision=cache.revision();const auto start=std::chrono::steady_clock::now();cache.visible({"https://artwork.invalid/after-cancel.png"});ready(cache,revision);check(std::chrono::steady_clock::now()-start<std::chrono::seconds(1),"Cancellation releases stalled HTTPS promptly");check(bool(cache.get("https://artwork.invalid/after-cancel.png")),"Page after cancellation loads normally");
     char pattern[]="/tmp/thumbnail-network.XXXXXX";const auto made=mkdtemp(pattern);check(made!=nullptr,"Persistent HTTPS fixture created");const std::filesystem::path root=made;
     try{

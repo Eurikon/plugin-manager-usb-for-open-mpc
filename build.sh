@@ -34,6 +34,9 @@ c++ -std=c++17 -O2 -Wall -Wextra -Werror -Isrc tests/architecture_test.cpp "$out
 c++ -std=c++17 -O2 -Wall -Wextra -Werror -Isrc -Itests tests/sd_install_test.cpp "$output"/backend.o "$output"/plugin_storage.o "$output"/sd_install.o $update_objects -ldl -larchive -lcrypto -pthread -o "$output"/sd-install-test
 c++ -std=c++17 -O2 -Wall -Wextra -Werror -Isrc -Itests tests/manager_update_test.cpp "$output"/backend.o "$output"/plugin_storage.o "$output"/manager_update.o $update_objects -ldl -larchive -pthread -o "$output"/manager-update-test
 c++ -std=c++17 -O2 -Wall -Wextra -Werror -Isrc tests/plugin_storage_test.cpp "$output"/backend.o "$output"/plugin_storage.o $update_objects -ldl -larchive -pthread -o "$output"/plugin-storage-test
+c++ -std=c++17 -O2 -Wall -Wextra -Werror -Isrc tests/plugin_transaction_test.cpp -ldl -o "$output"/plugin-transaction-test
+c++ -std=c++17 -O2 -Wall -Wextra -Werror -Isrc tests/settings_backups_test.cpp "$output"/checksum.o -pthread -o "$output"/settings-backups-test
+c++ -std=c++17 -O2 -Wall -Wextra -Werror -Isrc tests/catalog_view_test.cpp -o "$output"/catalog-view-test
 c++ -std=c++17 -O2 -Wall -Wextra -Werror -Isrc $(pkg-config --cflags libpng) tests/thumbnail_test.cpp "$output"/thumbnail.o "$output"/crypto.o -Wl,-Bstatic -lpng -ljpeg -lz -Wl,-Bdynamic -ldl -pthread -o "$output"/thumbnail-test
 c++ -std=c++17 -O2 -Wall -Wextra -Werror -Isrc $(pkg-config --cflags libpng) tests/thumbnail_network_test.cpp "$output"/thumbnail.o "$output"/crypto.o -Wl,-Bstatic -lpng -ljpeg -lz -Wl,-Bdynamic -ldl -pthread -o "$output"/thumbnail-network-test
 cp assets/font.ttf "$output"/font.ttf

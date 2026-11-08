@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.4.0 — 08-11-2026
+
+- Add verified recovery around plugin installation, updates and removal, with free-space and symbolic-link checks before package scripts run.
+- Update and remove plugins in their existing folders, refusing missing drives or ambiguous copies without changing the destination for new installations.
+- Retain ten recognized settings backups while preserving existing untracked backups, modified files and unrelated user content.
+- Add **SETUP → Save report** for a bounded local diagnostic report without settings contents, credentials or raw logs.
+- Add search, type/compatibility/update filters, update counts and name/update-first sorting, with separate browsing state for each tab.
+- Keep the catalog page and counter stable throughout the refresh after installation.
+- Open details by double-tapping a card and fullscreen artwork by double-tapping its image; clear descriptions when their card is deselected.
+- Support larger catalog screenshots within bounded download/decode limits, preserve thumbnail outlines and cache enlarged artwork only when requested.
+- Rename the SD-copy action to **Install manager**, clarify that SD installation is optional for USB use, and refresh the guide screenshots.
+
 ## 1.3.3 — 07-11-2026
 
 - Fix automatic updates being rejected because the release ZIP included an empty folder outside the signed inventory. Existing local plugin folders and packages are preserved.

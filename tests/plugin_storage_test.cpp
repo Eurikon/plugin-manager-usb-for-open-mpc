@@ -75,6 +75,28 @@ int main(){
         fs::remove_all(target);fs::create_directory_symlink(other,target);rejects([&]{storage.automatic();},"symbolic link","symbolic-link destination is rejected");fs::remove(target);
         save(settings,config(other.string()));rejects([&]{manager.validateTarget();},"changed","changing MPC content-drive preference requires reselection");
         Manager legacy(usb,root/"legacy","/sdcard/Expansions",settings,"armv7",paths);check(legacy.synths=="/sdcard/Expansions"&&!legacy.pluginStorageInfo().at("available").get<bool>(),"Gen 1 retains its existing plugin destination independently of manager SD installation");
+        {
+            const auto installedRoot=other/"Synths",record=installedRoot/".mpc-usb-manager"/"inventory",payload=installedRoot/"inventory";
+            fs::create_directories(record);fs::create_directories(payload);fs::copy_file("/proc/self/exe",payload/"inventory-binary");
+            const Json metadata={{"id","inventory"},{"uid","1234abcd"},{"name","Inventory record"},{"kind","instrument"},{"version","1.0.0"},{"arch","aarch64"},{"skin","inventory"},{"so","inventory-binary"}};
+            save(record/"mpc-plugin.json",metadata.dump());
+            auto offer=metadata;offer["version"]="2.0.0";offer["origin"]="release";
+            const auto locations="<VALUE name=\"SynthContentLocations\"><SynthContentLocations><Location>"+installedRoot.string()+"/</Location></SynthContentLocations></VALUE>";
+            mount();save(settings,config(ssd.string(),locations));Manager updates(usb,root/"updates","auto",settings,"aarch64",paths);
+            const auto inventory=updates.list("installed");
+            check(inventory.size()==1&&inventory[0].at("device_item").at("release_version_known").get<bool>()&&inventory[0].at("install_target")==installedRoot.string(),"inventory finds release metadata outside the selected location, including a registered trailing slash");
+            const auto unchanged=read(settings);check(updates.installationOffer(offer).at("allowed").get<bool>()&&updates.synths==target&&read(settings)==unchanged,"Gen 2 update follows the installed folder without changing the new-install preference or settings");
+            fs::rename(record/"mpc-plugin.json",record/"metadata-kept.json");
+            save(settings,config(ssd.string(),locations+"<VALUE name=\"pluginList-arm-64bit\"><KNOWNPLUGINS><PLUGIN name=\"Inventory\" uid=\"1234abcd\" file=\""+(payload/"inventory-binary").string()+"\"/></KNOWNPLUGINS></VALUE>"));
+            auto local=item;local["id"]="inventory";local["uid"]="1234abcd";local["skin"]="inventory";
+            rejects([&]{updates.install(local);},"checksum mismatch","a native-only registration uses its stable UID rather than rejecting a generated inventory ID");
+            fs::rename(record/"metadata-kept.json",record/"mpc-plugin.json");
+            save(settings,"<PROPERTIES>"+locations+"</PROPERTIES>");Manager absent(usb,root/"absent","auto",settings,"aarch64",paths);
+            check(absent.synths.empty()&&absent.installationOffer(offer).at("allowed").get<bool>(),"an existing plugin can be updated when no new-install destination is configured");
+            auto unavailable=read(mountinfo);const auto start=unavailable.find(" rw - ext4 /dev/fixture-other rw");if(start==std::string::npos)throw std::runtime_error("Missing mount fixture");unavailable.replace(start,3," rw,noexec");save(mountinfo,unavailable);
+            const auto blockedOffer=absent.installationOffer(offer);check(!blockedOffer.at("allowed").get<bool>()&&blockedOffer.at("reason").get<std::string>().find("noexec")!=std::string::npos,"an installed plugin on a noexec drive is refused without falling back to another location");
+            mount();
+        }
         fs::remove_all(root);std::cout<<checks<<" plugin storage checks passed\n";return 0;
     }catch(const std::exception& error){std::cerr<<"FAIL: "<<error.what()<<" (fixture "<<root<<")\n";fs::remove_all(root);return 1;}
 }

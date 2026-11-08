@@ -87,7 +87,7 @@ static void managerStageChecks(Manager& manager) {
     auto entries=[&](const std::map<std::string,std::string>& content){Json manifest=Json::object();std::vector<ManagerZipEntry> result;for(const auto& file:content){save(hashInput,file.second);manifest[file.first]=sha256(hashInput);result.push_back({file.first,file.second});}result.push_back({"USB-SHA256.json",manifest.dump()});result.push_back({"local-plugins/","",AE_IFDIR});return result;};
     const auto originalEntries=entries(bundle);
     auto metadata=[&](){return Json{{"draft",false},{"prerelease",false},{"tag_name","v"+latest},{"html_url","https://github.com/Eurikon/plugin-manager-usb-for-open-mpc/releases/tag/v"+latest},{"assets",Json::array({{{"name",assetName},{"state","uploaded"},{"browser_download_url",assetUrl},{"size",fs::file_size(source)},{"digest","sha256:"+sha256(source)}}})}};};
-    save(status,"0");save(wget,"#!/bin/sh\nset -eu\nprintf '%s\\n' request >>/tmp/manager-session/manager-stage-requests\nif [ \"$#\" -eq 8 ] && [ \"$8\" = 'https://api.github.com/repos/Eurikon/plugin-manager-usb-for-open-mpc/releases/latest' ]; then cp /tmp/manager-session/manager-response.json \"$7\"; exit; fi\n[ \"$#\" -eq 7 ] && [ \"$1\" = -T ] && [ \"$2\" = 15 ] && [ \"$3\" = -t ] && [ \"$4\" = 1 ] && [ \"$5\" = -O ] && [ \"$7\" = '"+assetUrl+"' ] || exit 9\ncase \"$6\" in /tmp/manager-session/manager-update.*/manager.zip) ;; *) exit 9;; esac\ncp /tmp/manager-session/manager-source.zip \"$6\"\nexit \"$(cat /tmp/manager-session/manager-download-status)\"\n");
+    save(status,"0");save(wget,"#!/bin/sh\nset -eu\nprintf '%s\\n' request >>/tmp/manager-session/manager-stage-requests\nif [ \"$#\" -eq 8 ] && [ \"$8\" = 'https://api.github.com/repos/Eurikon/plugin-manager-usb-for-open-mpc/releases/latest' ]; then cp /tmp/manager-session/manager-response.json \"$7\"; exit; fi\n[ \"$#\" -eq 7 ] && [ \"$1\" = -T ] && [ \"$2\" = 15 ] && [ \"$3\" = -t ] && [ \"$4\" = 1 ] && [ \"$5\" = -O ] && [ \"$7\" = '"+assetUrl+"' ] || exit 9\ncase \"$6\" in /tmp/manager-session/manager-update.*/manager.zip) ;; *) exit 9;; esac\ndd if=/tmp/manager-session/manager-source.zip of=\"$6\" bs=4096 2>/dev/null\nexit \"$(cat /tmp/manager-session/manager-download-status)\"\n");
     auto clean=[&](){for(const auto& entry:fs::directory_iterator(manager.session))if(entry.path().filename().string().rfind("manager-update.",0)==0)return false;return true;};
     auto checked=[&](const std::vector<ManagerZipEntry>& files){managerZip(source,files);save(response,metadata().dump());return manager.checkManagerUpdate();};
     auto reject=[&](const Json& release,const char* label){bool rejected=false;try{manager.stageManagerUpdate(release);}catch(const std::exception&){rejected=true;}check(rejected&&clean(),label);};
@@ -161,8 +161,24 @@ static void taggedReleaseChecks(Manager& manager) {
     }catch(...){manager.catalog=catalog;save(wget,originalWget);throw;}
     manager.catalog=catalog;save(wget,originalWget);for(const auto& file:{response,second,calls})fs::remove(file);
 }
-// A Gen 2 manager that has no plugin location yet (MPC has no content drive set, so automatic selection fails): the
-// welcome-screen option must be disabled with the reason, not enabled and then fail when tapped.
+static void pluginRecoveryChecks(Manager& manager,const Json& item) {
+    const auto folder=manager.synths/item.at("skin").get<std::string>(),registry=manager.synths/".mpc-usb-manager"/item.at("id").get<std::string>();
+    const auto user=folder/"pmu-recovery-user-file",shell=fs::path("/tmp/manager-test-bin/sh");check(!fs::exists(shell)&&!fs::exists(user),"recovery fixtures do not replace existing user files or shell shim");save(user,"preserve user file\n");
+    const auto settings=text(manager.settings),savedHistory=text(manager.usb/"plugin-history.json"),library=sha256(folder/item.at("so").get<std::string>()),record=text(registry/"mpc-plugin.json");
+    for(const auto& pair:std::vector<std::pair<std::string,fs::path>>{{"PMU_TEST_LIBRARY",folder/item.at("so").get<std::string>()},{"PMU_TEST_REGISTRY",registry.parent_path()},{"PMU_TEST_HISTORY",manager.usb/"plugin-history.json"}})check(setenv(pair.first.c_str(),pair.second.c_str(),1)==0,"recovery fixture environment set");
+    save(shell,"#!/bin/sh\nset -eu\ncase \"$1\" in */install.sh|*/uninstall.sh) /bin/sh \"$@\"\ncase \"$PMU_TEST_FAILURE\" in\nscript) exit 7;;\nlibrary) printf broken >\"$PMU_TEST_LIBRARY\";;\nregistration) printf '<PROPERTIES></PROPERTIES>\\n' >\"$MPC_SETTINGS\";;\nunrelated) printf '<!-- unexpected change -->\\n' >>\"$MPC_SETTINGS\";;\nregistry) rm -rf \"$PMU_TEST_REGISTRY\"; printf blocked >\"$PMU_TEST_REGISTRY\";;\nhistory) rm -f \"$PMU_TEST_HISTORY\"; mkdir \"$PMU_TEST_HISTORY\";;\nesac;;\n*) exec /bin/sh \"$@\";;\nesac\n");check(chmod(shell.c_str(),0700)==0,"recovery shell shim executable");
+    auto unchanged=[&](){return text(manager.settings)==settings&&text(manager.usb/"plugin-history.json")==savedHistory&&sha256(folder/item.at("so").get<std::string>())==library&&text(registry/"mpc-plugin.json")==record&&text(user)=="preserve user file\n";};
+    try{
+        for(const char* mode:{"script","library","registration","unrelated","registry","history"}){
+            check(setenv("PMU_TEST_FAILURE",mode,1)==0,"recovery failure selected");bool restored=false;try{manager.install(item);}catch(const std::exception& error){restored=std::string(error.what()).find("restored and verified")!=std::string::npos;}
+            check(restored&&unchanged(),"failed update restores payload, registration, uninstall record, history and user data");
+        }
+        check(setenv("PMU_TEST_FAILURE","script",1)==0,"uninstall failure selected");bool restored=false;try{manager.remove(manager.list("installed").at(0));}catch(const std::exception& error){restored=std::string(error.what()).find("restored and verified")!=std::string::npos;}
+        check(restored&&unchanged(),"failed uninstall restores installed plugin and records");
+        bool clean=true;for(const auto& parent:{manager.synths,manager.settings.parent_path(),manager.usb})for(const auto& entry:fs::directory_iterator(parent))if(entry.path().filename().string().rfind(".pmu-plugin-recovery-",0)==0)clean=false;check(clean,"backend recovery clears verified snapshots");
+    }catch(...){fs::remove(shell);throw;}
+    fs::remove(shell);fs::remove(user);for(const char* variable:{"PMU_TEST_FAILURE","PMU_TEST_LIBRARY","PMU_TEST_REGISTRY","PMU_TEST_HISTORY"})unsetenv(variable);
+}
 static void noLocationOfferChecks(Manager& manager) {
     auto item=manager.catalog.at(0);
     {const auto offer=manager.installationOffer(item);check(offer.at("allowed").get<bool>(),"an offer is allowed when the manager has a plugin location");}
@@ -175,6 +191,53 @@ static void noLocationOfferChecks(Manager& manager) {
     check(refused,"installing without a plugin location is refused before any request, naming SETUP");
     fs::remove(emptySettings);
 }
+static void existingLocationChecks(Manager& manager,const Json& item) {
+    const auto original=manager.synths,other=original.parent_path()/"pmu-existing-location";
+    check(!fs::exists(other),"location fixture starts without replacing existing content");fs::create_directory(other);
+    const auto skin=item.at("skin").get<std::string>(),id=item.at("id").get<std::string>(),so=item.at("so").get<std::string>();
+    fs::rename(original/skin,other/skin);fs::rename(original/".mpc-usb-manager",other/".mpc-usb-manager");
+    auto xml=text(manager.settings);const auto marker=xml.find("</SynthContentLocations>");if(marker==std::string::npos)throw std::runtime_error("Fixture has no content locations");
+    xml.insert(marker,"<Location>"+other.string()+"</Location>");
+    const auto before=(original/skin/so).string(),after=(other/skin/so).string();size_t at=0;
+    while((at=xml.find(before,at))!=std::string::npos){xml.replace(at,before.size(),after);at+=after.size();}save(manager.settings,xml);
+    auto installed=manager.list("installed");check(installed.size()==1&&installed[0].at("device_item").at("release_version_known").get<bool>()&&installed[0].at("install_target")==other.string(),"inventory reads release metadata and action location from another registered content folder");
+    const auto chosen=manager.list("local").at(0);const auto detached=other.string()+"-detached";
+    fs::rename(other,detached);bool missingRefused=false;try{manager.install(chosen);}catch(const std::exception& error){missingRefused=std::string(error.what()).find("no longer available")!=std::string::npos;}
+    check(missingRefused&&!fs::exists(original/skin)&&fs::exists(fs::path(detached)/skin/so),"missing original location refuses an update without silently installing on the default drive");fs::rename(detached,other);
+    bool staleRefused=false;try{manager.install(item);}catch(const std::exception& error){staleRefused=std::string(error.what()).find("location changed")!=std::string::npos;}
+    check(staleRefused&&!fs::exists(original/skin),"a changed confirmation location requires a fresh selection");
+    const auto user=other/"pmu-location-user-file";save(user,"keep\n");
+    manager.install(chosen);
+    check(manager.synths==original&&!fs::exists(original/skin)&&text(user)=="keep\n","update stays in its original folder and preserves the new-install selection and unrelated user file");
+    check(fs::is_regular_file(other/".mpc-usb-manager"/id/"uninstall.sh"),"update keeps its uninstall record with the actual installation");
+    const auto settings=text(manager.settings),history=text(manager.usb/"plugin-history.json"),library=sha256(other/skin/so);
+    const fs::path shell="/tmp/manager-test-bin/sh";check(!fs::exists(shell),"cross-location failure fixture does not replace a shell shim");
+    save(shell,"#!/bin/sh\n/bin/sh \"$@\" || exit $?\ncase \"$1\" in */install.sh) exit 7;; esac\n");if(chmod(shell.c_str(),0700))throw std::runtime_error("Cannot set fixture mode");
+    bool restored=false;try{manager.install(chosen);}catch(const std::exception& error){restored=std::string(error.what()).find("restored and verified")!=std::string::npos;}fs::remove(shell);
+    check(restored&&text(manager.settings)==settings&&text(manager.usb/"plugin-history.json")==history&&sha256(other/skin/so)==library&&text(user)=="keep\n"&&!fs::exists(original/skin),"failed cross-location update restores the original installation without creating a duplicate");
+    fs::copy(other/skin,original/skin,fs::copy_options::recursive);
+    fs::copy(other/".mpc-usb-manager",original/".mpc-usb-manager",fs::copy_options::recursive);
+    bool refused=false;try{manager.install(chosen);}catch(const std::exception& error){refused=std::string(error.what()).find("Multiple installed copies")!=std::string::npos;}
+    check(refused&&text(manager.settings)==settings,"ambiguous installed copies refuse mutation");fs::remove_all(original/skin);fs::remove_all(original/".mpc-usb-manager");
+    fs::remove(user);manager.remove(manager.list("installed").at(0));
+    check(!fs::exists(other/".mpc-usb-manager"/id)&&manager.synths==original&&manager.list("installed").empty(),"removal uses the original install record and preserves the new-install destination");fs::remove_all(other);
+}
+static void diagnosticChecks(Manager& manager){
+    const auto log=manager.usb/"manager-result.txt",operation=manager.session/"last-plugin-operation.json";
+    const auto savedOperation=text(operation);check(!fs::exists(log)&&!fs::exists(manager.usb/"diagnostics"),"report fixture preserves existing logs and report folders");
+    const std::string privateText="private_token=do_not_export /private/user/location 192.0.2.4 00:11:22:33:44:55\n";save(log,privateText);
+    const auto message=manager.saveDiagnostics();const auto report=manager.usb/"diagnostics/manager-report.txt";const auto first=text(report);const auto data=Json::parse(first);
+    check(message.find("diagnostics/manager-report.txt")!=std::string::npos&&data.at("format")=="pmu-diagnostics-1"&&data.at("process_bits")==sizeof(void*)*8,"manual report records build/runtime identity at its documented location");
+    check(data.at("last_plugin_operation").at("action")=="remove"&&data.at("last_plugin_operation").at("outcome")=="removed","last operation survives its separate existing-folder context");
+    check(first.size()<=24*1024&&first.find("private_token")==std::string::npos&&first.find("192.0.2.4")==std::string::npos&&first.find(manager.usb.string())==std::string::npos&&data.at("logs").at("manager-result.txt").at("bytes")==privateText.size(),"report includes log availability and size without exporting contents, addresses or private paths");
+    save(operation,"{\"action\":\"install\",\"stage\":\"private_token\",\"outcome\":\"restored\",\"reason\":\"installer\",\"source\":\"local\",\"secret\":\"do_not_export\"}");manager.saveDiagnostics();
+    const auto filtered=Json::parse(text(report));check(filtered.at("last_plugin_operation").at("outcome")=="restored"&&!filtered.at("last_plugin_operation").contains("stage")&&text(report).find("do_not_export")==std::string::npos,"operation report accepts only known fields and values");
+    const auto marker=report.parent_path()/".owner";const auto savedMarker=text(marker),unchanged=text(report);save(marker,"other owner\n");bool rejected=false;try{manager.saveDiagnostics();}catch(const std::exception&){rejected=true;}
+    check(rejected&&text(report)==unchanged,"an unowned report folder is refused without overwriting files");save(marker,savedMarker);
+    const auto user=manager.session/"report-user-file";save(user,"preserve\n");fs::remove(report);fs::create_hard_link(user,report);rejected=false;try{manager.saveDiagnostics();}catch(const std::exception&){rejected=true;}
+    check(rejected&&text(user)=="preserve\n","hardlinked report output cannot overwrite another user file");fs::remove(report);fs::remove(user);
+    fs::remove_all(report.parent_path());fs::remove(log);save(operation,savedOperation);
+}
 static void latestReleaseChecks(Manager& manager,const Json& primary,const Json& olderVersion,const fs::path& library) {
     const auto catalog=manager.catalog;auto item=catalog.at(0);
     auto repo=primary.value("source_repo","");if(!std::regex_match(repo,std::regex("[A-Za-z0-9][A-Za-z0-9-]*/[A-Za-z0-9][A-Za-z0-9_.-]*")))repo="test-owner/test-repository";
@@ -185,7 +248,7 @@ static void latestReleaseChecks(Manager& manager,const Json& primary,const Json&
     const auto response=manager.session/"latest-response.json",status=manager.session/"latest-status",calls=manager.session/"latest-requests";
     const auto wget=fs::path("/tmp/manager-test-bin/wget");const auto originalWget=text(wget),settings=text(manager.settings);
     const Json release={{"draft",false},{"prerelease",false},{"tag_name",tag},{"published_at","2026-11-04T11:58:58Z"},{"html_url","https://github.com/"+repo+"/releases/tag/"+tag},{"assets",Json::array({{{"name",name},{"state","uploaded"},{"size",std::stoull(item.at("size").get<std::string>())},{"browser_download_url",item.at("url")},{"digest","sha256:"+item.at("sha").get<std::string>()}}})}};
-    save(status,"0");save(wget,"#!/bin/sh\nset -eu\nprintf '%s\\n' request >>/tmp/manager-session/latest-requests\nif [ \"$#\" -eq 5 ] && [ \"$5\" = '"+item.at("url").get<std::string>()+"' ]; then cp /tmp/manager-fixtures/package.zip \"$4\"; exit; fi\n[ \"$#\" -eq 8 ] && [ \"$1\" = -T ] && [ \"$2\" = 10 ] && [ \"$3\" = -t ] && [ \"$4\" = 1 ] && [ \"$5\" = '--header=Accept: application/vnd.github+json' ] && [ \"$6\" = -O ] && [ \"$8\" = '"+endpoint+"' ] || exit 9\n[ \"$(cat /tmp/manager-session/latest-status)\" = 0 ] || exit 8\ncp /tmp/manager-session/latest-response.json \"$7\"\nif [ -f /tmp/manager-session/latest-guard-copy ]; then while IFS= read -r source && IFS= read -r target; do mkdir -p \"$(dirname \"$target\")\"; cp \"$source\" \"$target\"; done </tmp/manager-session/latest-guard-copy; fi\n");
+    save(status,"0");save(wget,"#!/bin/sh\nset -eu\nprintf '%s\\n' request >>/tmp/manager-session/latest-requests\nif [ \"$#\" -eq 5 ] && [ \"$5\" = '"+item.at("url").get<std::string>()+"' ]; then dd if=/tmp/manager-fixtures/package.zip of=\"$4\" bs=4096 2>/dev/null; exit; fi\n[ \"$#\" -eq 8 ] && [ \"$1\" = -T ] && [ \"$2\" = 10 ] && [ \"$3\" = -t ] && [ \"$4\" = 1 ] && [ \"$5\" = '--header=Accept: application/vnd.github+json' ] && [ \"$6\" = -O ] && [ \"$8\" = '"+endpoint+"' ] || exit 9\n[ \"$(cat /tmp/manager-session/latest-status)\" = 0 ] || exit 8\ncp /tmp/manager-session/latest-response.json \"$7\"\nif [ -f /tmp/manager-session/latest-guard-copy ]; then while IFS= read -r source && IFS= read -r target; do mkdir -p \"$(dirname \"$target\")\"; cp \"$source\" \"$target\"; done </tmp/manager-session/latest-guard-copy; fi\n");
     try {
         save(response,Json::array({release}).dump());const auto direct=manager.latestPluginRelease(item.at("id").get<std::string>(),source,true);
         check(direct.at("sha")==item.at("sha")&&direct.at("url")==item.at("url"),"direct installation retains the verified release asset");
@@ -211,7 +274,7 @@ static void latestReleaseChecks(Manager& manager,const Json& primary,const Json&
         if(olderVersion.is_string()) {
             metadata=primary;metadata["version"]=olderVersion;installed(metadata,folder);checkOffer("Update",true,"strictly older managed release offers update");
             installed(primary,secondary);checkOffer("Installed",false,"any equal duplicate blocks update even when first match is older");
-            installed(metadata,secondary);checkOffer("Update",true,"all matching managed releases must be older to allow update");fs::remove_all(secondary);fs::remove_all(folder);
+            installed(metadata,secondary);checkOffer("Installed",false,"duplicate matching installations require explicit resolution");fs::remove_all(secondary);fs::remove_all(folder);
         }else std::cout<<"SKIP: older installed release checks require a supplied version with a numeric predecessor\n";
         save(response,Json::array({release}).dump());const auto snapshot=manager.session/"guard-manifest.json";save(snapshot,primary.dump());
         const auto inject=manager.session/"latest-guard-copy";save(inject,library.string()+"\n"+(folder/primary.at("so").get<std::string>()).string()+"\n"+snapshot.string()+"\n"+(folder/"mpc-plugin.json").string()+"\n");
@@ -239,6 +302,9 @@ int main(int argc,char** argv){try{
     const auto primary=fixture.at("primary");const auto id=primary.at("id").get<std::string>();
     Manager manager("/tmp/manager-usb","/tmp/manager-session","/sdcard/Expansions","/tmp/manager-settings.xml","armv7");
     const auto registry=manager.synths/".mpc-usb-manager"/id;
+    if(argc==2&&std::string(argv[1])=="--plugin-recovery"){
+        manager.openCatalog();const auto item=manager.list("local").at(0);manager.install(item);pluginRecoveryChecks(manager,item);existingLocationChecks(manager,item);diagnosticChecks(manager);check(manager.list("installed").empty(),"successful uninstall still removes plugin after failure recovery");return 0;
+    }
     check(!manager.darkTheme(),"light theme is default without saved preferences");manager.setDarkTheme(true);
     Manager reopened(manager.usb,manager.session,manager.synths,manager.settings,"armv7");check(reopened.darkTheme(),"dark theme persists across manager instances");manager.setDarkTheme(false);check(!reopened.darkTheme(),"light theme toggle persists");
     {std::ofstream prefs(manager.usb/"manager-preferences.json");prefs<<"{\"schema\":1,\"dark_theme\":false}";}
@@ -261,6 +327,7 @@ int main(int argc,char** argv){try{
     {Manager otherGeneration(manager.usb,manager.session,manager.synths,manager.settings,manager.arch=="aarch64"?"armv7":"aarch64");otherGeneration.catalog=manager.catalog;taggedReleaseChecks(otherGeneration);}
     std::vector<std::string> stages;manager.install(local[0],[&](const std::string& text){stages.push_back(text);});check(stages.size()==4&&stages[2].find("compatibility")!=std::string::npos&&stages[3].find("Installing")!=std::string::npos,"validation precedes installation status");check(manager.list("installed").size()==1,"local install appears in installed view");
     check(fs::exists(registry/"uninstall.sh"),"persistent uninstall record retained");
+    pluginRecoveryChecks(manager,local[0]);
     const auto folder=manager.synths/local[0].at("skin").get<std::string>();const bool skinManifest=fs::is_regular_file(folder/"mpc-plugin.json");
     if(skinManifest)fs::rename(folder/"mpc-plugin.json",manager.session/"primary-skin-manifest.saved");
     check(manager.list("installed").size()==1,"installed package without skin manifest found through manager registry");
@@ -305,7 +372,8 @@ int main(int argc,char** argv){try{
     const auto extracted=fs::directory_iterator(fs::path("/tmp/manager-session")/("local-"+local[0].at("sha").get<std::string>()))->path();
     const auto calls=manager.session/"checksum-calls";
     const auto checksumWrapper=fs::path("/tmp/manager-test-bin/sha256sum");
-    save(checksumWrapper,"#!/bin/sh\nprintf '%s\\n' called >>/tmp/manager-session/checksum-calls\nexec /usr/bin/busybox.nosuid sha256sum \"$@\"\n");fs::permissions(checksumWrapper,fs::perms::owner_all);
+    const std::string checksumTool=access("/usr/bin/sha256sum",X_OK)==0?"/usr/bin/sha256sum":"/bin/sha256sum";
+    save(checksumWrapper,"#!/bin/sh\nprintf '%s\\n' called >>/tmp/manager-session/checksum-calls\nexec "+checksumTool+" \"$@\"\n");fs::permissions(checksumWrapper,fs::perms::owner_all);
     fs::remove(calls);manager.manifest(extracted);check(checksumCalls(calls)==1,"all package files verified in one checksum process");
     const auto checksumFile=extracted/"SHA256SUMS";const auto checksums=text(checksumFile);const auto firstEnd=checksums.find('\n');
     if(firstEnd==std::string::npos)throw std::runtime_error("Supplied package has no complete checksum line");

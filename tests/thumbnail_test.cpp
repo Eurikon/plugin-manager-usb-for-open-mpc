@@ -68,7 +68,24 @@ static void persistentChecks(const std::vector<unsigned char>& image,const std::
         fs::remove_all(root);
     }catch(...){fs::remove_all(root);throw;}
 }
-int main(){try{
+static void detailedChecks(const std::vector<unsigned char>& image){
+    namespace fs=std::filesystem;
+    char pattern[]="/tmp/manager-detail-image.XXXXXX";const auto made=mkdtemp(pattern);if(!made)throw std::runtime_error("Cannot create image-viewer fixture");const fs::path root=made;
+    const std::string url="https://example.com/viewer.png",etag="\"viewer\"";std::atomic<int> bodies{0};std::atomic<bool> conditional{false};
+    auto fetch=[&](const ThumbnailCache::Request& request,const auto&){if(request.etag==etag){conditional=true;return ThumbnailCache::Response{{},etag,{},true};}++bodies;return ThumbnailCache::Response{image,etag};};
+    try{
+        {ThumbnailCache cache(fetch,root);cache.visible({url});until([&]{return bool(cache.get(url));});cache.visible({url},true);until([&]{const auto value=cache.get(url);return value&&value->width>ThumbnailCache::width;});check(bodies==2,"Opening the viewer fetches larger pixels when only a small saved image exists");check(cache.bytes()<=ThumbnailCache::cacheLimit,"Enlarged image replaces the small cache entry within the existing RAM budget");}
+        conditional=false;
+        {ThumbnailCache cache(fetch,root);cache.visible({url},true);until([&]{const auto value=cache.get(url);return value&&value->width>ThumbnailCache::width&&conditional;});}
+        check(bodies==2,"Reopening the viewer reuses saved larger pixels with conditional validation");
+        conditional=false;
+        {ThumbnailCache cache(fetch,root);cache.visible({url});until([&]{return bool(cache.get(url))&&conditional;});check(cache.get(url)->width>ThumbnailCache::width,"Cards reuse the saved larger image without a second cache file");}
+        fs::remove_all(root);
+    }catch(...){fs::remove_all(root);throw;}
+}
+int main(int argc,char** argv){try{
+    if(argc>2)throw std::runtime_error("Usage: thumbnail-test [your-image.png]");
+    if(argc==2){check(std::filesystem::file_size(argv[1])<=ThumbnailCache::inputLimit,"Supplied image respects the compressed input limit");std::ifstream input(argv[1],std::ios::binary);const std::vector<unsigned char> bytes{std::istreambuf_iterator<char>(input),{}};const auto small=ThumbnailCache::decode(bytes),large=ThumbnailCache::decode(bytes,true);check(!small.pixels.empty()&&!large.pixels.empty(),"Supplied image decodes at both card and viewer sizes");check(large.width>small.width||large.height>small.height,"Supplied image retains more detail in the viewer");}
     for(const char* url:{"https://raw.githubusercontent.com/owner/repo/main/screen.png","https://github.com/user-attachments/assets/example"})check(ThumbnailCache::validUrl(url),"Public HTTPS screenshot accepted");
     for(const char* url:{"http://example.com/a.png","file:///tmp/a.png","https://user:password@example.com/a.png","https://127.0.0.1/a.png","https://[::1]/a.png","https://example.com/a\n.png","https://example.com\\evil/a.png","https://example.com:8080/a.png","https:///a.png"})check(!ThumbnailCache::validUrl(url),"Unsafe screenshot URL rejected");
     check(!ThumbnailCache::validUrl("https://example.com/"+std::string(2048,'a')),"Oversized screenshot URL rejected");
@@ -77,12 +94,12 @@ int main(){try{
     check(image.pixels.front()==0xfff05014&&image.pixels.back()==0xfff05014,"PNG colour is retained during resampling");
     image=ThumbnailCache::decode(portrait);check(image.width==39&&image.height==78,"JPEG portrait preserves aspect ratio");
     image=ThumbnailCache::decode(png(32,32,true));check(std::all_of(image.pixels.begin(),image.pixels.end(),[](uint32_t p){return p==0;}),"Transparent pixels remain transparent without colour fringe");
-    check(ThumbnailCache::decode(png(1024,1024)).width==78,"Pixel limit boundary accepted");
+    check(ThumbnailCache::decode(png(2048,1024)).width==126,"Pixel limit boundary accepted");
     rejected({},"Empty image rejected");rejected(std::vector<unsigned char>(ThumbnailCache::inputLimit+1,0),"Compressed input limit enforced");rejected({'S','V','G'},"Unsupported format rejected");
     auto truncated=landscape;truncated.resize(30);rejected(truncated,"Truncated PNG rejected");
     auto corrupt=landscape;corrupt[29]^=1;rejected(corrupt,"Invalid PNG checksum rejected");
-    rejected(png(2049,1),"Dimension limit enforced before output allocation");rejected(png(1025,1024),"Decoded pixel budget enforced");
-    truncated=portrait;truncated.resize(20);rejected(truncated,"Truncated JPEG rejected");rejected(jpeg(2049,1),"JPEG dimension limit enforced");rejected(jpeg(1025,1024),"JPEG pixel budget enforced");
+    rejected(png(2049,1),"Dimension limit enforced before output allocation");rejected(png(2048,1025),"Decoded pixel budget enforced");
+    truncated=portrait;truncated.resize(20);rejected(truncated,"Truncated JPEG rejected");rejected(jpeg(2049,1),"JPEG dimension limit enforced");rejected(jpeg(2048,1025),"JPEG pixel budget enforced");
     std::atomic<int> calls{0},active{0},maximum{0};
     ThumbnailCache cache([&](const ThumbnailCache::Request& request,const ThumbnailCache::Cancelled& cancelled){const auto& url=request.url;++calls;const int concurrent=++active;maximum=std::max(maximum.load(),concurrent);if(url.find("slow")!=std::string::npos)while(!cancelled())std::this_thread::sleep_for(std::chrono::milliseconds(2));--active;if(url.find("bad")!=std::string::npos)return ThumbnailCache::Response{{0}};return ThumbnailCache::Response{landscape};});
     const std::string first="https://example.com/first.png",bad="https://example.com/bad.png";
@@ -98,5 +115,6 @@ int main(){try{
         std::atomic<bool> started{false};ThumbnailCache stopping([&](const ThumbnailCache::Request&,const ThumbnailCache::Cancelled& cancelled){started=true;while(!cancelled())std::this_thread::sleep_for(std::chrono::milliseconds(2));return ThumbnailCache::Response{landscape};});stopping.visible({first});const auto deadline=std::chrono::steady_clock::now()+std::chrono::seconds(2);while(!started&&std::chrono::steady_clock::now()<deadline)std::this_thread::sleep_for(std::chrono::milliseconds(2));check(started,"Shutdown fixture starts");
     }check(std::chrono::steady_clock::now()-shutdown<std::chrono::seconds(1),"Shutdown cancels worker and joins promptly");
     persistentChecks(landscape,portrait);
+    detailedChecks(landscape);
     std::cout<<"PASS: "<<checks<<" thumbnail URL, PNG/JPEG, bounds, asynchronous navigation, cache and cleanup checks\n";return 0;
 }catch(const std::exception& e){std::cerr<<"FAIL: "<<e.what()<<"\n";return 1;}}

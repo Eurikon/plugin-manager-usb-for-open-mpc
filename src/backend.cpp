@@ -1,6 +1,8 @@
 #include "backend.hpp"
 #include "version.hpp"
 #include "update_bundle.hpp"
+#include "plugin_transaction.hpp"
+#include "settings_backups.hpp"
 #include <publisher_key.hpp>
 #include <archive.h>
 #include <gnu/libc-version.h>
@@ -23,6 +25,8 @@
 #include <ctime>
 #include <cctype>
 #include <array>
+#include <map>
+#include <cstdlib>
 #include <locale.h>
 
 static void require(bool condition, const std::string& message) {
@@ -451,6 +455,8 @@ Json Manager::manifest(const fs::path& package, const Json* catalogItem) {
     require(value.contains("os_compat")&&value.at("os_compat").is_array()&&std::find(value.at("os_compat").begin(),value.at("os_compat").end(),"3.x")!=value.at("os_compat").end(),"Package does not declare MPC OS 3 support");
     require(libcVersion(value.at("max_glibc").get<std::string>())<=libcVersion(gnu_get_libc_version()),"Plugin requires newer firmware libraries");
     require(safeRelative(value.at("folder").get<std::string>())&&safeRelative(value.at("skin").get<std::string>())&&fs::path(value.at("skin").get<std::string>()).filename()==value.at("skin").get<std::string>(),"Invalid plugin folder");
+    const fs::path library=value.at("so").get<std::string>();
+    require(safeRelative(library)&&library.filename()==library&&std::regex_match(value.at("uid").get<std::string>(),std::regex("[0-9a-fA-F]{8}")),"Invalid plugin library or UID");
     for(const char* file:{"install.sh","uninstall.sh","plugin_list.awk","SHA256SUMS"}) require(fs::is_regular_file(package/file),std::string("Missing ")+file);
     require(read(package/"install.sh").find("DEFER=")!=std::string::npos&&read(package/"uninstall.sh").find("DEFER=")!=std::string::npos,"Package does not support a stopped MPC session");
     const auto root=fs::canonical(package);
@@ -472,6 +478,36 @@ static void atomicSave(const fs::path& target,const std::string& text) {
     const int file=open(temporary.c_str(),O_RDONLY|O_CLOEXEC);require(file>=0,"Cannot open USB record for sync");const int synced=fsync(file);close(file);require(synced==0,"Cannot sync USB record");
     fs::rename(temporary,target);
     const int directory=open(target.parent_path().c_str(),O_RDONLY|O_DIRECTORY|O_CLOEXEC);require(directory>=0,"Cannot open USB directory for sync");const int renamed=fsync(directory);close(directory);require(renamed==0,"Cannot sync USB record directory");
+}
+static std::string operationFailure(const std::string& text){
+    for(const auto& pair:std::vector<std::pair<const char*,const char*>>{{"recovery incomplete","recovery_incomplete"},{"checksum","checksum"},{"noexec","storage_noexec"},{"read-only","storage_read_only"},{"free space","storage_space"},{"Multiple installed copies","duplicate_installation"},{"Community package installer","installer"},{"Community uninstaller","uninstaller"},{"registration","registration"},{"identity","identity"},{"backup","backup_cleanup"},{"record","installation_record"},{"Download","download"},{"ZIP","archive"},{"location","storage_location"}})if(text.find(pair.first)!=std::string::npos)return pair.second;
+    return "operation_failed";
+}
+static void pluginOperation(const Manager& manager,const char* action,const std::string& stage,const std::string& outcome,const Json& item,const std::string& code={})noexcept{
+    try{const auto origin=item.value("origin","");Json value={{"action",action},{"stage",stage},{"outcome",outcome},{"reason",code},{"source",origin=="local"?"local":origin=="installed"?"installed":"online"}};atomicSave(manager.session/"last-plugin-operation.json",value.dump()+"\n");}catch(const std::exception&){std::fprintf(stderr,"Plugin operation summary could not be saved\n");}
+}
+std::string Manager::saveDiagnostics(){
+    struct Descriptor {int value;~Descriptor(){if(value>=0)close(value);}} source{open(usb.c_str(),O_RDONLY|O_DIRECTORY|O_NOFOLLOW|O_CLOEXEC)};
+    struct stat sourceIdentity{};require(source.value>=0&&fstat(source.value,&sourceIdentity)==0,"Cannot pin manager drive for diagnostics");const auto sourceMount=pmu::mountIdentity(source.value);
+    auto checkSource=[&]{struct stat value{};Descriptor current{open(usb.c_str(),O_RDONLY|O_DIRECTORY|O_NOFOLLOW|O_CLOEXEC)};require(lstat(usb.c_str(),&value)==0&&S_ISDIR(value.st_mode)&&value.st_dev==sourceIdentity.st_dev&&value.st_ino==sourceIdentity.st_ino&&current.value>=0&&pmu::mountIdentity(current.value)==sourceMount&&fs::is_regular_file(fs::symlink_status(usb/".mpc-manager-id")),"Manager drive was removed or replaced while preparing diagnostics");};checkSource();
+    Json value={{"format","pmu-diagnostics-1"},{"manager_version",MPC_MANAGER_VERSION},{"development_build",bool(MPC_MANAGER_DEVELOPMENT)},{"manager_architecture",arch},{"process_bits",sizeof(void*)*8},{"glibc",gnu_get_libc_version()},{"catalog_loaded",!catalog.empty()},{"catalog_count",catalog.size()},{"new_install_location_selected",!synths.empty()}};
+    try{validateTarget();value["new_install_destination"]="usable";}catch(const std::exception& error){value["new_install_destination"]=operationFailure(error.what());}
+    try{value["storage"]=pluginStorage.diagnostics();}catch(const std::exception&){value["storage"]="unavailable";}
+    try{const auto installed=installedPlugins();size_t managed=0,known=0;for(const auto& item:installed){managed+=item.value("managed",false);known+=item.value("release_version_known",false);}value["inventory"]={{"installed_count",installed.size()},{"managed_count",managed},{"known_release_count",known}};}catch(const std::exception&){value["inventory"]="unavailable";}
+    const auto operation=session/"last-plugin-operation.json";
+    if(fs::is_regular_file(operation)&&!fs::is_symlink(operation)&&fs::file_size(operation)<=4096){
+        const std::map<std::string,std::set<std::string>> allowed={{"action",{"install","remove"}},{"stage",{"selection","catalog_compatibility","destination","download","checksum","archive","manifest","recovery_preparation","installer","uninstaller","verification","records","cleanup","complete"}},{"outcome",{"installed","removed","installed_cleanup_attention","removed_cleanup_attention","restored","recovery_incomplete","unchanged","failed"}},{"reason",{"","recovery_incomplete","checksum","storage_noexec","storage_read_only","storage_space","duplicate_installation","installer","uninstaller","registration","identity","backup_cleanup","installation_record","download","archive","storage_location","operation_failed"}},{"source",{"local","online","installed"}}};
+        try{const auto record=Json::parse(read(operation));Json summary=Json::object();for(const auto& field:allowed)if(record.contains(field.first)&&record.at(field.first).is_string()){const auto text=record.at(field.first).get<std::string>();if(field.second.count(text))summary[field.first]=text;}value["last_plugin_operation"]=summary;}catch(const std::exception&){value["last_plugin_operation"]="unavailable";}
+    }
+    value["logs"]=Json::object();for(const char* name:{"manager-result.txt","bootstrap-result.txt","shortcut-result.txt"}){const auto path=usb/name;struct stat info{};if(lstat(path.c_str(),&info)==0&&S_ISREG(info.st_mode))value["logs"][name]={{"available",true},{"bytes",info.st_size}};else value["logs"][name]={{"available",false}};}
+    const auto directory=usb/"diagnostics";const std::string owner="Plugin Manager USB diagnostics v1\n";
+    checkSource();
+    if(mkdir(directory.c_str(),0700)==0){const int descriptor=open((directory/".owner").c_str(),O_WRONLY|O_CREAT|O_EXCL|O_NOFOLLOW|O_CLOEXEC,0600);require(descriptor>=0,"Cannot create diagnostics ownership marker");const bool saved=::write(descriptor,owner.data(),owner.size())==ssize_t(owner.size())&&fsync(descriptor)==0;close(descriptor);require(saved,"Cannot save diagnostics ownership marker");}else require(errno==EEXIST,"Cannot create diagnostics folder");
+    require(fs::is_directory(fs::symlink_status(directory))&&fs::canonical(directory)==directory,"Diagnostics folder is not an ordinary manager folder");
+    const auto marker=directory/".owner";require(fs::is_regular_file(fs::symlink_status(marker))&&fs::file_size(marker)==owner.size()&&read(marker)==owner,"Diagnostics folder contains files not owned by this manager");
+    const auto report=directory/"manager-report.txt";for(const auto& path:{report,fs::path(report.string()+".tmp")}){struct stat info{};if(lstat(path.c_str(),&info)==0)require(S_ISREG(info.st_mode)&&info.st_nlink==1,"Diagnostics output is occupied by a linked or special file");else require(errno==ENOENT,"Cannot inspect diagnostic output");}
+    const auto text=value.dump(2)+'\n';require(text.size()<=24*1024,"Diagnostic report exceeds its size limit");checkSource();atomicSave(report,text);
+    return "Saved diagnostics/manager-report.txt on the manager drive. Review it on your computer before sharing.";
 }
 static Json preferences(const fs::path& usb) {
     const auto path=usb/"manager-preferences.json";
@@ -515,20 +551,25 @@ std::vector<Json> Manager::installedPlugins() {
     auto append=[&](Json item,const fs::path& file,const fs::path& root){
         if(!file.is_absolute()||!fs::is_regular_file(file)||!files.insert(fs::canonical(file).string()).second)return;
         item["origin"]="installed";item["installed"]=true;item["installed_version"]=item.value("version","");item["device_file"]=file.string();item["device_target"]=fs::exists(root)&&fs::exists(synths)&&fs::equivalent(root,synths)?synths.string():root.string();
-        item["managed"]=!synths.empty()&&fs::is_regular_file(synths/".mpc-usb-manager"/item.at("id").get<std::string>()/"uninstall.sh")&&item.at("device_target")==synths.string();
+        item["managed"]=fs::is_regular_file(root/".mpc-usb-manager"/item.at("id").get<std::string>()/"uninstall.sh");
         result.push_back(item);
     };
-    auto metadata=[&](const fs::path& file){
+    auto metadata=[&](const fs::path& file,const fs::path& location){
         try{auto item=Json::parse(read(file));const auto id=item.at("id").get<std::string>(),skin=item.at("skin").get<std::string>(),so=item.at("so").get<std::string>();
             if(item.value("arch",arch)!=arch)return;
             require(std::regex_match(id,std::regex("[a-z0-9][a-z0-9_-]*"))&&safeRelative(skin)&&fs::path(skin).filename()==skin&&safeRelative(so),"Invalid installed metadata");
             require(item.at("name").is_string()&&item.at("version").is_string(),"Invalid installed identity");if(item.value("kind","")=="addin")return;
-            item["release_version_known"]=true;append(item,synths/skin/so,synths);
+            item["release_version_known"]=true;append(item,location/skin/so,location);
         }catch(const std::exception& e){std::fprintf(stderr,"Installed metadata: %s\n",e.what());}
     };
-    if(fs::is_directory(synths))for(const auto& folder:fs::directory_iterator(synths))if(fs::is_directory(folder)&&folder.path().filename().string().front()!='.'&&fs::is_regular_file(folder.path()/"mpc-plugin.json"))metadata(folder.path()/"mpc-plugin.json");
-    const auto registry=synths/".mpc-usb-manager";
-    if(!synths.empty()&&fs::is_directory(registry))for(const auto& folder:fs::directory_iterator(registry))if(fs::is_directory(folder)&&fs::is_regular_file(folder.path()/"mpc-plugin.json"))metadata(folder.path()/"mpc-plugin.json");
+    std::set<fs::path> locations;if(!synths.empty())locations.insert(synths);
+    if(fs::is_regular_file(settings))for(const auto& path:pluginStorage.registeredLocations())if(path.is_absolute())locations.insert(path);
+    for(const auto& location:locations){
+        if(!fs::is_directory(location)||fs::canonical(location)!=location)continue;
+        for(const auto& folder:fs::directory_iterator(location))if(folder.is_directory()&&folder.path().filename().string().front()!='.'&&fs::is_regular_file(folder.path()/"mpc-plugin.json"))metadata(folder.path()/"mpc-plugin.json",location);
+        const auto registry=location/".mpc-usb-manager";
+        if(fs::is_directory(registry))for(const auto& folder:fs::directory_iterator(registry))if(folder.is_directory()&&fs::is_regular_file(folder.path()/"mpc-plugin.json"))metadata(folder.path()/"mpc-plugin.json",location);
+    }
     if(fs::is_regular_file(settings)){
         const auto xml=read(settings);const auto value=xml.find("<VALUE name=\"pluginList-"+std::string(arch=="aarch64"?"arm-64bit":"arm")+"\"");
         const auto begin=value==std::string::npos?std::string::npos:xml.find('>',value);const auto finish=begin==std::string::npos?std::string::npos:xml.find("</VALUE>",begin);
@@ -546,6 +587,28 @@ std::vector<Json> Manager::installedPlugins() {
     }
     return result;
 }
+std::unique_ptr<Manager> Manager::operationFor(const Json& item) {
+    Json installed;size_t count=0;
+    for(const auto& candidate:installedPlugins()){
+        bool matches=false;for(const char* field:{"id","skin","uid"})if(!item.value(field,"").empty()&&candidate.value(field,"")==item.at(field))matches=true;
+        if(matches){installed=candidate;++count;}
+    }
+    require(count<=1,"Multiple installed copies match this plugin. Resolve the duplicate installations before changing it.");
+    if(!count){require(!item.value("installed",false),"The original plugin installation location is no longer available. Reconnect its drive and select the plugin again.");return {};}
+    for(const char* field:{"id","uid"})if((std::string(field)!="id"||installed.value("release_version_known",false))&&!item.value(field,"").empty()&&!installed.value(field,"").empty())require(item.at(field)==installed.at(field),"Installed plugin identity differs from this package");
+    if(!installed.value("release_version_known",false))require(!installed.value("uid","").empty()&&item.value("uid","")==installed.at("uid"),"Installed plugin identity could not be verified");
+    if(item.contains("device_file"))require(item.at("device_file")==installed.at("device_file"),"Installed plugin location changed. Select it again.");
+    const fs::path target=installed.at("device_target").get<std::string>();
+    if(item.contains("install_target"))require(item.at("install_target")==target.string(),"Installed plugin location changed. Select the plugin again.");
+    if(target==synths&&(!nativePluginStorage||!automaticPluginStorage))return {};
+    auto operation=std::make_unique<Manager>(*this);operation->synths=target;
+    if(nativePluginStorage){
+        const auto state=pluginStorage.inspect(target);
+        if(target==synths)require(state.at("identity")==pluginStorageIdentity,"Plugin drive was removed or replaced. Choose the location again.");
+        operation->automaticPluginStorage=false;operation->pluginStorageIdentity=state.at("identity").get<std::string>();
+    }else if(arch=="armv7")require(target.is_absolute()&&target.lexically_normal()==target&&target.string().rfind("/sdcard/",0)==0,"Installed plugin is outside supported Gen 1 content storage");
+    operation->validateTarget();return operation;
+}
 Json Manager::installationOffer(const Json& item) {
     auto offer=[](const std::string& label,bool allowed,const std::string& reason){return Json{{"label",label},{"allowed",allowed},{"reason",reason}};};
     bool found=false;
@@ -554,18 +617,18 @@ Json Manager::installationOffer(const Json& item) {
         for(const char* field:{"id","skin","uid"}){const auto value=item.value(field,"");if(!value.empty()&&installed.value(field,"")==value)matches=true;}
         if(!matches)continue;
         found=true;
-        if(installed.value("device_target","")!=synths.string())return offer("Installed",false,"Already installed outside the managed content folder");
         if(!installed.value("release_version_known",false))return offer("Installed",false,"Already installed; its release version is unknown");
         auto version=[](std::string value){if(!value.empty()&&value.front()=='v')value.erase(0,1);return libcVersion(value);};
         try {if(version(installed.value("version",""))>=version(item.value("version","")))return offer("Installed",false,"The current or a newer version is already installed");}
         catch(const std::exception&){return offer("Installed",false,"Already installed; its release version cannot be compared");}
     }
+    try{operationFor(item);}catch(const std::exception& error){return offer("Installed",false,error.what());}
     const auto blocked=item.value("origin",std::string())=="release"?std::string():catalogBlock(item);if(!blocked.empty())return offer("Unavailable",false,blocked);
-    if(nativePluginStorage&&synths.empty())return offer("Unavailable",false,"Choose a plugin installation location in SETUP first.");
+    if(nativePluginStorage&&synths.empty()&&!found)return offer("Unavailable",false,"Choose a plugin installation location in SETUP first.");
     return offer(found?"Update":"Install",true,{});
 }
 void Manager::installReleasePlugin(const std::string& id,const ReleaseSource& source,const std::function<void(const std::string&)>& progress,const std::function<void(float)>& amount) {
-    require(!nativePluginStorage||!synths.empty(),"Choose a plugin installation location in SETUP first.");
+    if(nativePluginStorage&&synths.empty())require(bool(operationFor(Json{{"id",id}})),"Choose a plugin installation location in SETUP first.");
     if(progress)progress("Checking the newest stable plugin release...");
     const auto item=latestPluginRelease(id,source,true);const auto offer=installationOffer(item);
     require(offer.at("allowed").get<bool>(),offer.at("reason").get<std::string>());
@@ -604,7 +667,7 @@ std::vector<Json> Manager::list(const std::string& view) {
     const auto actual=view=="installed"?result:installedPlugins();
     if(view=="installed")for(auto& item:result){bool offered=false;for(const auto& candidate:catalog)if(candidate.at("id")==item.at("id")){item=candidate;offered=true;break;}if(!offered){for(const auto& candidate:local())if(candidate.at("id")==item.at("id")){item=candidate;offered=true;break;}}if(!offered)item["blocked_reason"]="This plugin is managed by its original installer";}
 
-    for(auto& item:result){item["installed"]=false;for(const auto& device:actual)if(device.at("id")==item.at("id")||device.at("skin")==item.at("skin")){item["installed"]=true;item["installed_version"]=device.value("version","");item["device_item"]=device;break;}}
+    for(auto& item:result){item["installed"]=false;item["removal_available"]=false;item["install_target"]=synths.string();for(const auto& device:actual)if(device.at("id")==item.at("id")||device.at("skin")==item.at("skin")){item["installed"]=true;item["installed_version"]=device.value("version","");item["device_item"]=device;item["install_target"]=device.at("device_target");item["removal_available"]=device.value("managed",false);if(!item.at("removal_available").get<bool>())for(const auto& package:view=="local"?result:local())if(package.at("id")==device.at("id")&&package.at("skin")==device.at("skin")&&package.at("version")==device.at("version")){item["removal_available"]=true;break;}break;}}
     for(auto& item:result){item["update_available"]=false;if(item.value("installed",false)&&item.at("device_item").value("release_version_known",false)){try{item["update_available"]=libcVersion(item.value("version",""))>libcVersion(item.value("installed_version",""));}catch(const std::exception&){}}}
     std::sort(result.begin(),result.end(),[](const Json&a,const Json&b){return a.at("name").template get<std::string>()<b.at("name").template get<std::string>();});return result;
 }
@@ -623,55 +686,146 @@ void Manager::validateTarget() {
 void Manager::install(const Json& item, const std::function<void(const std::string&)>& progress, const std::function<void(float)>& amount) {
     installPackage(item,progress,amount,false);
 }
+static std::vector<fs::path> pluginRecoveryPaths(Manager& manager,const Json& value,const fs::path& script) {
+    const auto skin=value.at("skin").get<std::string>();
+    require(safeRelative(skin)&&fs::path(skin).filename()==skin&&skin.front()!='.',"Invalid plugin recovery folder");
+    std::set<fs::path> paths{manager.settings,manager.settings.string()+".new",manager.settings.string()+".entry",manager.usb/"plugin-history.json",manager.usb/"plugin-history.json.tmp"};
+    if(fs::exists(manager.synths)){
+        paths.insert(manager.synths/skin);paths.insert(manager.synths/".mpc-usb-manager");
+        for(const auto& installed:manager.installedPlugins()){
+            require(installed.value("skin","")!=skin||installed.value("uid","")==value.at("uid").get<std::string>(),"Another plugin already uses this content folder");
+            if(installed.value("uid","")==value.at("uid").get<std::string>()){
+                require(installed.value("device_target","")==manager.synths.string(),"Plugin location changed during update preparation. Select the plugin again.");
+                paths.insert(manager.synths/installed.at("skin").get<std::string>());
+            }
+        }
+        for(const char* suffix:{".new",".old",".keep"}){const auto stage=manager.synths/("."+skin+suffix);require(!fs::exists(fs::symlink_status(stage)),"Previous plugin staging files remain; preserve or remove them before retrying");paths.insert(stage);}
+    }else paths.insert(manager.synths);
+    const auto text=read(script);std::smatch legacy;
+    if(std::regex_search(text,legacy,std::regex("LEGACY_SO='([^']+)'"))){
+        fs::path path=legacy[1].str();if(const char* root=std::getenv("MPC_LEGACY_ROOT"))path=std::string(root)+path.string();
+        if(fs::is_regular_file(path)){
+            require(path.is_absolute()&&path.lexically_normal()==path&&path.parent_path().filename()=="vst","Unsupported legacy plugin recovery location");paths.insert(path.parent_path());
+        }
+    }
+    return {paths.begin(),paths.end()};
+}
+static bool packageRequiresLinks(const fs::path& root,const fs::path& payload) {
+    for(const auto& entry:fs::recursive_directory_iterator(payload))if(fs::is_symlink(entry.symlink_status()))return true;
+    if(fs::is_regular_file(root/"MODES")){std::istringstream lines(read(root/"MODES"));std::string line;while(std::getline(lines,line))if(line.rfind("l\t",0)==0)return true;}
+    return false;
+}
+static std::string settingsWithoutPluginList(std::string xml,const std::string& arch) {
+    const auto key="<VALUE name=\"pluginList-"+std::string(arch=="aarch64"?"arm-64bit":"arm")+"\"";
+    size_t start=0;
+    while((start=xml.find(key,start))!=std::string::npos){const auto end=xml.find("</VALUE>",start);require(end!=std::string::npos,"Plugin list is not closed");xml.erase(start,end+8-start);}
+    std::string result;
+    for(size_t i=0;i<xml.size();){
+        if(std::isspace(static_cast<unsigned char>(xml[i]))&&(result.empty()||result.back()=='>')){const auto next=xml.find_first_not_of(" \t\r\n",i);if(next==std::string::npos)break;if(xml[next]=='<'){i=next;continue;}}
+        result+=xml[i++];
+    }
+    return result;
+}
+using PluginRegistrations=std::vector<std::map<std::string,std::string>>;
+static PluginRegistrations pluginRegistrations(const std::string& xml,const std::string& arch) {
+    const auto key="<VALUE name=\"pluginList-"+std::string(arch=="aarch64"?"arm-64bit":"arm")+"\"";
+    PluginRegistrations result;size_t offset=0;
+    for(;;){const auto start=xml.find(key,offset);if(start==std::string::npos)break;const auto end=xml.find("</VALUE>",start);require(end!=std::string::npos,"Plugin list is not closed");offset=end+8;
+        const auto list=xml.substr(start,end-start);const std::regex tag("<PLUGIN\\s+([^>]+)>");const std::regex attribute("([A-Za-z][A-Za-z0-9_-]*)\\s*=\\s*\"([^\"]*)\"");
+        for(std::sregex_iterator it(list.begin(),list.end(),tag),last;it!=last;++it){const std::string text=(*it)[1];std::map<std::string,std::string> attrs;for(std::sregex_iterator at(text.begin(),text.end(),attribute);at!=last;++at)attrs[(*at)[1].str()]=xmlText((*at)[2]);
+            result.push_back(std::move(attrs));
+        }
+    }
+    return result;
+}
+static void verifyPluginRegistration(Manager& manager,const Json& value,bool installed,PluginRegistrations before) {
+    auto after=pluginRegistrations(read(manager.settings),manager.arch);size_t matches=0;
+    for(const auto& attrs:after)if(attrs.count("uid")&&attrs.at("uid")==value.at("uid").get<std::string>()){++matches;if(installed)require(attrs.count("file")&&attrs.at("file")== (manager.synths/value.at("skin").get<std::string>()/value.at("so").get<std::string>()).string(),"Installed plugin registration points to another location");}
+    require(matches==(installed?1u:0u),"Plugin registration verification failed");
+    auto removeSelected=[&](PluginRegistrations& records){records.erase(std::remove_if(records.begin(),records.end(),[&](const auto& attrs){return attrs.count("uid")&&attrs.at("uid")==value.at("uid").template get<std::string>();}),records.end());};
+    removeSelected(before);removeSelected(after);require(before==after,"Package changed another plugin's registration");
+}
 void Manager::installPackage(const Json& item,const std::function<void(const std::string&)>& progress,const std::function<void(float)>& amount,bool latestOnly) {
+    std::unique_ptr<Manager> operation;
+    try{operation=operationFor(item);}catch(const std::exception& error){pluginOperation(*this,"install","selection","unchanged",item,operationFailure(error.what()));throw;}
+    if(operation){operation->installPackage(item,progress,amount,latestOnly);return;}
     bool started=false,installed=false;
+    pmu::PluginTransaction recovery;
+    std::unique_ptr<pmu::SettingsBackups> backups;
+    std::string stage="selection";
     auto report=[&](const std::string& text){std::fprintf(stderr,"%s\n",text.c_str());if(progress)progress(text);};
     try {
     if(latestOnly){const auto offer=installationOffer(item);require(offer.at("allowed").get<bool>(),offer.at("reason").get<std::string>());}
-    if(item.at("origin")=="catalog"){report("Checking catalog compatibility before download...");const auto reason=catalogBlock(item);require(reason.empty(),"Download blocked: "+reason);}
-    report("Checking installation destination...");
+    if(item.at("origin")=="catalog"){stage="catalog_compatibility";report("Checking catalog compatibility before download...");const auto reason=catalogBlock(item);require(reason.empty(),"Download blocked: "+reason);}
+    stage="destination";report("Checking installation destination...");
     history(usb);validateTarget();fs::path zip;
     if(item.at("origin")=="catalog"||item.at("origin")=="release") {
-        report("Downloading package. No plugin files changed...");
+        stage="download";report("Downloading package. No plugin files changed...");
         zip=session/"download.zip";float size=0;try{size=std::stof(item.value("size","0"));}catch(const std::exception&){}
         auto tick=[&]{if(!amount)return;std::error_code ec;const auto bytes=fs::file_size(zip,ec);amount(!ec&&size>0?std::min(0.99f,float(bytes)/size):-1.f);};
         require(runProcess({"wget","-T","30","-O",zip.string(),item.at("url").get<std::string>()},tick,item.at("origin")=="release"?std::stoull(item.at("size").get<std::string>()):512ULL*1024*1024)==0,"Download failed");
         if(item.at("origin")=="release")require(fs::file_size(zip)==std::stoull(item.at("size").get<std::string>()),"Plugin release download size mismatch");
         if(amount)amount(-1);
     } else zip=item.at("path").get<std::string>();
-    report("Checking package checksum...");
+    stage="checksum";report("Checking package checksum...");
     require(sha256(zip)==item.at("sha").get<std::string>(),"ZIP changed or catalog checksum mismatch");
-    const auto temporary=session/"install";fs::remove_all(temporary);const auto root=unpack(zip,temporary);
-    report("Checking OS 3 compatibility and package contents...");
+    stage="archive";const auto temporary=session/"install";fs::remove_all(temporary);const auto root=unpack(zip,temporary);
+    stage="manifest";report("Checking OS 3 compatibility and package contents...");
     const Json value=manifest(root,item.at("origin")=="catalog"?&item:nullptr);
     require(value.at("id")==item.at("id")&&value.at("version")==item.at("version")&&(item.at("origin")=="release"||!item.contains("skin")||value.at("skin")==item.at("skin")),"Package identity differs from selection");
     Json verified=item;for(const char* field:{"skin","uid","name","kind","manufacturer"})if(value.contains(field))verified[field]=value.at(field);
+    require(!operationFor(verified),"Installed plugin location changed during package checks. Select it again.");
     if(latestOnly){const auto offer=installationOffer(verified);require(offer.at("allowed").get<bool>(),offer.at("reason").get<std::string>());}
     const auto registry=synths/".mpc-usb-manager"/value.at("id").get<std::string>();
-    report("Installing plugin to "+synths.string()+". Keep the manager drive inserted...");started=true;
-    if(nativePluginStorage)pluginStorage.prepare(synths,pluginStorageIdentity);
-    require(runProcess({"sh",(root/"install.sh").string(),"-y","-n","-t",synths.string()})==0,"Community package installer failed; see USB log");
-    fs::create_directories(registry);
-    for(const char* file:{"uninstall.sh","plugin_list.awk","mpc-plugin.json"}) fs::copy_file(root/file,registry/file,fs::copy_options::overwrite_existing);
-    installed=true;remember(verified,true);if(amount)amount(1);
+    const auto paths=pluginRecoveryPaths(*this,value,root/"install.sh");
+    const auto packagedLibrary=root/value.at("folder").get<std::string>()/value.at("so").get<std::string>();
+    require(fs::is_regular_file(packagedLibrary),"Package plugin library is missing");const auto libraryHash=sha256(packagedLibrary);
+    stage="recovery_preparation";validateTarget();backups=std::make_unique<pmu::SettingsBackups>(settings);recovery.prepare(paths,synths,pmu::PluginTransaction::treeAllocation(root)+pmu::PluginTransaction::treeAllocation(synths/value.at("skin").get<std::string>()),packageRequiresLinks(root,root/value.at("folder").get<std::string>()));
+    stage="installer";report("Installing plugin to "+synths.string()+". Keep the manager drive inserted...");started=true;
+    recovery.run([&]{
+        validateTarget();if(nativePluginStorage)pluginStorage.prepare(synths,pluginStorageIdentity);
+        const auto protectedSettings=settingsWithoutPluginList(read(settings),arch);
+        const auto protectedPlugins=pluginRegistrations(read(settings),arch);
+        require(runProcess({"sh",(root/"install.sh").string(),"-y","-n","-t",synths.string()})==0,"Community package installer failed; see USB log");
+        stage="verification";
+        require(sha256(synths/value.at("skin").get<std::string>()/value.at("so").get<std::string>())==libraryHash,"Installed plugin library verification failed");verifyPluginRegistration(*this,value,true,protectedPlugins);
+        require(settingsWithoutPluginList(read(settings),arch)==protectedSettings,"Package installer changed unrelated MPC settings");
+        require(!fs::is_symlink(fs::symlink_status(registry.parent_path()))&&!fs::is_symlink(fs::symlink_status(registry)),"Plugin installation record cannot be a symbolic link");
+        stage="records";fs::create_directories(registry);
+        for(const char* file:{"uninstall.sh","plugin_list.awk","mpc-plugin.json"}){require(!fs::is_symlink(fs::symlink_status(registry/file)),"Plugin installation record contains a symbolic link");fs::copy_file(root/file,registry/file,fs::copy_options::overwrite_existing);require(sha256(root/file)==sha256(registry/file),"Installed plugin record verification failed");}
+        remember(verified,true);
+    });
+    installed=true;stage="cleanup";backups->finish();if(amount)amount(1);
     fs::remove_all(temporary);if(item.at("origin")=="catalog"||item.at("origin")=="release") fs::remove(zip);
-    } catch(const std::exception& e) {const std::string message=std::string(installed?"Plugin installed, but the USB installation record could not be saved. ":started?"Installation failed; plugin files may have changed. ":"Not installed; plugin files unchanged. ")+e.what();std::fprintf(stderr,"%s\n",message.c_str());throw std::runtime_error(message);}
+    pluginOperation(*this,"install","complete","installed",item);
+    } catch(const std::exception& e) {std::string message=std::string(installed||recovery.committed()?"Plugin installed; cleanup needs attention. ":started?"Installation failed: ":"Not installed; plugin files unchanged. ")+e.what();if(backups)try{backups->finish();}catch(const std::exception& cleanup){message+="; settings backups retained: "+std::string(cleanup.what());}const auto outcome=installed||recovery.committed()?"installed_cleanup_attention":message.find("recovery incomplete")!=std::string::npos?"recovery_incomplete":message.find("restored and verified")!=std::string::npos?"restored":!started?"unchanged":"failed";pluginOperation(*this,"install",stage,outcome,item,operationFailure(e.what()));std::fprintf(stderr,"%s\n",message.c_str());throw std::runtime_error(message);}
 }
 void Manager::remove(const Json& selection) {
     const Json item=selection.value("device_item",selection);
+    std::unique_ptr<Manager> operation;
+    try{operation=operationFor(item);}catch(const std::exception& error){pluginOperation(*this,"remove","selection","unchanged",item,operationFailure(error.what()));throw;}
+    if(operation){operation->remove(item);return;}
+    pmu::PluginTransaction recovery;std::unique_ptr<pmu::SettingsBackups> backups;std::string stage="destination";
+    try{
     require(item.value("device_target",synths.string())==synths.string(),"This plugin is installed outside the selected plugin location; its original installer must remove it");
     history(usb);validateTarget();const std::string id=item.at("id").get<std::string>();
     require(std::regex_match(id,std::regex("[a-z0-9][a-z0-9_-]*")),"Invalid plugin ID");
-    const auto registry=synths/".mpc-usb-manager"/id;
+    stage="records";const auto registry=synths/".mpc-usb-manager"/id;
+    fs::path record=registry;
     if(!fs::is_regular_file(registry/"uninstall.sh")) {
         bool found=false;
         for(const auto& local:list("local")) if(local.at("id")==item.at("id")&&local.at("version")==item.at("version")&&local.at("skin")==item.at("skin")) {
             const auto root=fs::directory_iterator(session/("local-"+local.at("sha").get<std::string>()))->path();
-            fs::create_directories(registry);for(const char* file:{"uninstall.sh","plugin_list.awk","mpc-plugin.json"})fs::copy_file(root/file,registry/file,fs::copy_options::overwrite_existing);found=true;break;
+            record=root;found=true;break;
         }
         require(found,"Uninstall requires the matching local ZIP or a manager installation record");
     }
-    const auto value=Json::parse(read(registry/"mpc-plugin.json"));require(value.at("id")==item.at("id")&&value.at("skin")==item.at("skin")&&value.at("version")==item.at("version"),"Uninstall record differs from installed package");
-    require(runProcess({"sh",(registry/"uninstall.sh").string(),"-y","-n","-t",synths.string()})==0,"Community uninstaller failed; see USB log");fs::remove_all(registry);
-    try{remember(item,false);}catch(const std::exception& e){throw std::runtime_error(std::string("Plugin uninstalled, but the USB installation record could not be saved. ")+e.what());}
+    const auto value=Json::parse(read(record/"mpc-plugin.json"));require(value.at("id")==item.at("id")&&value.at("skin")==item.at("skin")&&value.at("version")==item.at("version"),"Uninstall record differs from installed package");
+    stage="recovery_preparation";backups=std::make_unique<pmu::SettingsBackups>(settings);const auto paths=pluginRecoveryPaths(*this,value,record/"uninstall.sh");recovery.prepare(paths,synths,pmu::PluginTransaction::treeAllocation(synths/value.at("skin").get<std::string>()),false);
+    stage="uninstaller";
+    recovery.run([&]{
+        validateTarget();const auto protectedSettings=settingsWithoutPluginList(read(settings),arch);const auto protectedPlugins=pluginRegistrations(read(settings),arch);require(runProcess({"sh",(record/"uninstall.sh").string(),"-y","-n","-t",synths.string()})==0,"Community uninstaller failed; see USB log");stage="verification";verifyPluginRegistration(*this,value,false,protectedPlugins);require(settingsWithoutPluginList(read(settings),arch)==protectedSettings,"Package uninstaller changed unrelated MPC settings");stage="records";fs::remove_all(registry);remember(item,false);
+    });
+    stage="cleanup";backups->finish();pluginOperation(*this,"remove","complete","removed",item);
+    }catch(const std::exception& error){std::string message=error.what();if(recovery.committed())message="Plugin removed; cleanup needs attention. "+message;if(backups)try{backups->finish();}catch(const std::exception& cleanup){message+="; settings backups retained: "+std::string(cleanup.what());}const auto outcome=recovery.committed()?"removed_cleanup_attention":message.find("recovery incomplete")!=std::string::npos?"recovery_incomplete":message.find("restored and verified")!=std::string::npos?"restored":"unchanged";pluginOperation(*this,"remove",stage,outcome,item,operationFailure(error.what()));throw std::runtime_error(message);}
 }

@@ -1,13 +1,14 @@
 # Plugin Manager USB for OPEN MPC
 
-[![Download installer](https://img.shields.io/badge/Download-1.3.3-brightgreen?logo=github)](https://github.com/Eurikon/plugin-manager-usb-for-open-mpc/releases/download/v1.3.3/plugin-manager-usb-v1.3.3.zip)
+[![Download installer](https://img.shields.io/badge/Download-1.4.0-brightgreen?logo=github)](https://github.com/Eurikon/plugin-manager-usb-for-open-mpc/releases/download/v1.4.0/plugin-manager-usb-v1.4.0.zip)
 [![Latest release](https://img.shields.io/github/v/release/Eurikon/plugin-manager-usb-for-open-mpc?logo=github&label=Release)](https://github.com/Eurikon/plugin-manager-usb-for-open-mpc/releases/latest)
 [![Changelog](https://img.shields.io/badge/Changelog-History-blue?logo=github)](CHANGELOG.md)
 [![User guide](https://img.shields.io/badge/Guide-Website-blue?logo=githubpages)](https://eurikon.github.io/plugin-manager-usb-for-open-mpc/guide.html)
 [![MIT license](https://img.shields.io/github/license/Eurikon/plugin-manager-usb-for-open-mpc)](LICENSE)
 
 Browse, install, update and remove community instruments and effects on your MPC touchscreen.<br>
-Run the manager from USB, or install the manager itself onto SD on supported OS 3.10 devices.
+Run the manager directly from USB.<br>
+SD installation is optional and available on supported OS 3.10 devices.
 
 The bundle includes the manager, without plugins or Akai firmware files.
 
@@ -15,7 +16,7 @@ The bundle includes the manager, without plugins or Akai firmware files.
 
 **Additional hardware checks:** Akai Force — OS 3.9.1; MPC Live III (Gen2) — OS 3.10 over OS 3.9.1.<br>
 Beta 2 was tested and approved on these configurations.<br>
-The 1.3.0 updater and interface changes have offline validation; no new device-test result is claimed.<br>
+The 1.4.0 browsing interface and catalog installation were checked on the MPC Live II Retro running stock OS 3.10.<br>
 Stock Gen2 OS 3.9.1 and 3.10 have also passed offline firmware checks; stock Gen2 OS 3.10 has not been hardware-tested.<br>
 
 One USB bundle selects the Gen1 or Gen2 runtime automatically.<br>
@@ -29,7 +30,7 @@ Later compatible releases can update the manager and its helper together through
 1. Save your project and safely eject the drive before connecting it to your computer.
 2. Extract the new archive onto the USB root, replacing matching application files and including `.mpc-manager-id`. Preserve `plugin-history.json`, `manager-preferences.json`, `display-rotation.txt` if present, and `local-plugins/`.
 3. On OS 3.10, reimport `Plugin Manager helper.xpa` into internal MPC Documents, then shut down normally and switch the MPC back on. This clears the previous RAM session.
-4. If you use the SD copy, open the updated USB manager and choose **SETUP → Update manager** before removing the stick.
+4. If you use the SD copy, open the updated USB manager and choose **SETUP → Install manager** before removing the stick.
 
 ![Plugin Manager catalog](site/assets/manager-catalog.png)
 
@@ -66,7 +67,8 @@ Import the supplied helper once:
 3. Let extraction finish. It creates `Devices/Plugin Manager helper` inside MPC Documents.
 4. Shut down the MPC normally, then switch it back on to activate the helper. Keep the USB inserted; hold **Shift + Menu for two seconds** to open the manager.
 
-The helper is a controller profile, not an instrument or effect.<br>
+The helper is a controller profile, separate from the manager application.<br>
+This one-time helper setup lets you run the manager directly from USB; installing the manager on SD remains optional.<br>
 Its files remain in MPC Documents so it can start again after a normal reboot.<br>
 The blank setup project is removed after successful setup only if it is unchanged; a modified project or failed setup is left for inspection.
 
@@ -78,7 +80,7 @@ A short press retains the MPC Browser shortcut.<br>
 The helper does not need importing again after each opening or reboot.
 
 Choose **Browse plugins** on the welcome screen, then select a compatible package from **Catalog** or **Local**.<br>
-Confirm its installation into the selected plugin installation location, then install more packages or choose **Return to MPC**.<br>
+Confirm the displayed installation location, then install more packages or choose **Return to MPC**.<br>
 Installed instruments and effects become available through MPC's normal plugin selection.
 
 Returning to MPC can take **30 seconds or longer**.<br>
@@ -115,7 +117,7 @@ This optional feature requires the supported **OS 3.10 helper**.<br>
 It installs the manager application on the removable SD card; it does not install an instrument on a track.
 
 1. Open **Setup** from the welcome screen, or the cogwheel **SETUP** button above the catalog.
-2. Choose **Install to SD**, select your SD card and confirm installation.
+2. Choose **Install manager**, select your SD card and confirm installation.
 3. Choose **Return to MPC** and wait for MAIN.
 4. Safely eject and remove the USB stick. Keep the SD card inserted and hold **Shift + Menu for two seconds** to open the SD copy.
 
@@ -132,14 +134,15 @@ The same interface is used for both sources; each source keeps its own preferenc
 
 ![Plugin Manager SETUP page](site/assets/manager-setup.png)
 
-- **Plugin Manager installation:** install, update/reinstall or uninstall the SD copy. From USB, **Update manager** copies that manager onto SD. It is disabled when running from the SD installation itself; use **Check for updates** below to download a newer release directly onto SD.
+- **Plugin Manager installation:** **Install manager** copies the USB manager onto SD, creating or replacing the SD copy. The button is disabled when running from that SD copy. **Uninstall manager** removes the SD application.
 - **Plugin Manager updates:** choose **Check for updates** to check GitHub Releases. If a supported newer release is available, **Install update** opens a confirmation before downloading and installing it.
 - **Welcome message:** enable **Show on opening** to restore the welcome screen for this source.
+- **Save report:** saves `diagnostics/manager-report.txt` on the manager's drive. Open it on your computer, review it, and attach it when reporting a problem. It contains build, storage and operation status; settings contents, addresses, drive labels and raw logs are excluded.
 
 An accepted release updates the manager you opened, together with its helper, while preserving plugins, history, preferences and local ZIPs.<br>
 Keep its drive connected, return to MPC and reopen the manager to use the update.<br>
 The previous working version is retained for recovery if the new version cannot start.<br>
-USB and SD keep independent versions; use the updated USB copy’s **Update manager** action to bring an older SD copy up to date.
+USB and SD keep independent versions; use the updated USB copy’s **Install manager** action to bring an older SD copy up to date.
 
 ### Remove the SD copy
 
@@ -168,6 +171,12 @@ These logs can be read on your computer without SSH.
 | <picture><img src="site/assets/tab-installed.svg" width="16" height="16" alt=""></picture> **On MPC** | See plugins actually present on the device and select available update/removal actions. |
 | <picture><img src="site/assets/tab-history.svg" width="16" height="16" alt=""></picture> **History** | Compare this stick's saved installation record with the current device and available packages. |
 
+**FIND** searches names, authors and descriptions with a touchscreen keyboard or connected keyboard.<br>
+**FILTER** selects a plugin type, compatible packages or available updates; **SORT** orders names or puts updates first.<br>
+Double-tap anywhere on a plugin card for package details, available/installed versions and the action's installation folder.<br>
+Double-tap the image in those details for a larger view; close it with **X**.<br>
+**Back** restores the list, and installing a plugin returns to the same catalog page.
+
 The top-right version belongs to the catalog release, local ZIP, on-device installation or saved history entry shown in that tab.<br>
 A floppy symbol and version beside the MPC OS badge identify the installed copy; a small light beside the offered version indicates a newer update.<br>
 Thumbnails are saved in `thumbnails/` beside the manager on USB or SD and reused between openings.<br>
@@ -184,7 +193,7 @@ History helps identify previous installations after wiping or changing a device;
 ![Saved installation history](site/assets/manager-history.png)
 
 Theme and welcome-message preferences stay on the source USB or SD card.<br>
-Page positions last only while the manager is open.<br>
+Each tab remembers its page, search, filters and sorting only while the manager is open.<br>
 The catalog and downloaded packages are kept temporarily in RAM and discarded when the manager closes.
 
 ## What Changes on the MPC?
@@ -200,7 +209,7 @@ No root-filesystem startup service is installed.
 Checksums detect damaged or changed files; they do not certify who wrote a plugin or whether its scripts are safe.<br>
 Use packages from publishers you trust.<br>
 Recovery and user-data preservation depend on each package's scripts.<br>
-Content outside the managed target needs its original installer.
+Removal requires the matching installation record or local package.
 
 After five idle minutes, the manager returns to MPC.<br>
 An unexpected exit triggers an immediate application restart.<br>
@@ -218,6 +227,9 @@ On Gen 2, **SETUP → Plugin location** opens **Plugin installation location**.
 - Manual selection applies to the current manager session. **Automatic** restores MPC's selected content drive.
 
 Selecting a location does not install anything or change MPC's content-drive preference.<br>
+New plugins use that selection; updates and removals use the folder where the plugin is already installed.<br>
+The confirmation screen shows that folder. If the drive is unavailable or duplicate installations make the location unclear, the operation stops without choosing another drive.<br>
+The manager keeps ten recent settings backups. Existing untracked backups and files you have modified are preserved.<br>
 After you confirm a plugin installation and its package passes validation, the manager creates the standard `Synths` folder if needed and registers the chosen content folder, preserving a backup of MPC settings.<br>
 A missing, disconnected or read-only drive stops installation with an explanation; the manager does not silently switch drives.<br>
 Plugins installed on removable storage require that storage to remain available when MPC loads them.

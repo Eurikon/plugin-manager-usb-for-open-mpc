@@ -8,6 +8,7 @@
 #include <vector>
 #include <functional>
 #include <cstdint>
+#include <memory>
 namespace fs = std::filesystem;
 using Json = nlohmann::json;
 struct ReleaseSource {
@@ -42,11 +43,13 @@ struct Manager {
     void setHideWelcome(bool hidden);
     bool darkTheme();
     void setDarkTheme(bool dark);
+    std::string saveDiagnostics();
 private:
     Json releaseLookups=Json::object();
     PluginStorage pluginStorage;
     bool nativePluginStorage=false,automaticPluginStorage=true;
     std::string pluginStorageIdentity,pluginStorageError;
+    std::unique_ptr<Manager> operationFor(const Json& item);
     void installPackage(const Json& item, const std::function<void(const std::string&)>& progress, const std::function<void(float)>& amount, bool latestOnly);
 };
 int runProcess(const std::vector<std::string>& args, const std::function<void()>& tick = {}, uint64_t maxFileBytes = 512ULL*1024*1024);

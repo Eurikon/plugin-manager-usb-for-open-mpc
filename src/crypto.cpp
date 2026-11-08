@@ -20,7 +20,10 @@ std::vector<unsigned char> unhex(const std::string& text,size_t size){
 }
 }
 std::string sha256Text(std::string_view text){
-    need(text.size()<=1024*1024,"Oversized metadata digest input");auto library=crypto();const auto digest=symbol<decltype(&EVP_Digest)>(library.get(),"EVP_Digest");const auto algorithm=symbol<decltype(&EVP_sha256)>(library.get(),"EVP_sha256");std::array<unsigned char,EVP_MAX_MD_SIZE> bytes{};unsigned length=0;need(digest(text.data(),text.size(),bytes.data(),&length,algorithm(),nullptr)==1&&length==32,"Cannot hash signed metadata");
+    need(text.size()<=1024*1024,"Oversized metadata digest input");return sha256Data(text);
+}
+std::string sha256Data(std::string_view text){
+    need(text.size()<=4*1024*1024,"Oversized binary digest input");auto library=crypto();const auto digest=symbol<decltype(&EVP_Digest)>(library.get(),"EVP_Digest");const auto algorithm=symbol<decltype(&EVP_sha256)>(library.get(),"EVP_sha256");std::array<unsigned char,EVP_MAX_MD_SIZE> bytes{};unsigned length=0;need(digest(text.data(),text.size(),bytes.data(),&length,algorithm(),nullptr)==1&&length==32,"Cannot compute SHA-256");
     std::string result;const char* digits="0123456789abcdef";for(size_t i=0;i<length;++i){result+=digits[bytes[i]>>4];result+=digits[bytes[i]&15];}return result;
 }
 bool verifyEd25519(const std::string& publicKey,std::string_view message,const std::string& signature){

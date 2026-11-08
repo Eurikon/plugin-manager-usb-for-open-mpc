@@ -81,7 +81,7 @@ void plain(const fs::path& path){
 }
 dev_t device(const PluginStoragePaths& paths,const fs::path& path){if(paths.device)return paths.device(path);struct stat st{};need(lstat(path.c_str(),&st)==0,"Content drive is missing or disconnected: "+path.string());return st.st_dev;}
 std::string unescape(const std::string& value){std::string out;for(size_t i=0;i<value.size();++i){if(value[i]!='\\'){out+=value[i];continue;}need(i+3<value.size(),"Invalid mounted drive path");const auto code=value.substr(i+1,3);need(code=="040"||code=="011"||code=="012"||code=="134","Invalid mounted drive escape");out+=char(std::stoi(code,nullptr,8));i+=3;}return out;}
-struct Mount {fs::path point;std::string id,options,source,root;dev_t dev;};
+struct Mount {fs::path point;std::string id,options,source,root,type;dev_t dev;};
 std::vector<Mount> mounts(const PluginStoragePaths& paths){
     std::vector<Mount> result;std::istringstream input(read(paths.mounts));std::string line;
     while(std::getline(input,line)){
@@ -89,7 +89,7 @@ std::vector<Mount> mounts(const PluginStoragePaths& paths){
         if(!(row>>id>>parent>>number>>root>>point>>options))continue;
         while(row>>field&&field!="-"){}if(field!="-"||!(row>>type>>source>>super))continue;
         unsigned majorValue,minorValue;char tail;need(sscanf(number.c_str(),"%u:%u%c",&majorValue,&minorValue,&tail)==2,"Invalid mounted drive identity");
-        result.push_back({unescape(point),id,","+options+","+super+",",unescape(source),unescape(root),makedev(majorValue,minorValue)});
+        result.push_back({unescape(point),id,","+options+","+super+",",unescape(source),unescape(root),type,makedev(majorValue,minorValue)});
     }
     return result;
 }
@@ -128,6 +128,16 @@ void saveSettings(const fs::path& path,const std::string& before,const std::stri
 }
 }
 PluginStorage::PluginStorage(fs::path set,PluginStoragePaths p):settings(std::move(set)),paths(std::move(p)){}
+std::vector<fs::path> PluginStorage::registeredLocations() const{auto result=registered(read(settings));for(auto& path:result)while(path!=path.root_path()&&path.filename().empty())path=path.parent_path();return result;}
+Json PluginStorage::diagnostics() const{
+    Json result={{"registered_location_count",registeredLocations().size()},{"drives",Json::array()}};
+    for(const auto& mount:mounts(paths))if(userDrive(mount)){
+        need(result.at("drives").size()<32,"Too many content drives for diagnostic report");
+        const auto type=mount.type.size()<=32&&mount.type.find_first_not_of("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-")==std::string::npos?mount.type:"unknown";
+        result["drives"].push_back({{"filesystem",type},{"writable",mount.options.find(",rw,")!=std::string::npos&&mount.options.find(",ro,")==std::string::npos},{"executable",mount.options.find(",noexec,")==std::string::npos}});
+    }
+    return result;
+}
 Json PluginStorage::inspect(const fs::path& target) const{
     plain(target);const auto mount=containing(paths,target);const auto xml=read(settings);const auto locations=registered(xml);
     const bool exists=fs::exists(target);need(!exists||fs::is_directory(target),"Plugin location is occupied by a file");
