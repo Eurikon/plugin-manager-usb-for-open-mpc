@@ -118,7 +118,7 @@ struct Screen {
         else if(kind==Icon::Right){line(x+22,y+11,x+13,y+2,color);line(x+22,y+11,x+13,y+20,color);line(x,y+11,x+22,y+11,color);}
     }
     void button(int x,int y,int w,const std::string& title,bool active=false,bool enabled=true,Icon glyph=Icon::None){box(x,y,w,58,active&&enabled?Theme::red:Theme::panel);const auto color=enabled?(active?Theme::white:Theme::ink):Theme::muted;const int inset=glyph==Icon::None?18:52;if(glyph!=Icon::None)icon(x+16,y+17,glyph,color);text(x+inset,y+38,title,color,25,w-inset-12);}
-    void compactButton(int x,int y,int w,const std::string& title,bool active,bool enabled,bool marked=false){box(x,y,w,40,active&&enabled?Theme::red:Theme::panel);if(marked&&!active)rect(x+w-5,y+1,4,38,Theme::red);text(x+14,y+28,title,enabled?(active?Theme::white:Theme::ink):Theme::muted,23,w-28);}
+    void compactButton(int x,int y,int w,const std::string& title,bool active,bool enabled,bool marked=false,Icon glyph=Icon::None,int height=40){box(x,y,w,height,active&&enabled?Theme::red:Theme::panel);if(marked&&!active)rect(x+w-5,y+1,4,height-2,Theme::red);const auto color=enabled?(active?Theme::white:Theme::ink):Theme::muted;const int inset=glyph==Icon::None?14:48;if(glyph!=Icon::None)icon(x+12,y+(height-24)/2,glyph,color);text(x+inset,y+(height==40?28:38),title,color,height==40?23:25,w-inset-(glyph==Icon::None?14:12));}
 
     void themeButton(int x,int y,int w,bool dark,bool enabled){button(x,y,w,dark?"Light":"Dark",false,enabled,dark?Icon::Sun:Icon::Moon);}
     void badge(int x,int y,int w,const std::string& title,bool warning=false){box(x,y,w,30,warning?Theme::warning:Theme::panel,warning?0xffe0a100:Theme::line);text(x+9,y+22,title,warning?Theme::amber:Theme::muted,19,w-14);}
@@ -180,10 +180,13 @@ static int app(int argc,char**argv) {
     const Uint32 wheelEvent=SDL_RegisterEvents(1);if(wheelEvent==Uint32(-1))throw std::runtime_error("Cannot register panel input");
     pmu::PanelInput panelInput(std::getenv("MPC_PANEL_PORT"),[wheelEvent,decoder=pmu::WheelMessages{}](unsigned char status,unsigned char number,unsigned char value)mutable{decoder.feed(status,number,value,[wheelEvent](int delta){SDL_Event event{};event.type=wheelEvent;event.user.code=delta;SDL_PushEvent(&event);});},pmu::PanelInput::deviceModel(std::getenv("MPC_PANEL_PORT")));
     auto labelWidth=[&](const std::string& label,int size){int width=0;FT_Set_Pixel_Sizes(screen.face,0,size);for(unsigned char letter:label)if(!FT_Load_Char(screen.face,letter,FT_LOAD_DEFAULT))width+=screen.face->glyph->advance.x>>6;return width;};
-    const int setupWidth=12+24+12+labelWidth("SETUP",23)+12,setupX=1252-setupWidth;
+    const int setupWidth=12+24+12+labelWidth("SETUP",23)+12;
     const int themeWidth=16+24+12+std::max(labelWidth("Light",25),labelWidth("Dark",25))+12,themeX=995-themeWidth;
-    const int browseToolsX=setupX-(252+themeWidth),filterX=browseToolsX+120,sortX=filterX+themeWidth+12;
+    const int toolWidth=std::max(setupWidth,themeWidth),setupX=1252-toolWidth,findX=setupX,sortX=findX-toolWidth-12,filterX=sortX-toolWidth-12;
+    const int catalogThemeX=sortX,catalogReturnX=filterX+toolWidth-245;
     const pmu::CatalogTabs tabs{themeX-pmu::CatalogTabs::gap};
+    auto tabRight=[&](int index){return index==3?filterX-12:tabs.right(index);};
+    auto tabAt=[&](int x){for(int index=0;index<4;++index)if(x>=tabs.left(index)&&x<tabRight(index))return index;return -1;};
     const int welcomeHideX=1222-12-labelWidth("Hide message",25);
     // Device clocks may be unset, so copyright follows the build year.
     const std::string welcomeIdentity="Plugin Manager USB for \"Open MPC\" v" MPC_MANAGER_VERSION " © "+std::string(__DATE__+7,4)+" Twisted Cable";
@@ -199,6 +202,7 @@ static int app(int argc,char**argv) {
     bool pluginLocationView=false,pluginLocationPending=false,pluginBrowsePending=false;std::string pluginBrowsePath;int pluginLocationPage=0;std::string pluginLocationChoice;Json pluginLocationState=Json::object();
     std::string sdSelected,sdOperation,sdSavedStatus;Json sdState=Json::object();std::vector<Json> sdCards;
     bool welcome=true,hideNext=false;try{hideNext=manager.hideWelcome();welcome=!hideNext;}catch(const std::exception& e){std::fprintf(stderr,"Welcome preference: %s\n",e.what());}
+    bool idleReturn=true;try{idleReturn=manager.idleReturn();}catch(const std::exception& error){std::fprintf(stderr,"Idle return preference: %s\n",error.what());}
     signal(SIGTERM,stop);signal(SIGINT,stop);
     std::mutex progressMutex;std::string progressText;float progressValue=-1;
     auto amount=[&](float value){std::lock_guard<std::mutex> lock(progressMutex);progressValue=value;};
@@ -216,6 +220,7 @@ static int app(int argc,char**argv) {
     bool managerCheckPending=false,managerCheckFailed=false,managerUpdateConfirm=false,managerUpdated=false;std::string managerUpdateStatus="Not checked";Json managerUpdate=Json::object();
     bool diagnosticsPending=false;
     bool offerPending=false,themePending=false,hidePending=false,savedDark=dark,savedHidden=!welcome,activeDark=dark,activeHidden=!welcome;
+    bool idlePending=false,savedIdleReturn=idleReturn,activeIdleReturn=idleReturn,saveIdle=false;
     bool saveTheme=false,saveHidden=false;std::string activeView;unsigned long request=0,activeRequest=0;
     Json welcomeOffer={{"label","Install"},{"allowed",false},{"reason","Checking the latest manager release..."}};
     auto currentOffer=[&]() -> Json {try{return manager.installationOffer(manager.latestPluginRelease(MPC_PM_ID,{MPC_PM_REPO,MPC_PM_TAG_PREFIX,MPC_PM_ASSET_PREFIX}));}catch(const std::exception& error){return {{"label","Unavailable"},{"allowed",false},{"reason",error.what()}};}};
@@ -228,9 +233,9 @@ static int app(int argc,char**argv) {
     Uint32 lastTouch=SDL_GetTicks(),progressEnded=0;bool progressFading=false;
     auto startNext=[&]{
         if(busy||quitting)return;
-        if(themePending||hidePending||browsePending){
-            work=Work::Preferences;busy=true;saveTheme=themePending;saveHidden=!saveTheme&&hidePending;saveBrowse=!saveTheme&&!saveHidden&&browsePending;activeDark=dark;activeHidden=hideNext;activeRemember=rememberBrowse;activeBrowse=pmu::encodeBrowseSettings(browseOptions);if(saveTheme)themePending=false;if(saveHidden)hidePending=false;if(saveBrowse)browsePending=false;
-            job=std::async(std::launch::async,[&,theme=saveTheme,hidden=saveHidden,browsing=saveBrowse,darkValue=activeDark,hideValue=activeHidden,remember=activeRemember,settings=activeBrowse]{if(theme)manager.setDarkTheme(darkValue);if(hidden)manager.setHideWelcome(hideValue);if(browsing)manager.setBrowsePreferences(remember,settings);return Result{};});
+        if(themePending||hidePending||browsePending||idlePending){
+            work=Work::Preferences;busy=true;saveTheme=themePending;saveHidden=!saveTheme&&hidePending;saveBrowse=!saveTheme&&!saveHidden&&browsePending;saveIdle=!saveTheme&&!saveHidden&&!saveBrowse&&idlePending;activeIdleReturn=idleReturn;activeDark=dark;activeHidden=hideNext;activeRemember=rememberBrowse;activeBrowse=pmu::encodeBrowseSettings(browseOptions);if(saveTheme)themePending=false;if(saveHidden)hidePending=false;if(saveBrowse)browsePending=false;if(saveIdle)idlePending=false;
+            job=std::async(std::launch::async,[&,theme=saveTheme,hidden=saveHidden,browsing=saveBrowse,idle=saveIdle,idleValue=activeIdleReturn,darkValue=activeDark,hideValue=activeHidden,remember=activeRemember,settings=activeBrowse]{if(theme)manager.setDarkTheme(darkValue);if(hidden)manager.setHideWelcome(hideValue);if(browsing)manager.setBrowsePreferences(remember,settings);if(idle)manager.setIdleReturn(idleValue);return Result{};});
         }else if(pluginBrowsePending&&!returning){
             work=Work::PluginLocationBrowse;busy=true;pluginBrowsePending=false;const auto path=pluginBrowsePath;
             job=std::async(std::launch::async,[&,path]{Result result;result.pluginLocation=manager.pluginStorageFolders(path);return result;});
@@ -272,6 +277,8 @@ static int app(int argc,char**argv) {
     if(browserTest){Thumbnail image;image.width=image.height=2;image.pixels={0xffff0000,0xff00ff00,0xff0000ff,0xffffffff};screen.thumbnail(0,0,&image,256,160);if(screen.pixels[1*1280+49]!=0xffff0000||screen.pixels[1*1280+129]!=0xff00ff00||screen.pixels[81*1280+49]!=0xff0000ff)throw std::runtime_error("Details thumbnail scaling failed");for(const auto& size:{std::pair{128,80},std::pair{256,160}}){screen.thumbnail(0,0,&image,size.first,size.second);for(int x=0;x<size.first;++x)if(screen.pixels[x]!=Theme::line||screen.pixels[(size.second-1)*1280+x]!=Theme::line)throw std::runtime_error("Thumbnail overwrote horizontal border");for(int y=0;y<size.second;++y)if(screen.pixels[y*1280]!=Theme::line||screen.pixels[y*1280+size.first-1]!=Theme::line)throw std::runtime_error("Thumbnail overwrote vertical border");}image.pixels.clear();screen.thumbnail(0,0,&image,256,160);}
     const bool test=testMode!=nullptr, flow=test&&(std::string(testMode)=="flow"||std::string(testMode)=="touch-flow"),responsive=test&&std::string(testMode)=="responsive",direct=test&&std::string(testMode).rfind("welcome-",0)==0;int frames=0,step=0,welcomeStep=0,presents=0,idlePresents=0;std::string updateTestResult;Uint32 probeStarted=0;const bool startingDark=dark;
     auto click=[&](int x,int y){SDL_Event event{};const auto point=screen.geometry.output(x,y);if(std::string(testMode)=="touch-flow"||std::string(testMode)=="browser-touch"){event.type=SDL_FINGERUP;int wx,wy,ww,wh;SDL_RenderLogicalToWindow(screen.renderer,float(point.first),float(point.second),&wx,&wy);SDL_GetWindowSize(screen.window,&ww,&wh);event.tfinger.x=float(wx)/ww;event.tfinger.y=float(wy)/wh;SDL_PushEvent(&event);return;}event.type=SDL_MOUSEBUTTONUP;event.button.button=SDL_BUTTON_LEFT;event.button.x=point.first;event.button.y=point.second;SDL_PushEvent(&event);};
+    auto clickReturn=[&]{const bool top=!welcome&&!sdView;click(top?catalogReturnX+122:1130,top?28:90);};
+    auto clickTheme=[&]{const bool top=!welcome&&!sdView;click(top?catalogThemeX+toolWidth/2:themeX+themeWidth/2,top?28:90);};
     auto wheel=[&](int delta){
         if(std::getenv("MPC_MANAGER_PANEL_FIXTURE")){
             auto send=reinterpret_cast<ssize_t(*)(const void*,size_t)>(dlsym(RTLD_DEFAULT,"panel_test_send"));if(!send||!panelInput.active())throw std::runtime_error("Panel UI fixture is not connected");
@@ -296,8 +303,8 @@ static int app(int argc,char**argv) {
             busy=false;dirty=true;lastTouch=SDL_GetTicks();
             if(work==Work::Open){initial=false;if(success){status=result.status;catalogError=result.catalogError;failed=false;}reload();}
             else if(work==Work::Preferences){
-                if(success){if(saveTheme)savedDark=activeDark;if(saveHidden)savedHidden=activeHidden;if(saveBrowse){savedRemember=activeRemember;savedBrowse=activeBrowse;}}
-                else {if(saveTheme&&!themePending){dark=savedDark;Theme::set(dark);}if(saveHidden&&!hidePending)hideNext=savedHidden;if(saveBrowse&&!browsePending){rememberBrowse=savedRemember;requestedBrowse=savedBrowse;}}
+                if(success){if(saveIdle)savedIdleReturn=activeIdleReturn;if(saveTheme)savedDark=activeDark;if(saveHidden)savedHidden=activeHidden;if(saveBrowse){savedRemember=activeRemember;savedBrowse=activeBrowse;}}
+                else {if(saveIdle&&!idlePending)idleReturn=savedIdleReturn;if(saveTheme&&!themePending){dark=savedDark;Theme::set(dark);}if(saveHidden&&!hidePending)hideNext=savedHidden;if(saveBrowse&&!browsePending){rememberBrowse=savedRemember;requestedBrowse=savedBrowse;}}
             }else if(work==Work::PluginLocationRead||work==Work::PluginLocationSelect||work==Work::PluginLocationBrowse){
                 if(work==Work::PluginLocationSelect)mutating=false;
                 if(success){failed=false;status=work==Work::PluginLocationSelect?"Plugin installation location selected for this session. No plugin files changed.":"Choose Automatic or a plugin location below. The Plugin Manager installation is separate.";if(work==Work::PluginLocationSelect)reload();}
@@ -330,9 +337,9 @@ static int app(int argc,char**argv) {
         if(!welcome&&!sdView&&!confirming&&!returning&&!mutating&&(listReady||(loadedView==view&&!items.empty()))){if((browsePanel==BrowsePanel::Details||browsePanel==BrowsePanel::Image)&&selected>=0)artworkUrls.push_back(items[selected].value("screenshot",""));else if(browsePanel==BrowsePanel::None)for(int i=page*6;i<std::min(int(items.size()),page*6+6);++i)artworkUrls.push_back(items[i].value("screenshot",""));}
         thumbnails.visible(artworkUrls,browsePanel==BrowsePanel::Image);const auto revision=thumbnails.revision();if(revision!=artworkRevision){artworkRevision=revision;dirty=true;}
         if(quitting||returning)thumbnails.clear();
-        if(returning&&!busy&&!themePending&&!hidePending&&!browsePending)quitting=1;
+        if(returning&&!busy&&!themePending&&!hidePending&&!browsePending&&!idlePending)quitting=1;
         const Uint32 fadeElapsed=SDL_GetTicks()-progressEnded;if(progressFading&&fadeElapsed>=600){progressFading=false;dirty=true;}
-        if(SDL_GetTicks()-lastTouch>=300000&&!busy)quitting=1;
+        if(idleReturn&&SDL_GetTicks()-lastTouch>=300000&&!busy)quitting=1;
         if(dirty||progressFading||(!welcome&&busy)||(welcome&&mutating)){
         screen.rect(0,0,1280,800,Theme::background);
         if(browsePanel==BrowsePanel::Image&&selected>=0){
@@ -399,11 +406,11 @@ static int app(int argc,char**argv) {
                 screen.wrapped(96,417,managerUpdateStatus,790,2,managerCheckFailed?Theme::amber:Theme::muted,22);
                 screen.button(918,321,310,"Check for updates",false,!managerUpdated&&!managerCheckPending&&!(busy&&work==Work::ManagerCheck),Icon::History);
                 if(!managerUpdated&&managerUpdate.value("update_available",false)&&managerUpdate.value("downloadable",false))screen.button(918,391,310,"Install update",true,!busy&&!managerCheckPending,Icon::Download);
-                screen.box(28,475,604,110,Theme::panel);screen.icon(52,499,Icon::Grid,Theme::red);screen.text(96,515,"Welcome message",Theme::ink,28,512);
-                screen.text(96,555,"Show on opening",Theme::muted,25,458);screen.box(578,530,30,30,!hideNext?Theme::red:Theme::background);if(!hideNext)screen.icon(581,533,Icon::Check,Theme::white);
-                screen.box(648,475,604,110,Theme::panel);screen.icon(672,499,Icon::Disk,Theme::red);screen.text(716,515,"Filters and sorting",Theme::ink,28,512);
-                screen.text(716,555,"Remember on opening",Theme::muted,25,458);screen.box(1198,530,30,30,rememberBrowse?Theme::red:Theme::background);if(rememberBrowse)screen.icon(1201,533,Icon::Check,Theme::white);
-                screen.button(28,605,220,"Save report",false,!busy&&!diagnosticsPending,Icon::Download);
+                for(int column=0;column<3;++column)screen.box(28+column*412,475,400,110,Theme::panel);
+                screen.text(44,540,"Show welcome message",Theme::ink,25,322);screen.box(382,515,30,30,!hideNext?Theme::red:Theme::background);if(!hideNext)screen.icon(385,518,Icon::Check,Theme::white);
+                screen.text(456,540,"Remember filters and sorting",Theme::ink,25,322);screen.box(794,515,30,30,rememberBrowse?Theme::red:Theme::background);if(rememberBrowse)screen.icon(797,518,Icon::Check,Theme::white);
+                screen.text(868,540,"Auto quit manager",Theme::ink,25,322);screen.box(1206,515,30,30,idleReturn?Theme::red:Theme::background);if(idleReturn)screen.icon(1209,518,Icon::Check,Theme::white);
+                screen.button(1032,605,220,"Save report",false,!busy&&!diagnosticsPending,Icon::Download);
             }
             screen.box(28,682,1224,98,Theme::lcd,Theme::lcd);
             screen.wrapped(46,713,status,1180,2,failed?0xffffbd91:Theme::white,22);
@@ -432,10 +439,10 @@ static int app(int argc,char**argv) {
             screen.box(28,682,1224,98,Theme::lcd,Theme::lcd);screen.wrapped(46,713,mutating||failed||completed||returning||progressFading?status:welcomeIdentity,1180,2,failed?0xffffbd91:Theme::white,22);
         }else{
         screen.text(28,43,confirming?(operation=="Uninstall"?"REMOVE PLUGIN":operation=="Update"?"UPDATE PLUGIN":"INSTALL PLUGIN"):"OPEN MPC PLUGIN CATALOG",Theme::ink,31);
-        screen.box(setupX,8,setupWidth,40,Theme::panel);screen.icon(setupX+12,16,Icon::Cog,mutating?Theme::muted:Theme::ink);screen.text(setupX+48,36,"SETUP",mutating?Theme::muted:Theme::ink,23,setupWidth-60);
-        if(!confirming){const auto& options=browseOptions[view];screen.compactButton(browseToolsX,8,108,"FIND",!options.query.empty()||browsePanel==BrowsePanel::Find,!mutating&&listReady);screen.compactButton(filterX,8,themeWidth,"FILTER",browsePanel==BrowsePanel::Filter,!mutating&&listReady,!options.kind.empty()||options.updatesOnly||options.compatibleOnly);screen.compactButton(sortX,8,108,"SORT",browsePanel==BrowsePanel::Sort,!mutating&&listReady,options.order!=pmu::BrowseOptions::Order::Name);}
+        screen.compactButton(catalogReturnX,8,245,"Return to MPC",false,!mutating,false,Icon::Return);screen.compactButton(catalogThemeX,8,toolWidth,dark?"Light":"Dark",false,!mutating,false,dark?Icon::Sun:Icon::Moon);screen.compactButton(setupX,8,toolWidth,"SETUP",false,!mutating,false,Icon::Cog);
         screen.rect(28,55,1224,1,Theme::line);
-        const char* tabNames[]={"Catalog","Local","On MPC","History"};const char* tabViews[]={"catalog","local","installed","history"};const Icon tabIcons[]={Icon::Grid,Icon::Folder,Icon::Check,Icon::History};for(int i=0;i<4;++i)screen.button(tabs.left(i),65,tabs.right(i)-tabs.left(i),tabNames[i],view==tabViews[i],!mutating,tabIcons[i]);screen.button(1007,65,245,"Return to MPC",false,!mutating,Icon::Return);screen.themeButton(themeX,65,themeWidth,dark,!mutating);
+        const char* tabNames[]={"Catalog","Local","On MPC","History"};const char* tabViews[]={"catalog","local","installed","history"};const Icon tabIcons[]={Icon::Grid,Icon::Folder,Icon::Check,Icon::History};for(int i=0;i<4;++i)screen.button(tabs.left(i),65,tabRight(i)-tabs.left(i),tabNames[i],view==tabViews[i],!mutating,tabIcons[i]);
+        if(!confirming){const auto& options=browseOptions[view];screen.compactButton(filterX,65,toolWidth,"FILTER",browsePanel==BrowsePanel::Filter,!mutating&&listReady,!options.kind.empty()||options.updatesOnly||options.compatibleOnly,Icon::None,58);screen.compactButton(sortX,65,toolWidth,"SORT",browsePanel==BrowsePanel::Sort,!mutating&&listReady,options.order!=pmu::BrowseOptions::Order::Name,Icon::None,58);screen.compactButton(findX,65,toolWidth,"FIND",!options.query.empty()||browsePanel==BrowsePanel::Find,!mutating&&listReady,false,Icon::None,58);}
         if(confirming){
             screen.box(28,143,1224,442,Theme::panel);
             screen.text(52,205,operation+" "+items[selected].value("name","Plugin")+"?",Theme::ink,34,1150);
@@ -502,10 +509,10 @@ static int app(int argc,char**argv) {
         if((flow||responsive)&&welcome&&!mutating&&!failed&&!completed&&!returning&&!progressFading){bool lettering=false;for(int y=690;y<714&&!lettering;++y)for(int x=46;x<1000;++x)if(screen.pixels[y*1280+x]!=Theme::lcd){lettering=true;break;}if(!lettering)throw std::runtime_error("Welcome identity is missing");}
         if(browserTest&&!welcome&&!sdView&&!confirming&&browsePanel!=BrowsePanel::Image){
             auto checkMarker=[&](int x,int width,BrowsePanel panel,bool configured){
-                const bool entered=browsePanel==panel;const auto fill=screen.pixels[12*1280+x+2],tab=screen.pixels[12*1280+x+width-3];
+                const bool entered=browsePanel==panel;const auto fill=screen.pixels[69*1280+x+2],tab=screen.pixels[69*1280+x+width-3];
                 if(fill!=(entered?Theme::red:Theme::panel)||tab!=((entered||configured)?Theme::red:Theme::panel))throw std::runtime_error("Browse toolbar active marker or entered fill is incorrect");
             };
-            const auto& options=browseOptions[view];checkMarker(filterX,themeWidth,BrowsePanel::Filter,!options.kind.empty()||options.updatesOnly||options.compatibleOnly);checkMarker(sortX,108,BrowsePanel::Sort,options.order!=pmu::BrowseOptions::Order::Name);
+            const auto& options=browseOptions[view];checkMarker(filterX,toolWidth,BrowsePanel::Filter,!options.kind.empty()||options.updatesOnly||options.compatibleOnly);checkMarker(sortX,toolWidth,BrowsePanel::Sort,options.order!=pmu::BrowseOptions::Order::Name);
         }
         screen.present();++presents;dirty=false;
         if(!startupPresented){
@@ -520,19 +527,19 @@ static int app(int argc,char**argv) {
             if(welcome){click(150,634);}
             else switch(step++){
                 case 0:{auto sample=manager.catalog.at(0);browserPackageId=sample.at("id").get<std::string>();sample["screenshot"]="https://example.invalid/browser.png";manager.catalog.clear();for(int i=0;i<12;++i){auto item=sample;item["id"]="browser-item-"+std::to_string(i);item["skin"]="browser-item-"+std::to_string(i);char uid[9];std::snprintf(uid,sizeof uid,"%08x",i+4096);item["uid"]=uid;item["name"]="Browser item "+std::to_string(i);item["kind"]=i%2?"effect":"instrument";manager.catalog.push_back(item);}sample["name"]="ZZZ "+sample.at("name").get<std::string>();manager.catalog.push_back(sample);reload();break;}
-                case 1:if(items.size()!=13)throw std::runtime_error("Catalog fixture did not load");if(screen.pixels[8*1280+filterX]!=Theme::line||screen.pixels[8*1280+filterX+themeWidth-1]!=Theme::line||screen.pixels[8*1280+filterX+themeWidth]!=Theme::background)throw std::runtime_error("FILTER width differs from Theme");capture("catalog-browser.bmp");click(100,215);click(browseToolsX+54,28);break;
+                case 1:if(items.size()!=13)throw std::runtime_error("Catalog fixture did not load");for(int left:{filterX,sortX,findX})if(screen.pixels[65*1280+left]!=Theme::line||screen.pixels[65*1280+left+toolWidth-1]!=Theme::line||screen.pixels[65*1280+left+toolWidth]!=Theme::background||screen.pixels[8*1280+left+toolWidth-1]!=Theme::line)throw std::runtime_error("Equal browsing widths or paired header right edges changed");if(sortX-filterX-toolWidth!=12||findX-sortX-toolWidth!=12||tabRight(3)+12!=filterX||tabs.right(2)!=632||tabs.left(3)!=648)throw std::runtime_error("Toolbar gaps or card-aligned navigation changed");capture("catalog-browser.bmp");click(100,215);click(findX+toolWidth/2,90);break;
                 case 2:{if(browsePanel!=BrowsePanel::Find||selected!=-1||!selectionStatus.empty())throw std::runtime_error("Find did not open");capture("search-browser.bmp");click(580,534);SDL_Event event{};event.type=SDL_TEXTINPUT;std::snprintf(event.text.text,sizeof event.text.text,"ROWSER");SDL_PushEvent(&event);break;}
                 case 3:if(queryDraft!="BROWSER")throw std::runtime_error("Touch keyboard or text input failed");click(1100,630);break;
                 case 4:if(browsePanel!=BrowsePanel::None||browseOptions[view].query!="BROWSER"||items.size()<12)throw std::runtime_error("Search results did not apply");click(320,90);break;
                 case 5:if(view!="local"||!browseOptions[view].query.empty())throw std::runtime_error("Search leaked between tabs");click(110,90);break;
-                case 6:if(view!="catalog"||browseOptions[view].query!="BROWSER")throw std::runtime_error("Catalog search was lost on tab return");click(browseToolsX+54,28);break;
+                case 6:if(view!="catalog"||browseOptions[view].query!="BROWSER")throw std::runtime_error("Catalog search was lost on tab return");click(findX+toolWidth/2,90);break;
                 case 7:click(300,630);click(1100,630);break;
-                case 8:if(items.size()!=13)throw std::runtime_error("Search clearing failed");click(browseToolsX+174,28);break;
+                case 8:if(items.size()!=13)throw std::runtime_error("Search clearing failed");click(filterX+toolWidth/2,90);break;
                 case 9:if(browsePanel!=BrowsePanel::Filter)throw std::runtime_error("Filter did not open");click(1040,190);break;
-                case 10:if(browseOptions[view].kind!="effect"||std::any_of(items.begin(),items.end(),[](const Json& item){return item.value("kind","")!="effect";}))throw std::runtime_error("Type filter failed");capture("filter-browser.bmp");click(110,630);click(100,215);click(browseToolsX+294,28);break;
+                case 10:if(browseOptions[view].kind!="effect"||std::any_of(items.begin(),items.end(),[](const Json& item){return item.value("kind","")!="effect";}))throw std::runtime_error("Type filter failed");capture("filter-browser.bmp");click(110,630);click(100,215);click(sortX+toolWidth/2,90);break;
                 case 11:if(browsePanel!=BrowsePanel::Sort||selected!=-1||!selectionStatus.empty())throw std::runtime_error("Sort did not open");capture("sort-browser.bmp");click(300,270);break;
-                case 12:if(browseOptions[view].order!=pmu::BrowseOptions::Order::Reverse||browsePanel!=BrowsePanel::None)throw std::runtime_error("Reverse sorting failed");click(browseToolsX+174,28);break;
-                case 13:click(1100,630);click(110,630);click(browseToolsX+294,28);break;
+                case 12:if(browseOptions[view].order!=pmu::BrowseOptions::Order::Reverse||browsePanel!=BrowsePanel::None)throw std::runtime_error("Reverse sorting failed");click(filterX+toolWidth/2,90);break;
+                case 13:click(1100,630);click(110,630);click(sortX+toolWidth/2,90);break;
                 case 14:click(300,190);break;
                 case 15:if(items.size()!=13||browseOptions[view].order!=pmu::BrowseOptions::Order::Name)throw std::runtime_error("Cleared catalog did not return");click(100,215);click(300,630);click(300,630);break;
                 case 16:if(page!=2||selected!=-1||!selectionStatus.empty())throw std::runtime_error("Paging retained an old card selection or description");click(551,231);break;
@@ -544,9 +551,9 @@ static int app(int argc,char**argv) {
                 case 22:if(page!=2||browsePanel!=BrowsePanel::None)throw std::runtime_error("Details return lost the catalog page");click(100,175);click(400,240);click(1100,630);break;
                 case 23:if(!confirming)throw std::runtime_error("Details install did not request confirmation");capture("confirmation-browser.bmp");click(180,630);break;
                 case 24:if(!completed||failed||page!=2||pages[view]!=2||browsePanel!=BrowsePanel::None||browserRefreshFrames<1)throw std::runtime_error("Installation did not retain the catalog page throughout refresh: "+status);capture("after-install-browser.bmp");click(setupX+60,28);break;
-                case 25:if(!sdView)throw std::runtime_error("SETUP did not open");click(1100,548);break;
-                case 26:if(!rememberBrowse||manager.browsePreferences().at("remember")!=true)throw std::runtime_error("Filter retention checkbox did not persist");capture("setup-retention-browser.bmp");click(1100,548);break;
-                case 27:if(rememberBrowse||manager.browsePreferences().at("remember")!=false)throw std::runtime_error("Filter retention could not be disabled");click(110,630);break;
+                case 25:if(!sdView)throw std::runtime_error("SETUP did not open");click(700,535);break;
+                case 26:if(!rememberBrowse||manager.browsePreferences().at("remember")!=true)throw std::runtime_error("Filter retention checkbox did not persist");capture("setup-retention-browser.bmp");click(700,535);break;
+                case 27:if(rememberBrowse||manager.browsePreferences().at("remember")!=false)throw std::runtime_error("Filter retention could not be disabled");click(1140,630);break;
                 case 28:if(!completed||failed||!fs::is_regular_file(manager.usb/"diagnostics/manager-report.txt"))throw std::runtime_error("SETUP report did not save: "+status);capture("setup-report-browser.bmp");click(110,90);break;
                 case 29:{if(sdView||page!=2)throw std::runtime_error("SETUP return lost the browser page");wheel(-1);break;}
                 case 30:{if(selected!=12||page!=2){--step;break;}wheel(0);break;}
@@ -554,7 +561,14 @@ static int app(int argc,char**argv) {
                 case 32:if(browsePanel!=BrowsePanel::Image){--step;break;}click(1220,36);break;
                 case 33:click(110,630);break;
                 case 34:wheel(-7);break;
-                case 35:if(selected!=5||page!=0){--step;break;}std::fprintf(stderr,"PASS: catalog navigation, filter-retention checkbox save/clear, stable post-install pages, manual report and wheel card/details/image navigation\n");click(1100,90);break;
+                case 35:if(selected!=5||page!=0){--step;break;}click(setupX+60,28);break;
+                case 36:if(!sdView||hideNext)throw std::runtime_error("Welcome checkbox initial state changed");click(300,535);break;
+                case 37:if(!hideNext||!manager.hideWelcome())throw std::runtime_error("Grouped welcome checkbox did not save hidden state");click(300,535);break;
+                case 38:if(hideNext||manager.hideWelcome()||!idleReturn||!manager.idleReturn())throw std::runtime_error("Grouped checkbox restoration failed");click(1100,535);break;
+                case 39:if(idleReturn||manager.idleReturn())throw std::runtime_error("Idle return checkbox did not persist off");lastTouch=SDL_GetTicks()-300001;break;
+                case 40:if(quitting)throw std::runtime_error("Disabled idle return closed the manager");capture("setup-idle-disabled-browser.bmp");click(1100,535);break;
+                case 41:if(!idleReturn||!manager.idleReturn())throw std::runtime_error("Idle return checkbox did not persist on");lastTouch=SDL_GetTicks()-300001;break;
+                case 42:if(!quitting)throw std::runtime_error("Enabled idle return did not close the manager");std::fprintf(stderr,"PASS: catalog navigation, grouped welcome/filter/auto-quit controls, report, wheel navigation and persistent idle return off/on\n");break;
                 default:break;
             }
         }
@@ -588,12 +602,12 @@ static int app(int argc,char**argv) {
                 case 21: if(page!=1)throw std::runtime_error("Next page failed");click(300,630);break;
                 case 22: if(page!=2)throw std::runtime_error("Third page failed");click(320,90);break;
                 case 23: if(view!="local"||page!=0)throw std::runtime_error("Independent tab page failed");click(100,90);break;
-                case 24: if(view!="catalog"||page!=2)throw std::runtime_error("Tab page restoration failed");click(930,90);break;
-                case 25: if(page!=2||dark==startingDark||manager.darkTheme()!=dark)throw std::runtime_error("Theme changed page or failed persistence");click(930,90);break;
+                case 24: if(view!="catalog"||page!=2)throw std::runtime_error("Tab page restoration failed");clickTheme();break;
+                case 25: if(page!=2||dark==startingDark||manager.darkTheme()!=dark)throw std::runtime_error("Theme changed page or failed persistence");clickTheme();break;
                 case 26: if(page!=2||dark!=startingDark||manager.darkTheme()!=dark)throw std::runtime_error("Theme restoration changed page");manager.catalog.resize(7);pages[view]=page;reload();break;
                 case 27: if(page!=1)throw std::runtime_error("Shrinking list page clamp failed");click(tabs.left(2)+60,90);break;
                 case 28: if(view!="installed"||page!=0)throw std::runtime_error("Empty tab page failed");click(100,90);break;
-                case 29: if(view!="catalog"||page!=1)throw std::runtime_error("Clamped page restoration failed");std::fprintf(stderr,"PASS: welcome checkbox persistence and dismissal, touchscreen flow, per-tab page restoration, independent tab pages, theme page preservation and shrinking-list clamp\n");click(1100,90);break;
+                case 29: if(view!="catalog"||page!=1)throw std::runtime_error("Clamped page restoration failed");std::fprintf(stderr,"PASS: welcome checkbox persistence and dismissal, touchscreen flow, per-tab page restoration, independent tab pages, theme page preservation and shrinking-list clamp\n");clickReturn();break;
                 default: throw std::runtime_error("Return to MPC failed");
             }
         }
@@ -606,43 +620,43 @@ static int app(int argc,char**argv) {
             else if(step==4){if(!pluginLocationState.value("automatic",false)||manager.synths.filename()!="Synths")throw std::runtime_error("Automatic button failed");click(120,90);++step;}
             else if(step==6&&pluginLocationState.contains("browser")){capture("plugin-location-folders.bmp");click(180,385);step=7;}
             else if(step==7&&pluginLocationState.contains("browser")){if(fs::path(pluginLocationState.at("browser").at("path").get<std::string>()).filename()!="My plugins")throw std::runtime_error("Folder browser did not enter the selected folder");capture("plugin-location-custom.bmp");click(1090,630);step=3;}
-            else if(step==5&&!pluginLocationView){capture("plugin-manager-setup.bmp");click(1100,90);step=100;std::fprintf(stderr,"PASS: plugin installation location labels, automatic/manual selection and no selection-time writes\n");}
+            else if(step==5&&!pluginLocationView){capture("plugin-manager-setup.bmp");clickReturn();step=100;std::fprintf(stderr,"PASS: plugin installation location labels, automatic/manual selection and no selection-time writes\n");}
         }
 #ifdef MPC_MANAGER_SD_FIXTURE
         if(sdTest&&(std::string(testMode)=="sd-updates"||std::string(testMode)=="sd-update-error")&&busy&&work==Work::ManagerCheck){
             if(step==2){probeStarted=SDL_GetTicks();click(120,90);++step;}
             else if(step==3){if(sdView||!welcome||SDL_GetTicks()-probeStarted>250)throw std::runtime_error("Update lookup blocked Back navigation");click(1070,475);++step;}
-            else if(step==4){if(!sdView||sdConfirm||mutating||SDL_GetTicks()-probeStarted>250)throw std::runtime_error("Update lookup blocked SETUP reopening");click(1070,534);click(1070,350);++step;}
+            else if(step==4){if(!sdView||sdConfirm||mutating||SDL_GetTicks()-probeStarted>250)throw std::runtime_error("Update lookup blocked SETUP reopening");click(300,535);click(1070,350);++step;}
         }
         if(sdTest&&!busy&&!returning){
             const std::string mode=testMode;
-            auto checkTheme=[&](){const int left=themeX,right=995;const int x=left+16,y=82;const auto sample=screen.pixels[(y+12)*1280+x+7];if(sample!=(dark?Theme::panel:Theme::ink))throw std::runtime_error("Theme target glyph is not sun for Light or moon for Dark");if(manager.darkTheme()!=dark)throw std::runtime_error("Theme preference did not persist");if((themeWidth>=181||screen.pixels[65*1280+left-1]!=Theme::background||screen.pixels[65*1280+left]!=Theme::line||screen.pixels[65*1280+right-1]!=Theme::line))throw std::runtime_error("Theme button bounds are not fitted to the labels");};
+            auto checkTheme=[&](){const bool top=!welcome&&!sdView;const int left=top?catalogThemeX:themeX,right=top?catalogThemeX+toolWidth:995;const int x=left+(top?12:16),y=top?16:82;const auto sample=screen.pixels[(y+12)*1280+x+7];if(sample!=(dark?Theme::panel:Theme::ink))throw std::runtime_error("Theme target glyph is not sun for Light or moon for Dark");if(manager.darkTheme()!=dark)throw std::runtime_error("Theme preference did not persist");if((themeWidth>=181||screen.pixels[(top?8:65)*1280+left-1]!=Theme::background||screen.pixels[(top?8:65)*1280+left]!=Theme::line||screen.pixels[(top?8:65)*1280+right-1]!=Theme::line))throw std::runtime_error("Theme button bounds are not fitted to the labels");};
             if(mode=="sd-unavailable"){
                 if(step==0&&listReady){if(sdAvailable)throw std::runtime_error("SD fixture capability unexpectedly available");capture("welcome.bmp");click(1070,475);++step;}
-                else if(step==1){if(!sdView||sdFromWelcome!=true||!sdReady)throw std::runtime_error("SETUP unavailable without the SD helper");capture("setup-unavailable.bmp");click(1070,184);click(1070,534);++step;}
+                else if(step==1){if(!sdView||sdFromWelcome!=true||!sdReady)throw std::runtime_error("SETUP unavailable without the SD helper");capture("setup-unavailable.bmp");click(1070,184);click(300,535);++step;}
                 else if(step==2){if(sdPicker||sdConfirm||!hideNext||!manager.hideWelcome())throw std::runtime_error("Unsupported SD install or inverse welcome preference failed");click(1070,350);++step;}
                 else if(step==3){if(!managerCheckFailed||managerUpdateStatus.rfind("Check failed: ",0)!=0||!managerUpdate.empty())throw std::runtime_error("Manager check unavailable without SD support");click(120,90);++step;}
                 else if(step==4&&welcome){click(150,634);++step;}
                 else if(step==5&&!welcome){click(1150,28);++step;}
                 else if(step==6){if(!sdView||sdFromWelcome||!managerCheckFailed||managerUpdateStatus.rfind("Check failed: ",0)!=0)throw std::runtime_error("Catalog SETUP lost update result");click(120,90);++step;}
-                else if(step==7&&!sdView){if(welcome)throw std::runtime_error("SETUP Back changed catalog origin");std::fprintf(stderr,"PASS: shared SETUP without SD support, disabled SD install, inverse preference and persistent failed manager check\n");click(1100,90);step=100;}
+                else if(step==7&&!sdView){if(welcome)throw std::runtime_error("SETUP Back changed catalog origin");std::fprintf(stderr,"PASS: shared SETUP without SD support, disabled SD install, inverse preference and persistent failed manager check\n");clickReturn();step=100;}
             }else if(mode=="sd-hidden"){
                 if(step==0&&listReady){if(welcome||!hideNext||!manager.hideWelcome())throw std::runtime_error("Saved hidden welcome preference was not loaded");click(1150,28);++step;}
-                else if(step==1&&sdView&&sdReady){if(screen.pixels[534*1280+582]!=Theme::background)throw std::runtime_error("Show on opening checkbox ignored saved hidden preference");capture("setup-hidden.bmp");click(300,548);++step;}
-                else if(step==2){if(hideNext||manager.hideWelcome()||screen.pixels[534*1280+582]!=Theme::red)throw std::runtime_error("Show on opening did not save the inverse preference");click(120,90);++step;}
+                else if(step==1&&sdView&&sdReady){if(screen.pixels[519*1280+402]!=Theme::background)throw std::runtime_error("Show on opening checkbox ignored saved hidden preference");capture("setup-hidden.bmp");click(300,535);++step;}
+                else if(step==2){if(hideNext||manager.hideWelcome()||screen.pixels[519*1280+402]!=Theme::red)throw std::runtime_error("Show on opening did not save the inverse preference");click(120,90);++step;}
                 else if(step==3){if(welcome||sdView)throw std::runtime_error("Preference change unexpectedly switched the current screen");click(1150,28);++step;}
-                else if(step==4&&sdReady){if(hideNext)throw std::runtime_error("Reopening SETUP lost the welcome preference");std::fprintf(stderr,"PASS: saved hidden state and Show on opening inverse persistence across SETUP reopen\n");click(1100,90);step=100;}
+                else if(step==4&&sdReady){if(hideNext)throw std::runtime_error("Reopening SETUP lost the welcome preference");std::fprintf(stderr,"PASS: saved hidden state and Show on opening inverse persistence across SETUP reopen\n");clickReturn();step=100;}
             }else if(mode=="sd-themes"){
-                if(step==0&&listReady){if(!welcome||dark)throw std::runtime_error("Theme fixture did not start on light welcome");checkTheme();capture("welcome-light.bmp");click(930,90);++step;}
+                if(step==0&&listReady){if(!welcome||dark)throw std::runtime_error("Theme fixture did not start on light welcome");checkTheme();capture("welcome-light.bmp");clickTheme();++step;}
                 else if(step==1){if(!dark)throw std::runtime_error("Welcome theme toggle failed");checkTheme();capture("welcome-dark.bmp");click(1070,475);++step;}
-                else if(step==2&&sdReady){checkTheme();capture("setup-dark.bmp");click(930,90);++step;}
+                else if(step==2&&sdReady){checkTheme();capture("setup-dark.bmp");clickTheme();++step;}
                 else if(step==3){if(dark)throw std::runtime_error("SETUP theme toggle failed");checkTheme();capture("setup-light.bmp");click(120,90);++step;}
                 else if(step==4&&welcome){checkTheme();click(150,634);++step;}
-                else if(step==5&&!welcome){checkTheme();if(setupWidth>=184||screen.pixels[8*1280+setupX-1]!=Theme::background||screen.pixels[8*1280+setupX]!=Theme::line||screen.pixels[8*1280+1251]!=Theme::line)throw std::runtime_error("Catalog SETUP bounds are not fitted to its content");click(setupX-2,28);click(990,90);++step;}
+                else if(step==5&&!welcome){checkTheme();if(setupWidth>=184||screen.pixels[8*1280+setupX-1]!=Theme::background||screen.pixels[8*1280+setupX]!=Theme::line||screen.pixels[8*1280+1251]!=Theme::line)throw std::runtime_error("Catalog SETUP bounds are not fitted to its content");click(setupX-2,28);clickTheme();++step;}
                 else if(step==6){if(!dark||sdView)throw std::runtime_error("Catalog theme toggle or SETUP hitbox failed");checkTheme();capture("catalog-dark.bmp");click(1150,28);++step;}
                 else if(step==7&&sdReady){checkTheme();click(120,90);++step;}
-                else if(step==8&&!sdView){if(welcome)throw std::runtime_error("Theme navigation lost the catalog origin");checkTheme();click(930,90);++step;}
-                else if(step==9){if(dark)throw std::runtime_error("Catalog theme restoration failed");checkTheme();capture("catalog-light.bmp");std::fprintf(stderr,"PASS: sun/Light and moon/Dark target glyphs, theme persistence on welcome, SETUP and catalog\n");click(1100,90);step=100;}
+                else if(step==8&&!sdView){if(welcome)throw std::runtime_error("Theme navigation lost the catalog origin");checkTheme();clickTheme();++step;}
+                else if(step==9){if(dark)throw std::runtime_error("Catalog theme restoration failed");checkTheme();capture("catalog-light.bmp");std::fprintf(stderr,"PASS: sun/Light and moon/Dark target glyphs, theme persistence on welcome, SETUP and catalog\n");clickReturn();step=100;}
             }else if(mode=="sd-updates"||mode=="sd-update-error"){
                 if(step==0&&listReady){click(1070,475);++step;}
                 else if(step==1&&sdReady){if(managerUpdateStatus!="Not checked")throw std::runtime_error("Catalog status leaked into the update result");click(1070,350);click(1070,350);++step;}
@@ -654,7 +668,7 @@ static int app(int argc,char**argv) {
                     updateTestResult=managerUpdateStatus;capture("setup-update-result.bmp");click(120,90);++step;
                 }else if(step==6&&welcome){click(1070,475);++step;}
                 else if(step==7&&sdReady){if(managerUpdateStatus!=updateTestResult)throw std::runtime_error("Reopening SETUP lost the manager check result");idlePresents=presents;probeStarted=SDL_GetTicks();++step;}
-                else if(step==8&&SDL_GetTicks()-probeStarted>=600){if(presents!=idlePresents)throw std::runtime_error("Idle SETUP keeps redrawing");std::fprintf(stderr,"PASS: asynchronous manager check %s, navigation during lookup, duplicate taps, queued preferences, persistent result and idle redraw suspension\n",mode=="sd-update-error"?"failure":"success");click(1100,90);step=100;}
+                else if(step==8&&SDL_GetTicks()-probeStarted>=600){if(presents!=idlePresents)throw std::runtime_error("Idle SETUP keeps redrawing");std::fprintf(stderr,"PASS: asynchronous manager check %s, navigation during lookup, duplicate taps, queued preferences, persistent result and idle redraw suspension\n",mode=="sd-update-error"?"failure":"success");clickReturn();step=100;}
             }else if(mode=="sd-self-update"||mode=="sd-self-update-fail"){
                 const bool expectedFailure=mode=="sd-self-update-fail";
                 if(step==0&&listReady){click(1070,475);++step;}
@@ -662,7 +676,7 @@ static int app(int argc,char**argv) {
                 else if(step==2){if(managerCheckFailed||!managerUpdate.value("update_available",false)||!managerUpdate.value("downloadable",false))throw std::runtime_error("Verified manager update offer unavailable");click(1070,420);++step;}
                 else if(step==3){if(!managerUpdateConfirm||fs::exists(manager.session/"manager-downloads.log"))throw std::runtime_error("Manager update downloaded before confirmation");capture("manager-update-confirm.bmp");click(470,634);++step;}
                 else if(step==4){if(managerUpdateConfirm||fs::exists(manager.session/"manager-downloads.log"))throw std::runtime_error("Cancelled manager update dispatched a download");click(1070,420);++step;}
-                else if(step==5){if(!managerUpdateConfirm)throw std::runtime_error("Manager update confirmation did not reopen");click(180,634);click(180,634);click(120,90);click(1100,90);++step;}
+                else if(step==5){if(!managerUpdateConfirm)throw std::runtime_error("Manager update confirmation did not reopen");click(180,634);click(180,634);click(120,90);clickReturn();++step;}
                 else if(step==6&&!progressFading){
                     if(!sdView||managerUpdateConfirm||mutating||returning||managerUpdated==expectedFailure||completed==expectedFailure||failed!=expectedFailure||managerCheckFailed!=expectedFailure)throw std::runtime_error("Confirmed manager update finished in an unsafe UI state");
                     if(expectedFailure&&managerUpdateStatus.find("Injected manager update publication failure")==std::string::npos)throw std::runtime_error("Manager apply failure was not shown");
@@ -670,7 +684,7 @@ static int app(int argc,char**argv) {
                     updateTestResult=managerUpdateStatus;capture("manager-update-result.bmp");if(!expectedFailure){click(1070,350);click(1070,420);}++step;
                 }else if(step==7){if(managerCheckPending||managerUpdateConfirm||managerUpdateStatus!=updateTestResult)throw std::runtime_error("Successful manager update allowed a repeated install or check");click(120,90);++step;}
                 else if(step==8&&welcome){click(1070,475);++step;}
-                else if(step==9&&sdReady){if(managerUpdateStatus!=updateTestResult||managerUpdated==expectedFailure)throw std::runtime_error("SETUP reopen lost manager update outcome");std::fprintf(stderr,"PASS: confirmed manager download/apply %s, cancellation, blocked repeat/navigation taps and retained next-open state\n",expectedFailure?"rollback failure report":"success");click(1100,90);step=100;}
+                else if(step==9&&sdReady){if(managerUpdateStatus!=updateTestResult||managerUpdated==expectedFailure)throw std::runtime_error("SETUP reopen lost manager update outcome");std::fprintf(stderr,"PASS: confirmed manager download/apply %s, cancellation, blocked repeat/navigation taps and retained next-open state\n",expectedFailure?"rollback failure report":"success");clickReturn();step=100;}
             }else if(mode=="sd-empty"){
                 if(step==0&&listReady){if(!sdAvailable)throw std::runtime_error("SD fixture capability absent");click(1070,475);++step;}
                 else if(step==1&&sdView&&sdReady){if(!sdCards.empty()||!sdSelected.empty())throw std::runtime_error("Empty SD list selected a destination");click(1070,184);++step;}
@@ -680,55 +694,55 @@ static int app(int argc,char**argv) {
                 else if(step==5&&welcome){click(150,634);++step;}
                 else if(step==6&&!welcome){click(1150,28);++step;}
                 else if(step==7&&sdView&&sdReady){click(120,90);++step;}
-                else if(step==8&&!sdView){if(welcome)throw std::runtime_error("SETUP Back changed its originating page");std::fprintf(stderr,"PASS: empty SD list, disabled install and welcome/catalog Back\n");click(1100,90);step=100;}
+                else if(step==8&&!sdView){if(welcome)throw std::runtime_error("SETUP Back changed its originating page");std::fprintf(stderr,"PASS: empty SD list, disabled install and welcome/catalog Back\n");clickReturn();step=100;}
             }else if(mode=="sd-cancel"||mode=="sd-install"){
                 if(step==0&&listReady){if(!sdAvailable)throw std::runtime_error("SD fixture capability absent");click(1070,475);++step;}
                 else if(step==1&&sdView&&sdReady){if(sdCards.empty()||!sdSelected.empty()||sdState.value("configured",false))throw std::runtime_error("SD selection was not explicit");click(1070,184);++step;}
                 else if(step==2){if(!sdPicker)throw std::runtime_error("SD picker did not open");capture("sd-cards.bmp");click(150,220);++step;}
                 else if(step==3){if(sdSelected!=sdCards[0].at("uuid").get<std::string>()||sdConfirm)throw std::runtime_error("SD card selection failed");click(1100,630);++step;}
-                else if(step==4){if(!sdConfirm)throw std::runtime_error("SD confirmation absent");capture("sd-confirm.bmp");if(mode=="sd-cancel")click(470,634);else{click(180,634);click(180,634);click(1100,90);click(120,90);}++step;}
-                else if(step==5){if(returning||sdConfirm||!sdView)throw std::runtime_error("SD mutation/navigation state failed");if(mode=="sd-cancel"){if(sdState.value("configured",false))throw std::runtime_error("Cancelled SD selection installed manager");click(300,90);++step;}else{float value;{std::lock_guard<std::mutex> lock(progressMutex);value=progressValue;}if(!completed||failed||sdPicker||!sdState.value("installed",false)||sdState.value("uuid","")!=sdSelected||value!=1)throw std::runtime_error("SD installation did not complete safely");capture("sd-installed.bmp");std::fprintf(stderr,"PASS: explicit SD selection, confirmation, installation progress and blocked repeat/navigation taps\n");click(1100,90);step=100;}}
+                else if(step==4){if(!sdConfirm)throw std::runtime_error("SD confirmation absent");capture("sd-confirm.bmp");if(mode=="sd-cancel")click(470,634);else{click(180,634);click(180,634);clickReturn();click(120,90);}++step;}
+                else if(step==5){if(returning||sdConfirm||!sdView)throw std::runtime_error("SD mutation/navigation state failed");if(mode=="sd-cancel"){if(sdState.value("configured",false))throw std::runtime_error("Cancelled SD selection installed manager");click(300,90);++step;}else{float value;{std::lock_guard<std::mutex> lock(progressMutex);value=progressValue;}if(!completed||failed||sdPicker||!sdState.value("installed",false)||sdState.value("uuid","")!=sdSelected||value!=1)throw std::runtime_error("SD installation did not complete safely");capture("sd-installed.bmp");std::fprintf(stderr,"PASS: explicit SD selection, confirmation, installation progress and blocked repeat/navigation taps\n");clickReturn();step=100;}}
                 else if(step==6&&sdReady){if(sdState.value("configured",false)||!sdSelected.empty())throw std::runtime_error("Cancelled SD install changed persistent state");click(120,90);++step;}
                 else if(step==7){if(sdPicker||!sdView)throw std::runtime_error("Cancelled SD picker Back did not restore SETUP");click(120,90);++step;}
-                else if(step==8&&welcome){std::fprintf(stderr,"PASS: SD selection cancellation and refresh preserve installation state\n");click(1100,90);step=100;}
+                else if(step==8&&welcome){std::fprintf(stderr,"PASS: SD selection cancellation and refresh preserve installation state\n");clickReturn();step=100;}
             }else if(mode=="sd-remove"||mode=="sd-remove-current"){
                 if(step==0&&listReady){click(1070,475);++step;}
                 else if(step==1&&sdView&&sdReady){if(!sdState.value("configured",false)||!sdState.value("can_remove",false))throw std::runtime_error("SD removal fixture unavailable");if(mode=="sd-remove-current"){if(!sourceOnSd)throw std::runtime_error("Current SD source not identified");click(1070,185);step=10;}else{click(1070,254);++step;}}
                 else if(step==10){if(sdConfirm||mutating||work==Work::SdInstall)throw std::runtime_error("SD session permitted copying the manager onto itself");std::fprintf(stderr,"PASS: SD session ignores its disabled copy button while retaining uninstall\n");capture("sd-copy-disabled.bmp");click(1070,254);step=2;}
                 else if(step==2){if(!sdConfirm||sdOperation!="Remove")throw std::runtime_error("SD removal confirmation absent");capture("sd-remove-confirm.bmp");click(470,634);++step;}
                 else if(step==3){if(sdConfirm||!sdState.value("configured",false))throw std::runtime_error("Cancelled SD removal changed state");click(1070,254);++step;}
-                else if(step==4){click(180,634);click(180,634);click(1100,90);step=mode=="sd-remove-current"?99:5;}
+                else if(step==4){click(180,634);click(180,634);clickReturn();step=mode=="sd-remove-current"?99:5;}
                 else if(step==99)throw std::runtime_error("Current SD removal failed to return to MPC");
-                else if(step==5){if(returning||failed||!completed||sdState.value("configured",false))throw std::runtime_error("SD removal did not complete safely");std::fprintf(stderr,"PASS: SD removal confirmation, cancellation and completion\n");click(1100,90);step=100;}
+                else if(step==5){if(returning||failed||!completed||sdState.value("configured",false))throw std::runtime_error("SD removal did not complete safely");std::fprintf(stderr,"PASS: SD removal confirmation, cancellation and completion\n");clickReturn();step=100;}
             }else throw std::runtime_error("Unknown SD UI fixture mode");
         }
 #endif
         if(direct){
             const std::string mode=testMode;const bool disabled=mode=="welcome-current"||mode=="welcome-newer"||mode=="welcome-unknown";
             if(step==0&&welcome&&!busy&&listReady){if(disabled&&(welcomeOffer.value("label","")!="Installed"||welcomeOffer.value("allowed",true)))throw std::runtime_error("Installed welcome button was not disabled");if(mode=="welcome-update"&&welcomeOffer.value("label","")!="Update")throw std::runtime_error("Welcome update label was not shown");click(1070,565);step=disabled?4:1;}
-            else if(step==1&&busy&&mutating&&work==Work::Offer){click(1070,565);click(1070,565);click(150,634);click(1100,90);++step;}
-            else if(step==4&&!busy&&listReady){if(!welcome||returning||offerPending||mutating||failed||completed)throw std::runtime_error("Disabled welcome button dispatched work");std::fprintf(stderr,"PASS: installed welcome button ignores taps\n");click(1100,90);step=3;}
-            else if(step==2&&!busy&&!progressFading&&listReady){const bool expectedFailure=std::string(testMode)=="welcome-install-fail";if(!welcome||returning||confirming||failed!=expectedFailure||completed==expectedFailure||(!expectedFailure&&(welcomeOffer.value("label","")!="Installed"||welcomeOffer.value("allowed",true))))throw std::runtime_error("Direct welcome installation did not finish safely");std::fprintf(stderr,"PASS: direct welcome installation %s; repeat taps and navigation blocked during work\n",expectedFailure?"refused":"completed");click(1100,90);++step;}
+            else if(step==1&&busy&&mutating&&work==Work::Offer){click(1070,565);click(1070,565);click(150,634);clickReturn();++step;}
+            else if(step==4&&!busy&&listReady){if(!welcome||returning||offerPending||mutating||failed||completed)throw std::runtime_error("Disabled welcome button dispatched work");std::fprintf(stderr,"PASS: installed welcome button ignores taps\n");clickReturn();step=3;}
+            else if(step==2&&!busy&&!progressFading&&listReady){const bool expectedFailure=std::string(testMode)=="welcome-install-fail";if(!welcome||returning||confirming||failed!=expectedFailure||completed==expectedFailure||(!expectedFailure&&(welcomeOffer.value("label","")!="Installed"||welcomeOffer.value("allowed",true))))throw std::runtime_error("Direct welcome installation did not finish safely");std::fprintf(stderr,"PASS: direct welcome installation %s; repeat taps and navigation blocked during work\n",expectedFailure?"refused":"completed");clickReturn();++step;}
         }
         if(responsive){
             const Uint32 now=SDL_GetTicks();
             if(step==0&&!busy&&listReady){click(1070,565);click(1150,634);click(150,634);probeStarted=now;++step;}
-            else if(step==1){if(welcome||!hideNext||offerPending||status.find("Checking the catalog-selected")!=std::string::npos||now-probeStarted>250)throw std::runtime_error("Welcome input stalled or optional lookup was not cancelled");click(930,90);++step;}
+            else if(step==1){if(welcome||!hideNext||offerPending||status.find("Checking the catalog-selected")!=std::string::npos||now-probeStarted>250)throw std::runtime_error("Welcome input stalled or optional lookup was not cancelled");clickTheme();++step;}
             else if(step==2&&!busy&&listReady){if(!manager.hideWelcome()||manager.darkTheme()==startingDark)throw std::runtime_error("Queued preferences failed");click(320,90);click(320,90);click(320,90);probeStarted=now;++step;}
             else if(step==3){if(view!="local"||!busy||work!=Work::List)throw std::runtime_error("Local background read did not start");click(tabs.left(3)+60,90);++step;}
-            else if(step==4){if(view!="history"||now-probeStarted>250)throw std::runtime_error("Navigation blocked on local ZIP read");click(100,90);click(930,90);++step;}
+            else if(step==4){if(view!="history"||now-probeStarted>250)throw std::runtime_error("Navigation blocked on local ZIP read");click(100,90);clickTheme();++step;}
             else if(step==5){if(view!="catalog"||dark!=startingDark||!busy||activeView!="local"||now-probeStarted>250)throw std::runtime_error("Latest tab or theme input was dropped: view="+view+", active="+activeView+", busy="+std::to_string(busy)+", elapsed="+std::to_string(now-probeStarted));click(950,630);++step;}
             else if(step==6&&!busy&&listReady){if(view!="catalog"||manager.darkTheme()!=startingDark||items.empty()||items[0].at("id")!=manager.catalog[0].at("id"))throw std::runtime_error("Stale background list replaced the selected tab");const auto sample=manager.catalog.at(0);manager.catalog.clear();for(int i=0;i<13;++i){auto item=sample;item["id"]="ui-probe-"+std::to_string(i);item["name"]="UI probe "+std::to_string(i);manager.catalog.push_back(item);}reload();++step;}
-            else if(step==7&&!busy&&listReady){click(100,215);click(950,630);click(930,90);probeStarted=now;++step;}
+            else if(step==7&&!busy&&listReady){click(100,215);click(950,630);clickTheme();probeStarted=now;++step;}
             else if(step==8){if(!confirming||!busy||work!=Work::Preferences)throw std::runtime_error("Delayed preference-save probe did not start");click(180,634);click(470,634);click(100,215);++step;}
             else if(step==9){if(confirming||selected!=0||!busy||work!=Work::Preferences)throw std::runtime_error("Cancel or card tap dropped during preference save");click(300,630);++step;}
             else if(step==10){if(page!=1||selected!=-1||!busy||work!=Work::Preferences)throw std::runtime_error("Next page tap dropped during preference save");click(100,215);++step;}
             else if(step==11){if(selected!=6||!busy||work!=Work::Preferences)throw std::runtime_error("Second-page card tap dropped during preference save");click(100,630);++step;}
             else if(step==12){if(page!=0||selected!=-1||!busy||work!=Work::Preferences)throw std::runtime_error("Previous page tap dropped during preference save");std::fprintf(stderr,"PASS: card, Next, Previous and Cancel accepted during preference save; disabled Confirm retained (%u ms)\n",now-probeStarted);++step;}
-            else if(step==13&&!busy){click(930,90);++step;}
+            else if(step==13&&!busy){clickTheme();++step;}
             else if(step==14&&!busy){if(manager.darkTheme()!=startingDark)throw std::runtime_error("Theme restoration failed");idlePresents=presents;probeStarted=now;++step;}
             else if(step==15&&now-probeStarted>=600){if(presents!=idlePresents)throw std::runtime_error("Idle manager keeps redrawing");click(320,90);++step;}
-            else if(step==16&&busy&&work==Work::List){click(1100,90);++step;}
+            else if(step==16&&busy&&work==Work::List){clickReturn();++step;}
             else if(step==17){if(!returning)throw std::runtime_error("Return input was dropped during a read");++step;}
         }
         SDL_Event event;
@@ -795,9 +809,10 @@ static int app(int argc,char**argv) {
                     continue;
                 }
                 if(!sdPicker){
-                    if(y>=605&&y<663&&x>=28&&x<248&&!busy&&!diagnosticsPending){diagnosticsPending=true;failed=completed=false;status="Preparing diagnostic report...";continue;}
-                    if(y>=522&&y<573&&x>=52&&x<608){hideNext=!hideNext;hidePending=true;failed=false;continue;}
-                    if(y>=522&&y<573&&x>=672&&x<1228){rememberBrowse=!rememberBrowse;requestedBrowse=pmu::encodeBrowseSettings(browseOptions);browsePending=true;failed=false;continue;}
+                    if(y>=605&&y<663&&x>=1032&&x<1252&&!busy&&!diagnosticsPending){diagnosticsPending=true;failed=completed=false;status="Preparing diagnostic report...";continue;}
+                    if(y>=501&&y<559&&x>=852&&x<1252){idleReturn=!idleReturn;idlePending=true;failed=false;continue;}
+                    if(y>=501&&y<559&&x>=28&&x<428){hideNext=!hideNext;hidePending=true;failed=false;continue;}
+                    if(y>=501&&y<559&&x>=440&&x<840){rememberBrowse=!rememberBrowse;requestedBrowse=pmu::encodeBrowseSettings(browseOptions);browsePending=true;failed=false;continue;}
                     if(y>=321&&y<379&&x>=918&&x<1228&&!managerUpdated&&!managerCheckPending&&!(busy&&work==Work::ManagerCheck)){managerCheckPending=true;managerCheckFailed=false;managerUpdateStatus="Checking GitHub Releases...";continue;}
                     if(y>=391&&y<449&&x>=918&&x<1228&&!busy&&!managerCheckPending&&!managerUpdated&&managerUpdate.value("update_available",false)&&managerUpdate.value("downloadable",false)){managerUpdateConfirm=true;continue;}
                 }
@@ -823,8 +838,9 @@ static int app(int argc,char**argv) {
             }
             if(mutating)continue;
             if(x>=setupX&&x<1252&&y>=8&&y<48){browsePanel=BrowsePanel::None;SDL_StopTextInput();openSd();continue;}
-            if(!confirming&&listReady&&(!busy||work==Work::Preferences)&&y>=8&&y<48&&x>=browseToolsX&&x<setupX-12){const int index=x<browseToolsX+108?0:x>=filterX&&x<filterX+themeWidth?1:x>=sortX&&x<sortX+108?2:-1;if(index<0)continue;clearSelection();SDL_StopTextInput();browsePanel=index==0?BrowsePanel::Find:index==1?BrowsePanel::Filter:BrowsePanel::Sort;if(index==0){queryDraft=browseOptions[view].query;SDL_StartTextInput();}continue;}
-            if(y>=65&&y<123){if(x>=themeX&&x<995){dark=!dark;Theme::set(dark);themePending=true;continue;}if(x>=1007){returnToMpc();break;}if(tabs.hit(x)>=0){const char* tabViews[]={"catalog","local","installed","history"};const std::string target=tabViews[tabs.hit(x)];if(target==view&&!failed)continue;pages[view]=page;view=target;reload();completed=false;failed=false;status="Loading plugins...";}continue;}
+            if(y>=8&&y<48){if(x>=catalogReturnX&&x<catalogReturnX+245){returnToMpc();break;}if(x>=catalogThemeX&&x<catalogThemeX+toolWidth){dark=!dark;Theme::set(dark);themePending=true;}continue;}
+            if(!confirming&&listReady&&(!busy||work==Work::Preferences)&&y>=65&&y<123&&x>=filterX){const int index=x<filterX+toolWidth?0:x>=sortX&&x<sortX+toolWidth?1:x>=findX&&x<findX+toolWidth?2:-1;if(index<0)continue;clearSelection();SDL_StopTextInput();browsePanel=index==0?BrowsePanel::Filter:index==1?BrowsePanel::Sort:BrowsePanel::Find;if(index==2){queryDraft=browseOptions[view].query;SDL_StartTextInput();}continue;}
+            if(y>=65&&y<123){const int tab=tabAt(x);if(tab>=0){const char* tabViews[]={"catalog","local","installed","history"};const std::string target=tabViews[tab];if(target==view&&!failed)continue;pages[view]=page;view=target;reload();completed=false;failed=false;status="Loading plugins...";}continue;}
             if(!listReady||(busy&&work!=Work::Preferences))continue;
             if(confirming) {
                 if(y>=605&&y<663&&x>=380&&x<600){confirming=false;continue;}
@@ -859,6 +875,7 @@ static int app(int argc,char**argv) {
 #ifdef MPC_MANAGER_SD_FIXTURE
     if(sdTest&&std::string(testMode)=="sd-remove-current"){if(step!=99||failed||!returning||!sdSourceRemoval||status!="Returning to MPC...")throw std::runtime_error("Current SD removal was mistaken for USB removal");std::fprintf(stderr,"PASS: current SD source removal returns to MPC without a USB removal error\n");step=100;}
 #endif
+    if(browserTest&&step!=43)throw std::runtime_error("Catalog and idle-return test did not finish");
     if(pluginLocationTest&&step!=100)throw std::runtime_error("Plugin location UI test did not finish");
     if(sdTest&&step!=100)throw std::runtime_error("SD UI test did not finish");
     if(direct&&step!=3)throw std::runtime_error("Direct installation test did not finish");

@@ -14,7 +14,7 @@ def main():
     parser.add_argument("package", type=Path, help="Your trusted ARMv7 OS 3 plugin ZIP")
     parser.add_argument("backend_test", type=Path)
     parser.add_argument("log", type=Path)
-    parser.add_argument("--ui-mode", choices=("browser", "browser-dark", "browser-touch"))
+    parser.add_argument("--ui-mode", choices=("browser", "browser-dark", "browser-touch", "flow", "touch-flow"))
     parser.add_argument("--font", type=Path)
     parser.add_argument("--panel-input-library", type=Path)
     parser.add_argument("--full-backend", action="store_true")

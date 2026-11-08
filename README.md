@@ -97,7 +97,7 @@ Wait for MPC to finish reopening; **do not turn off your device during this tran
 | **Come back whenever you need** | Shows the two-second **Shift + Menu** shortcut. Keep the source drive inserted. |
 | **Plugin Manager on SD → Setup** | Opens SD installation, welcome preferences and manager updates. |
 | **Or install "OpenMPC Plugin Manager VST" instead** | Offers an optional manager that runs on an MPC plugin track. |
-| **Hide message** | Skips this welcome screen on later openings from this source. Restore it in **SETUP → Show on opening**. |
+| **Hide message** | Skips this welcome screen on later openings from this source. Restore it in **SETUP → Show welcome message**. |
 | **Browse plugins** | Opens the catalog without leaving the manager. |
 | **Return to MPC** | Closes the manager and restarts the MPC application. |
 | **Sun / moon** | Switches between light and dark themes. The label names the theme you will switch to. |
@@ -136,8 +136,8 @@ The same interface is used for both sources; each source keeps its own preferenc
 
 - **Plugin Manager installation:** **Install manager** copies the USB manager onto SD, creating or replacing the SD copy. The button is disabled when running from that SD copy. **Uninstall manager** removes the SD application.
 - **Plugin Manager updates:** choose **Check for updates** to check GitHub Releases. If a supported newer release is available, **Install update** opens a confirmation before downloading and installing it.
-- **Welcome message:** enable **Show on opening** to restore the welcome screen for this source.
-- **Filters and sorting:** enable **Remember on opening** to keep each tab's filters and sorting after closing the manager. Disable it to clear the saved choices.
+- **Show welcome message:** enable this checkbox to restore the welcome screen for this source.
+- **Remember filters and sorting:** enable this checkbox to keep each tab's filters and sorting after closing the manager. Disable it to clear the saved choices.
 - **Save report:** saves `diagnostics/manager-report.txt` on the manager's drive. Open it on your computer, review it, and attach it when reporting a problem. It contains build, storage and operation status; settings contents, addresses, drive labels and raw logs are excluded.
 
 An accepted release updates the manager you opened, together with its helper, while preserving plugins, history, preferences and local ZIPs.<br>
@@ -198,7 +198,7 @@ History helps identify previous installations after wiping or changing a device;
 
 Theme and welcome-message preferences stay on the source USB or SD card.<br>
 Each tab remembers its page and search only while the manager is open.<br>
-Filters and sorting also stay between openings when **SETUP → Filters and sorting → Remember on opening** is enabled.<br>
+Filters and sorting also stay between openings when **SETUP → Remember filters and sorting** is enabled.<br>
 The catalog and downloaded packages are kept temporarily in RAM and discarded when the manager closes.
 
 ## What Changes on the MPC?
@@ -216,7 +216,9 @@ Use packages from publishers you trust.<br>
 Recovery and user-data preservation depend on each package's scripts.<br>
 Removal requires the matching installation record or local package.
 
-After five idle minutes, the manager returns to MPC.<br>
+By default, the manager returns to MPC after five idle minutes.<br>
+Turn off **SETUP → Auto quit manager** to keep it open until you choose **Return to MPC**.<br>
+Your choice is remembered on the USB or SD card.<br>
 An unexpected exit triggers an immediate application restart.<br>
 USB removal during installation can interrupt the operation.<br>
 Follow the MPC's own drive-removal instructions.
@@ -254,7 +256,7 @@ When a usable location appears, select it to continue.
 - **No first-use prompt on 3.10:** import `Plugin Manager helper.xpa` into internal MPC Documents, shut down normally, then switch the MPC back on.
 - **No automatic opening after boot:** this is intentional. Hold **Shift + Menu for two seconds**.
 - **SD copy unavailable:** reinsert the SD card and try the shortcut again, or insert the prepared USB stick. Reinserting SD is silent.
-- **Welcome screen skipped:** open **SETUP** and enable **Show on opening**.
+- **Welcome screen skipped:** open **SETUP** and enable **Show welcome message**.
 - **Screen upside down:** create `display-rotation.txt` containing `180` in the manager’s folder on the USB stick or SD card, then reopen it. `0` or no file keeps the automatic orientation. A first SD installation copies the USB setting. The result log records display details for diagnosis.
 - **Slow return to MAIN:** allow **30 seconds or longer** on Gen 1 hardware. Do not turn off the MPC while its application is restarting.
 - **Remove the 3.10 helper completely:** first uninstall the SD manager if present. In MPC's Browser, remove only `MPC Documents/Devices/Plugin Manager helper`, then restart normally. Keep other controller profiles in `Devices`.

@@ -212,7 +212,7 @@ On the legacy USB route:
 4. The supervisor creates a separate `/tmp/mpc-usb-manager.*` opening.
    `launch.sh` stops the MPC application, waits for its exit and runs the SDL
    manager using KMSDRM with the SD target and settings path.
-5. Return to MPC, five idle minutes, or an unexpected manager exit closes that
+5. Return to MPC, five idle minutes when enabled, or an unexpected manager exit closes that
    opening, removes its RAM data and starts the MPC application again.
 
 The 3.10 path uses `src/startup/plugin_manager.lua`, `entry.c`, `hotplug.cpp` and `bootstrap.sh` to validate and prepare the runtime before handing it to the same supervisor and `launch.sh`.
@@ -628,7 +628,7 @@ When the manager cannot open, use the existing launch-result files below instead
 Catalog search/filter/sort is handled by [src/catalog_view.hpp](src/catalog_view.hpp) against the already loaded list.
 Keyboard taps do not trigger downloads or filesystem rescans.
 Browsing state is separate for each tab; post-install refresh preserves the page and clamps it if the list shrinks.
-**SETUP → Filters and sorting → Remember on opening** optionally saves type, update/compatibility filters and sort order in the source drive's existing `manager-preferences.json`.
+**SETUP → Remember filters and sorting** optionally saves type, update/compatibility filters and sort order in the source drive's existing `manager-preferences.json`.
 Disabling it clears the saved choices without changing the current view.
 Search text and page numbers remain session-only.
 One card tap selects it; a second tap anywhere on the same card within 450 ms opens details.
@@ -644,7 +644,9 @@ Startup permits at most twenty one-second probes because the previous MPC panel 
 A mismatched session reply never authorizes activation; no LED commands are sent.
 Unknown panel identities receive no activation command.
 The keepalive timer and both MIDI handles close before the launcher resumes MPC and its normal panel initialization.
-Echo replies generate no navigation events and do not extend the five-minute idle limit.
+Echo replies generate no navigation events and do not extend the five-minute idle limit when enabled.
+**SETUP → Auto quit manager** saves the `idle_return` boolean in `manager-preferences.json`, defaulting to true for new or existing installations.
+Its asynchronous preference write completes before a requested return to MPC; disabling it does not change crash recovery.
 Only wheel CC 100 and press note 111 are mapped; other panel controls cannot start manager actions.
 The offline runner tests MIDI framing, wheel direction/press handling, startup retries, native-session handover, the panel watchdog and repeated reader shutdown using an isolated ALSA substitute.
 Paging, reloading and changing search/filter/sort criteria clear the selection and its description without clearing operation results.

@@ -12,8 +12,8 @@ namespace pmu {
 struct CatalogTabs {
     static constexpr int gap=12;
     int end;
-    int left(int index)const{return 28+(end-28-3*gap)*index/4+index*gap;}
-    int right(int index)const{return 28+(end-28-3*gap)*(index+1)/4+index*gap;}
+    int left(int index)const{return index==3?648:28+(end-28-3*gap)*index/4+index*gap;}
+    int right(int index)const{return index==2?632:28+(end-28-3*gap)*(index+1)/4+index*gap;}
     int hit(int x)const{for(int i=0;i<4;++i)if(x>=left(i)&&x<right(i))return i;return -1;}
 };
 inline int wheelCard(int selected,int page,int count,int delta){

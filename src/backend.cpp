@@ -514,13 +514,15 @@ static Json preferences(const fs::path& usb) {
     const auto path=usb/"manager-preferences.json";
     if(!fs::exists(path))return {{"schema",1},{"dark_theme",false},{"hide_welcome",false}};
     const auto value=Json::parse(read(path));
-    require(value.value("schema",0)==1&&value.at("dark_theme").is_boolean()&&(!value.contains("hide_welcome")||value.at("hide_welcome").is_boolean()),"Invalid saved preferences");
+    require(value.value("schema",0)==1&&value.at("dark_theme").is_boolean()&&(!value.contains("hide_welcome")||value.at("hide_welcome").is_boolean())&&(!value.contains("idle_return")||value.at("idle_return").is_boolean()),"Invalid saved preferences");
     return value;
 }
 bool Manager::darkTheme() {return preferences(usb).at("dark_theme").get<bool>();}
 void Manager::setDarkTheme(bool dark) {auto value=preferences(usb);value["dark_theme"]=dark;atomicSave(usb/"manager-preferences.json",value.dump(2)+"\n");}
 bool Manager::hideWelcome() {return preferences(usb).value("hide_welcome",false);}
 void Manager::setHideWelcome(bool hidden) {auto value=preferences(usb);value["hide_welcome"]=hidden;atomicSave(usb/"manager-preferences.json",value.dump(2)+"\n");}
+bool Manager::idleReturn() {return preferences(usb).value("idle_return",true);}
+void Manager::setIdleReturn(bool enabled) {auto value=preferences(usb);value["idle_return"]=enabled;atomicSave(usb/"manager-preferences.json",value.dump(2)+"\n");}
 Json Manager::browsePreferences(){
     const auto value=preferences(usb);const bool remember=value.value("remember_filters_sort",false);auto settings=Json::object();
     if(remember){settings=value.value("filters_sort",Json::object());pmu::decodeBrowseSettings(settings);}

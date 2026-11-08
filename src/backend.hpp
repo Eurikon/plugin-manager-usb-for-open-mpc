@@ -41,6 +41,8 @@ struct Manager {
     void remember(const Json& item, bool installed);
     bool hideWelcome();
     void setHideWelcome(bool hidden);
+    bool idleReturn();
+    void setIdleReturn(bool enabled);
     Json browsePreferences();
     void setBrowsePreferences(bool remember,const Json& settings);
     bool darkTheme();

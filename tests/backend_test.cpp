@@ -305,7 +305,7 @@ int main(int argc,char** argv){try{
     if(argc==2&&std::string(argv[1])=="--plugin-recovery"){
         manager.openCatalog();const auto item=manager.list("local").at(0);manager.install(item);pluginRecoveryChecks(manager,item);existingLocationChecks(manager,item);diagnosticChecks(manager);check(manager.list("installed").empty(),"successful uninstall still removes plugin after failure recovery");return 0;
     }
-    check(!manager.darkTheme(),"light theme is default without saved preferences");manager.setDarkTheme(true);
+    check(!manager.darkTheme()&&manager.idleReturn(),"light theme and enabled idle return are defaults without saved preferences");manager.setDarkTheme(true);
     Manager reopened(manager.usb,manager.session,manager.synths,manager.settings,"armv7");check(reopened.darkTheme(),"dark theme persists across manager instances");manager.setDarkTheme(false);check(!reopened.darkTheme(),"light theme toggle persists");
     {std::ofstream prefs(manager.usb/"manager-preferences.json");prefs<<"{\"schema\":1,\"dark_theme\":false}";}
     check(!manager.hideWelcome(),"welcome shown by default with legacy theme preferences");manager.setHideWelcome(true);
@@ -317,6 +317,15 @@ int main(int argc,char** argv){try{
     const auto beforeBrowsing=text(manager.usb/"manager-preferences.json");bool invalidBrowsing=false;try{manager.setBrowsePreferences(true,{{"catalog",{{"sort","invalid"}}}});}catch(const std::exception&){invalidBrowsing=true;}check(invalidBrowsing&&text(manager.usb/"manager-preferences.json")==beforeBrowsing,"invalid saved filters cannot alter existing preferences");
     manager.setBrowsePreferences(false,browsing);check(!reopened.browsePreferences().at("remember").get<bool>()&&reopened.browsePreferences().at("views").empty()&&!Json::parse(text(manager.usb/"manager-preferences.json")).contains("filters_sort"),"disabling retention clears saved choices");
     check(reopened.darkTheme()&&reopened.hideWelcome(),"filter retention preserves the other preferences");manager.setDarkTheme(false);manager.setHideWelcome(false);
+    const auto beforeIdle=text(manager.usb/"manager-preferences.json");
+    check(manager.idleReturn(),"idle return stays enabled for existing preferences");manager.setIdleReturn(false);
+    check(!reopened.idleReturn(),"disabled idle return persists across instances");manager.setDarkTheme(true);manager.setHideWelcome(true);manager.setBrowsePreferences(true,browsing);
+    check(!reopened.idleReturn(),"other preference writes preserve disabled idle return");manager.setIdleReturn(true);
+    check(reopened.idleReturn()&&reopened.darkTheme()&&reopened.hideWelcome()&&reopened.browsePreferences().at("views")==browsing,"enabling idle return preserves other preferences");
+    {std::ofstream prefs(manager.usb/"manager-preferences.json");prefs<<"{\"schema\":1,\"dark_theme\":false,\"idle_return\":\"bad\"}";}
+    const auto invalidIdle=text(manager.usb/"manager-preferences.json");bool badIdle=false;try{manager.idleReturn();}catch(const std::exception&){badIdle=true;}
+    check(badIdle&&text(manager.usb/"manager-preferences.json")==invalidIdle,"invalid idle return preference is rejected without modification");
+    {std::ofstream prefs(manager.usb/"manager-preferences.json");prefs<<beforeIdle;}
     {std::ofstream prefs(manager.usb/"manager-preferences.json");prefs<<"{\"schema\":1,\"dark_theme\":false,\"hide_welcome\":\"bad\"}";}
     bool badPreference=false;try{manager.hideWelcome();}catch(const std::exception&){badPreference=true;}check(badPreference,"invalid welcome preference rejected");fs::remove(manager.usb/"manager-preferences.json");
     manager.openCatalog();check(manager.catalog.size()==1,"catalog stable plugin parsed");
