@@ -1,6 +1,6 @@
 # Plugin Manager USB for OPEN MPC
 
-[![Download installer](https://img.shields.io/badge/Download-1.4.2-brightgreen?logo=github)](https://github.com/Eurikon/plugin-manager-usb-for-open-mpc/releases/download/v1.4.2/plugin-manager-usb-v1.4.2.zip)
+[![Download installer](https://img.shields.io/badge/Download-1.4.3-brightgreen?logo=github)](https://github.com/Eurikon/plugin-manager-usb-for-open-mpc/releases/download/v1.4.3/plugin-manager-usb-v1.4.3.zip)
 [![Latest release](https://img.shields.io/github/v/release/Eurikon/plugin-manager-usb-for-open-mpc?logo=github&label=Release)](https://github.com/Eurikon/plugin-manager-usb-for-open-mpc/releases/latest)
 [![Changelog](https://img.shields.io/badge/Changelog-History-blue?logo=github)](CHANGELOG.md)
 [![User guide](https://img.shields.io/badge/Guide-Website-blue?logo=githubpages)](https://eurikon.github.io/plugin-manager-usb-for-open-mpc/guide.html)
@@ -178,6 +178,7 @@ A red right-edge marker shows active filter or sort settings; the button fills r
 Double-tap anywhere on a plugin card for package details, available/installed versions and the action's installation folder.<br>
 Double-tap the image in those details for a larger view; close it with **X**.<br>
 On MPC Live II, rotate the jogwheel to select cards, press to open details, then press again to open the highlighted image.<br>
+The wheel can take around ten seconds to become ready after the manager opens.<br>
 **Back** restores the list, and installing a plugin returns to the same catalog page.
 
 The top-right version belongs to the catalog release, local ZIP, on-device installation or saved history entry shown in that tab.<br>

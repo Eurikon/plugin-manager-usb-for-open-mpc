@@ -636,13 +636,17 @@ The jogwheel rotates through cards across pages; pressing opens details, and pre
 `src/panel_input.hpp` reads only the detected private hardware MIDI port while the manager is open, waits for input events and closes before MPC resumes.
 The existing shortcut observer remains unchanged.
 The validated Live II USB identity is matched through the detected ALSA card’s sysfs device.
-Its stock runtime activation command keeps wheel input available after MPC closes; no LED commands are sent.
 Configuration uses public output substream 0 on that card/device; wheel events use the detected private input.
 The reader opens these separately, matching stock MPC’s USB traffic.
+Input polling is armed before the stock identity request and tagged echo probe; activation follows a matching reply.
+The session repeats the probe every four seconds to keep the panel awake, and reapplies activation when its reply requests reinitialization.
+Startup permits at most twenty one-second probes because the previous MPC panel session can take about ten seconds to expire.
+A mismatched session reply never authorizes activation; no LED commands are sent.
 Unknown panel identities receive no activation command.
-Both MIDI handles close before the launcher resumes MPC and its normal panel initialization.
+The keepalive timer and both MIDI handles close before the launcher resumes MPC and its normal panel initialization.
+Echo replies generate no navigation events and do not extend the five-minute idle limit.
 Only wheel CC 100 and press note 111 are mapped; other panel controls cannot start manager actions.
-The offline runner tests MIDI framing, wheel direction/press handling and repeated reader shutdown using an isolated ALSA substitute.
+The offline runner tests MIDI framing, wheel direction/press handling, startup retries, native-session handover, the panel watchdog and repeated reader shutdown using an isolated ALSA substitute.
 Paging, reloading and changing search/filter/sort criteria clear the selection and its description without clearing operation results.
 
 | Evidence or error | Check |

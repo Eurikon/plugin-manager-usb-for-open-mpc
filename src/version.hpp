@@ -1,5 +1,5 @@
 #pragma once
-#define MPC_MANAGER_VERSION "1.4.2"
+#define MPC_MANAGER_VERSION "1.4.3"
 #ifndef MPC_MANAGER_DEVELOPMENT
 #define MPC_MANAGER_DEVELOPMENT 1
 #endif

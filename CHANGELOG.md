@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.4.3 — 08-11-2026
+
+- Fix MPC Live II jogwheel input stopping after a few seconds; rotation and pressing now remain active while panel lights stay off.
+- Wait for the previous MPC panel session to finish before activating wheel input, without blocking the touchscreen.
+- Add sustained-input, panel-handover and repeated-opening regression checks.
+
 ## 1.4.2 — 08-11-2026
 
 - Add optional filter and sort retention in **SETUP → Filters and sorting → Remember on opening**.
