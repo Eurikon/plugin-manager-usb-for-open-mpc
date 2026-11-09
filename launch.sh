@@ -34,6 +34,8 @@ systemctl stop "$service"
 i=0
 while pidof MPC >/dev/null && [ "$i" -lt 30 ]; do sleep 1; i=$((i+1)); done
 if pidof MPC >/dev/null; then echo 'MPC did not stop'; exit 1; fi
+mkdir -p "$work/cache/tmp"
+export TMPDIR="$work/cache/tmp"
 export SDL_VIDEODRIVER=kmsdrm
 export SDL_KMSDRM_REQUIRE_DRM_MASTER=1
 export SDL_TOUCH_MOUSE_EVENTS=0

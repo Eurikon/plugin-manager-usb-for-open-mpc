@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.4.4 — 09-11-2026
+
+- Prevent native MPC filmstrip images accumulating on internal storage across application restarts; use a verified RAM cache and clear inactive images when MPC stops.
+- Keep cache redirection confined to the image folder, preserving drive identities used by helpers and automatic updates.
+- Fix catalog thumbnail flickering after viewing enlarged images. Keep card-sized copies in RAM and reduce older enlarged saved images to thumbnails before removing any catalog pictures.
+- Add download-size and ROM badges to plugin cards, with an original-ROM requirement in details where applicable.
+- Add the saved **Auto quit manager** checkbox and group the three welcome, filter/sort and idle preferences in SETUP.
+- Refine the catalog toolbar, button spacing and card alignment, and refresh the guide for the revised screens.
+
 ## 1.4.3 — 08-11-2026
 
 - Fix MPC Live II jogwheel input stopping after a few seconds; rotation and pressing now remain active while panel lights stay off.

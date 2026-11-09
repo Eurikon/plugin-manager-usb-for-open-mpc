@@ -37,6 +37,7 @@ c++ -std=c++17 -O2 -Wall -Wextra -Werror -Isrc tests/plugin_storage_test.cpp "$o
 c++ -std=c++17 -O2 -Wall -Wextra -Werror -Isrc tests/plugin_transaction_test.cpp -ldl -o "$output"/plugin-transaction-test
 c++ -std=c++17 -O2 -Wall -Wextra -Werror -Isrc tests/settings_backups_test.cpp "$output"/checksum.o -pthread -o "$output"/settings-backups-test
 c++ -std=c++17 -O2 -Wall -Wextra -Werror -Isrc tests/catalog_view_test.cpp -o "$output"/catalog-view-test
+c++ -std=c++17 -O2 -Wall -Wextra -Werror -Isrc tests/native_cache_test.cpp -o "$output"/native-cache-test
 c++ -std=c++17 -O2 -Wall -Wextra -Werror -shared -fPIC -Wl,-soname,libasound.so.2 tests/panel_input_fake.cpp -o "$output"/panel-input-fake.so
 c++ -std=c++17 -O2 -Wall -Wextra -Werror -Isrc tests/panel_input_test.cpp -ldl -pthread -o "$output"/panel-input-test
 c++ -std=c++17 -O2 -Wall -Wextra -Werror -Isrc $(pkg-config --cflags libpng) tests/thumbnail_test.cpp "$output"/thumbnail.o "$output"/crypto.o -Wl,-Bstatic -lpng -ljpeg -lz -Wl,-Bdynamic -ldl -pthread -o "$output"/thumbnail-test

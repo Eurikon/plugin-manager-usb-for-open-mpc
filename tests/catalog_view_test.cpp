@@ -6,6 +6,16 @@ static int checks=0;
 static void check(bool value,const char* text){if(!value)throw std::runtime_error(text);++checks;std::cout<<"PASS: "<<text<<'\n';}
 int main(){try{
     using Json=nlohmann::json;
+    check(pmu::requiresUserRom({{"user_files",Json::array({{{"label","Original ROM"}}})}}),"required original files enable the upstream-equivalent ROM badge");
+    check(!pmu::requiresUserRom({{"user_files",Json::array({{{"label","Expansion (OPTIONAL)"}}})}}),"optional-only files do not enable a ROM badge");
+    check(pmu::requiresUserRom({{"user_files",Json::array({{{"label","Expansion (optional)"}},{{"label","Original ROM"}}})}}),"required files still count beside optional files");
+    check(pmu::requiresUserRom({{"requires_user_rom",true}})&&!pmu::requiresUserRom({{"requires_user_rom",false}}),"verified catalog ROM requirements survive display metadata");
+    for(const auto& value:Json::array({nullptr,false,Json::object(),"ROM",Json::array({nullptr,Json::object(),{{"label",false}},{{"label",""}}})}))check(!pmu::requiresUserRom({{"user_files",value}}),"missing or malformed file labels do not invent a ROM requirement");
+    check(pmu::downloadSizeLabel({{"size","4554823"}})=="4.6 MB","catalog ZIP bytes use decimal download units");
+    check(pmu::downloadSizeLabel({{"size","832"}})=="832 B"&&pmu::downloadSizeLabel({{"size","12500"}})=="12.5 KB","small package sizes remain readable");
+    check(pmu::downloadSizeLabel({{"size",uint64_t(1500000000)}})=="1.5 GB","numeric byte counts format without type errors");
+    check(pmu::downloadSizeLabel(Json::object()).empty()&&pmu::downloadSizeLabel({{"size","0"}}).empty(),"missing and unavailable sizes do not display a zero badge");
+    for(const auto& value:Json::array({"-1","12 MB","18446744073709551616",nullptr,false,Json::object(),-1,1.5}))check(pmu::downloadSizeLabel({{"size",value}}).empty(),"invalid size metadata is omitted safely");
     for(const int themeLeft:{850,876,900}){pmu::CatalogTabs tabs{themeLeft-pmu::CatalogTabs::gap};check(tabs.left(0)==28&&tabs.right(3)+12==themeLeft,"tab group meets the theme button with the standard gap");check(tabs.right(2)==28+604&&tabs.left(3)==28+620,"On MPC and History gap matches both plugin card edges");for(int i=0;i<4;++i){check(tabs.hit(tabs.left(i))==i&&tabs.hit(tabs.right(i)-1)==i&&tabs.hit(tabs.right(i))==-1,"tab hit regions exclude button gaps");if(i)check(tabs.left(i)-tabs.right(i-1)==(i==3?16:12),"only the card-aligned tab gap differs from Theme and Return");}}
 
     const std::vector<Json> source={{{"id","a"},{"name","alpha"},{"kind","instrument"},{"summary","Analog bass"},{"author","Example"},{"version","2.0.0"},{"installed_version","1.0.0"},{"update_available",true}},{{"id","z"},{"name","Zulu"},{"kind","effect"},{"summary","Delay"},{"author","Other"},{"blocked_reason","OS 2 only"}},{{"id","b"},{"name","Beta"},{"kind","instrument"},{"available_for_arch",false}}};

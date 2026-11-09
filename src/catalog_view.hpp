@@ -2,6 +2,8 @@
 #include <algorithm>
 #include <cctype>
 #include <cstdint>
+#include <charconv>
+#include <iomanip>
 #include <map>
 #include <nlohmann/json.hpp>
 #include <sstream>
@@ -9,6 +11,30 @@
 #include <vector>
 
 namespace pmu {
+inline bool requiresUserRom(const nlohmann::json& item){
+    const auto known=item.find("requires_user_rom");if(known!=item.end()&&known->is_boolean()&&known->get<bool>())return true;
+    const auto files=item.find("user_files");if(files==item.end()||!files->is_array())return false;
+    for(const auto& file:*files){
+        if(!file.is_object())continue;
+        const auto label=file.find("label");if(label==file.end()||!label->is_string())continue;
+        auto text=label->get<std::string>();if(text.empty())continue;
+        for(char& c:text)if(static_cast<unsigned char>(c)<128)c=char(std::tolower(static_cast<unsigned char>(c)));
+        if(text.find("(optional)")==std::string::npos)return true;
+    }
+    return false;
+}
+inline std::string downloadSizeLabel(const nlohmann::json& item){
+    const auto field=item.find("size");if(field==item.end())return {};
+    std::string text;
+    if(field->is_string())text=field->get<std::string>();
+    else if(field->is_number_unsigned()||field->is_number_integer())text=field->dump();
+    else return {};
+    uint64_t bytes=0;const auto parsed=std::from_chars(text.data(),text.data()+text.size(),bytes);
+    if(parsed.ec!=std::errc()||parsed.ptr!=text.data()+text.size()||!bytes)return {};
+    const char* units[]={"B","KB","MB","GB","TB","PB","EB"};
+    double amount=double(bytes);int unit=0;while(amount>=1000&&unit<6){amount/=1000;++unit;}
+    std::ostringstream label;label<<std::fixed<<std::setprecision(unit?1:0)<<amount<<' '<<units[unit];return label.str();
+}
 struct CatalogTabs {
     static constexpr int gap=12;
     int end;

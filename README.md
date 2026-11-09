@@ -1,6 +1,6 @@
 # Plugin Manager USB for OPEN MPC
 
-[![Download installer](https://img.shields.io/badge/Download-1.4.3-brightgreen?logo=github)](https://github.com/Eurikon/plugin-manager-usb-for-open-mpc/releases/download/v1.4.3/plugin-manager-usb-v1.4.3.zip)
+[![Download installer](https://img.shields.io/badge/Download-1.4.4-brightgreen?logo=github)](https://github.com/Eurikon/plugin-manager-usb-for-open-mpc/releases/download/v1.4.4/plugin-manager-usb-v1.4.4.zip)
 [![Latest release](https://img.shields.io/github/v/release/Eurikon/plugin-manager-usb-for-open-mpc?logo=github&label=Release)](https://github.com/Eurikon/plugin-manager-usb-for-open-mpc/releases/latest)
 [![Changelog](https://img.shields.io/badge/Changelog-History-blue?logo=github)](CHANGELOG.md)
 [![User guide](https://img.shields.io/badge/Guide-Website-blue?logo=githubpages)](https://eurikon.github.io/plugin-manager-usb-for-open-mpc/guide.html)
@@ -138,7 +138,11 @@ The same interface is used for both sources; each source keeps its own preferenc
 - **Plugin Manager updates:** choose **Check for updates** to check GitHub Releases. If a supported newer release is available, **Install update** opens a confirmation before downloading and installing it.
 - **Show welcome message:** enable this checkbox to restore the welcome screen for this source.
 - **Remember filters and sorting:** enable this checkbox to keep each tab's filters and sorting after closing the manager. Disable it to clear the saved choices.
+- **Auto quit manager:** enabled by default. Turn it off to keep the manager open until you choose **Return to MPC**. When enabled, five idle minutes return you to MPC.
 - **Save report:** saves `diagnostics/manager-report.txt` on the manager's drive. Open it on your computer, review it, and attach it when reporting a problem. It contains build, storage and operation status; settings contents, addresses, drive labels and raw logs are excluded.
+
+The three checkboxes work independently, and their choices stay on the USB or SD card you opened.<br>
+Turning off **Auto quit manager** does not change the immediate return after a manager crash.
 
 An accepted release updates the manager you opened, together with its helper, while preserving plugins, history, preferences and local ZIPs.<br>
 Keep its drive connected, return to MPC and reopen the manager to use the update.<br>
@@ -172,20 +176,47 @@ These logs can be read on your computer without SSH.
 | <picture><img src="site/assets/tab-installed.svg" width="16" height="16" alt=""></picture> **On MPC** | See plugins actually present on the device and select available update/removal actions. |
 | <picture><img src="site/assets/tab-history.svg" width="16" height="16" alt=""></picture> **History** | Compare this stick's saved installation record with the current device and available packages. |
 
-**FIND** searches names, authors and descriptions with a touchscreen keyboard or connected keyboard.<br>
-**FILTER** selects a plugin type, compatible packages or available updates; **SORT** orders names or puts updates first.<br>
-A red right-edge marker shows active filter or sort settings; the button fills red while its screen is open.<br>
+Use **Return to MPC**, the sun/moon theme button and **SETUP** at the top right.<br>
+**FILTER**, **SORT** and **FIND** sit beside the four tabs.
+
+### Filter and sort
+
+**FILTER** selects a plugin type, compatible packages or available updates.<br>
+**SORT** orders names or puts updates first.<br>
+A red right-edge marker shows active settings; the button fills red while its screen is open.<br>
+Choose **Back** to leave without clearing the active filters.
+
+![Plugin filters](site/assets/manager-filter.png)
+
+![Plugin sorting](site/assets/manager-sort.png)
+
+### Search
+
+**FIND** searches names, authors and descriptions with the touchscreen keyboard or a connected keyboard.<br>
+Enter your search and choose **Search**.<br>
+**Clear** empties the field; choose **Search** afterward to show the full list again.<br>
+**Cancel** returns without changing the current search.
+
+![Plugin search keyboard](site/assets/manager-find.png)
+
+### Plugin details
+
 Double-tap anywhere on a plugin card for package details, available/installed versions and the action's installation folder.<br>
 Double-tap the image in those details for a larger view; close it with **X**.<br>
 On MPC Live II, rotate the jogwheel to select cards, press to open details, then press again to open the highlighted image.<br>
 The wheel can take around ten seconds to become ready after the manager opens.<br>
 **Back** restores the list, and installing a plugin returns to the same catalog page.
 
+![Plugin details and available actions](site/assets/manager-details.png)
+
+The size rectangle above the plugin type shows the ZIP download size reported by the catalog.<br>
+A **ROM** rectangle beside it marks a requirement for your own original ROM files; the details window also explains this. Optional files alone do not show this badge.<br>
 The top-right version belongs to the catalog release, local ZIP, on-device installation or saved history entry shown in that tab.<br>
 A floppy symbol and version beside the MPC OS badge identify the installed copy; a small light beside the offered version indicates a newer update.<br>
 Thumbnails are saved in `thumbnails/` beside the manager on USB or SD and reused between openings.<br>
 The manager uses the image server's change markers to avoid downloading unchanged pictures again.<br>
 Saved pictures remain available when the image server cannot be reached; the thumbnail cache is limited to 32 MiB.
+When space is needed, older enlarged pictures shrink to thumbnails first, keeping the catalog pictures available.
 
 Uninstall removes the managed plugin and its registration, while keeping its history entry.<br>
 History helps identify previous installations after wiping or changing a device; it does not back up projects or plugin files.
@@ -199,7 +230,9 @@ History helps identify previous installations after wiping or changing a device;
 Theme and welcome-message preferences stay on the source USB or SD card.<br>
 Each tab remembers its page and search only while the manager is open.<br>
 Filters and sorting also stay between openings when **SETUP → Remember filters and sorting** is enabled.<br>
-The catalog and downloaded packages are kept temporarily in RAM and discarded when the manager closes.
+The catalog and downloaded packages are kept temporarily in RAM and discarded when the manager closes.<br>
+MPC's temporary skin-image cache uses RAM while the manager's session is active and is cleared after the MPC application stops.<br>
+Saved plugin thumbnails stay on USB or SD.
 
 ## What Changes on the MPC?
 
@@ -258,6 +291,7 @@ When a usable location appears, select it to continue.
 - **SD copy unavailable:** reinsert the SD card and try the shortcut again, or insert the prepared USB stick. Reinserting SD is silent.
 - **Welcome screen skipped:** open **SETUP** and enable **Show welcome message**.
 - **Screen upside down:** create `display-rotation.txt` containing `180` in the manager’s folder on the USB stick or SD card, then reopen it. `0` or no file keeps the automatic orientation. A first SD installation copies the USB setting. The result log records display details for diagnosis.
+- **Internal storage full after many manager openings on an older version:** shut down MPC normally, then power it on. Akai's boot routine clears its temporary skin-image cache. Do not delete settings or your saved thumbnails.
 - **Slow return to MAIN:** allow **30 seconds or longer** on Gen 1 hardware. Do not turn off the MPC while its application is restarting.
 - **Remove the 3.10 helper completely:** first uninstall the SD manager if present. In MPC's Browser, remove only `MPC Documents/Devices/Plugin Manager helper`, then restart normally. Keep other controller profiles in `Devices`.
 

@@ -1,3 +1,4 @@
+#include "native_cache.hpp"
 #include "shortcut_state.hpp"
 #include <filesystem>
 #include <fstream>
@@ -272,7 +273,8 @@ struct Session {
         require(fs::is_regular_file(usb/".mpc-manager-id"),"USB removed before startup");
         const fs::path pendingState=state.string()+".next."+std::to_string(getpid());writeEnvironment(pendingState,base.string()+'\n'+usb.string()+'\n');if(syscall(SYS_renameat2,AT_FDCWD,pendingState.c_str(),AT_FDCWD,state.c_str(),RENAME_NOREPLACE)!=0){fs::remove(pendingState);throw std::runtime_error("Cannot publish manager session state");}ownsState=true;
         dropin=fs::path("/run/systemd/system")/(service+".service.d")/"99-mpc-usb-shortcut.conf";require(!fs::exists(dropin),"Shortcut drop-in already exists");fs::create_directories(dropin.parent_path());configured=true;
-        {std::ofstream file(dropin);file<<"[Service]\nEnvironmentFile="<<(base/"shortcut.env").string()<<"\n";require(bool(file),"Write shortcut startup setting");}
+        pmu::NativeCache().validate();
+        {std::ofstream file(dropin);file<<"[Service]\nEnvironmentFile="<<(base/"shortcut.env").string()<<"\nExecStopPost=-"<<(base/"shortcut").string()<<" --pmu-native-cache-v1\n";require(bool(file),"Write shortcut startup setting");}
         require(command({"systemctl","daemon-reload"})==0,"Reload MPC service");
         environmentLast();
         if(armOnly)writeEnvironment(base/"ready","READY\n");
@@ -293,4 +295,4 @@ struct Session {
         std::cerr<<"USB shortcut session closing\n";
     }
 };
-int main(int argc,char** argv){try{if(argc==3&&strcmp(argv[1],"--request")==0)return request(argv[2]);if(argc==3&&strcmp(argv[1],"--handoff")==0)return request(argv[2],'H');if(argc==3&&strcmp(argv[1],"--cancel-prepared")==0)return cancelPrepared(argv[2]);if(argc!=5&&(argc!=6||(strcmp(argv[5],"--arm-only")!=0&&strcmp(argv[5],"--resume-only")!=0)))throw std::runtime_error("Usage: shortcut USB RAM_SESSION SERVICE PANEL_PORT [--arm-only|--resume-only]");Session session(argv,argc==6,argc==6&&strcmp(argv[5],"--resume-only")==0);try{session.run();}catch(const std::exception& error){std::cerr<<"Shortcut error: "<<error.what()<<'\n';return 1;}return 0;}catch(const std::exception& error){std::cerr<<"Shortcut error: "<<error.what()<<'\n';return 1;}}
+int main(int argc,char** argv){try{if(argc==2&&strcmp(argv[1],"--pmu-native-cache-v1")==0){require(geteuid()==0,"Root required");require(pmu::nativeMpcStopped(),"MPC must be stopped");pmu::NativeCache::serviceMountNamespace();pmu::NativeCache::requireRam("/tmp");std::cout<<"Removed "<<pmu::NativeCache().prepare()<<" inactive native filmstrip images; RAM cache ready\n";return 0;}if(argc==3&&strcmp(argv[1],"--request")==0)return request(argv[2]);if(argc==3&&strcmp(argv[1],"--handoff")==0)return request(argv[2],'H');if(argc==3&&strcmp(argv[1],"--cancel-prepared")==0)return cancelPrepared(argv[2]);if(argc!=5&&(argc!=6||(strcmp(argv[5],"--arm-only")!=0&&strcmp(argv[5],"--resume-only")!=0)))throw std::runtime_error("Usage: shortcut USB RAM_SESSION SERVICE PANEL_PORT [--arm-only|--resume-only]");Session session(argv,argc==6,argc==6&&strcmp(argv[5],"--resume-only")==0);try{session.run();}catch(const std::exception& error){std::cerr<<"Shortcut error: "<<error.what()<<'\n';return 1;}return 0;}catch(const std::exception& error){std::cerr<<"Shortcut error: "<<error.what()<<'\n';return 1;}}

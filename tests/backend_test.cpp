@@ -328,7 +328,10 @@ int main(int argc,char** argv){try{
     {std::ofstream prefs(manager.usb/"manager-preferences.json");prefs<<beforeIdle;}
     {std::ofstream prefs(manager.usb/"manager-preferences.json");prefs<<"{\"schema\":1,\"dark_theme\":false,\"hide_welcome\":\"bad\"}";}
     bool badPreference=false;try{manager.hideWelcome();}catch(const std::exception&){badPreference=true;}check(badPreference,"invalid welcome preference rejected");fs::remove(manager.usb/"manager-preferences.json");
-    manager.openCatalog();check(manager.catalog.size()==1,"catalog stable plugin parsed");
+    const auto catalogDetails=fs::path("/tmp/manager-fixtures/catalog.json");const auto originalDetails=text(catalogDetails);auto romDetails=Json::parse(originalDetails);
+    romDetails.at("plugins").at(0).at("versions").at(0)["manifest"]={{"user_files",Json::array({{{"label","Original ROM"}}})}};save(catalogDetails,romDetails.dump());
+    manager.openCatalog();save(catalogDetails,originalDetails);check(manager.catalog.size()==1,"catalog stable plugin parsed");
+    check(manager.catalog.at(0).value("requires_user_rom",false),"ROM requirement comes from the matching catalog release manifest");manager.catalog.at(0)["requires_user_rom"]=false;
     check(manager.catalog[0].value("author","")==primary.value("author",""),"author metadata joins matching version and checksum");
     managerReleaseChecks(manager);
     managerStageChecks(manager);

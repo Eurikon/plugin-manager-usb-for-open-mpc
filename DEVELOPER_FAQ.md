@@ -215,6 +215,18 @@ On the legacy USB route:
 5. Return to MPC, five idle minutes when enabled, or an unexpected manager exit closes that
    opening, removes its RAM data and starts the MPC application again.
 
+`src/native_cache.hpp` redirects only MPC's `/var/tmp/filmstrips` folder to verified tmpfs storage at `/var/volatile/tmp/filmstrips` when the original cache is disk-backed.
+The operation runs in PID 1's mount namespace and leaves other drive mount identities unchanged, so controller helpers and the updater recognise the same source drives.
+It does not add a private mount namespace to MPC or change mount configuration on disk.
+An appended `ExecStopPost` calls the supervisor's `--pmu-native-cache-v1` action after MPC stops, including normal returns, updates and recovery cycles.
+The cleanup checks MPC is absent, uses PID 1's mount namespace to reach any older disk-backed cache, and removes only ordinary root-owned, single-link `temp_<hex>.img` files from the two native filmstrip directories.
+Links, subdirectories and other files are preserved; errors are recorded without blocking MPC service recovery.
+A hardware reboot removes this RAM configuration and cache binding.
+Removing the session configuration stops automatic cleanup; an existing cache-only binding remains RAM-backed until reboot.
+`launch.sh` sets `TMPDIR` to its private RAM session for manager child processes.
+Saved thumbnails remain beside the manager on USB/SD; settings updates and bounded recovery backups remain persistent.
+The stock first application startup after a cold boot precedes this manager configuration; no claim is made to prevent unrelated firmware writes.
+
 The 3.10 path uses `src/startup/plugin_manager.lua`, `entry.c`, `hotplug.cpp` and `bootstrap.sh` to validate and prepare the runtime before handing it to the same supervisor and `launch.sh`.
 The helper build checks its required exported entry points and rejects load-time constructors/destructors.
 
@@ -419,14 +431,21 @@ Saved images appear before background validation; HTTP 304 reuses them without d
 ETag takes precedence over Last-Modified.
 A server providing neither marker requires downloading its image to check for changes.
 Unavailable servers retain the saved picture, while malformed cache entries are replaced after a successful image download and decode.
-The pixel cache in RAM remains capped at 4 MiB; persistent storage is capped at 32 MiB and removes the oldest stored entries when needed.
+The pixel cache in RAM remains capped at 4 MiB; persistent storage is capped at 32 MiB.
+Under storage pressure, older enlarged records are reduced to card-sized records before any card is removed, preserving their URL and HTTP validators.
+An enlarged record that exceeds the storage budget is saved at card size while its full-quality RAM image remains available for viewing.
+Only if card-sized records alone exceed the budget are the oldest cards removed.
 Image downloads are capped at 2 MiB, with decoded images limited to two megapixels and 2048 pixels per side.
 Rendering fits the image inside its frame without overwriting the one-pixel outline.
-The enlarged viewer requests more detailed pixels only when needed, replacing that URL's small cached image within the same RAM and storage budgets.
+Details and the enlarged viewer request more detailed pixels only when needed, replacing that URL's small RAM image within the same memory budget.
+Catalog cards use small RAM copies even when larger images are saved, so a page of previously enlarged pictures cannot repeatedly evict its own visible thumbnails.
+Saved larger pixels are restored for details without another image-body download when the server reports no change, unless cache pressure has reduced that record to card size.
 It uses a version 2 cache record for larger images and continues to read existing version 1 card thumbnails.
 Only managed thumbnail records are pruned; links and unrelated files are preserved.
 USB and SD copies keep separate caches.
 `tests/run_thumbnail_tests.py` covers persistence, changes, offline use, corruption, storage bounds, HTTPS validation, redirects and cancellation on both architectures, including fatal sanitizer runs.
+It also checks that six enlarged saved images remain stable as card thumbnails after page changes and returning from details.
+Storage-pressure tests verify that opening multiple enlarged images preserves existing card records and that every retained card reopens without an image-body download.
 
 An optional `display-rotation.txt` in the active USB/SD manager folder accepts `180` for a picture-and-touch flip or `0` for automatic orientation.
 Reads are bounded to 64 bytes and refuse links and non-regular files.
@@ -626,6 +645,9 @@ The last operation summary is one small RAM-session file; there is no background
 When the manager cannot open, use the existing launch-result files below instead.
 
 Catalog search/filter/sort is handled by [src/catalog_view.hpp](src/catalog_view.hpp) against the already loaded list.
+Card download sizes use the selected catalog asset's byte count.
+The ROM badge follows required, non-optional `manifest.user_files` labels in the matching catalog release, checked against the selected version and asset checksum.
+Local manifests can supply the same requirement; no plugin-name list or ROM guesses are used.
 Keyboard taps do not trigger downloads or filesystem rescans.
 Browsing state is separate for each tab; post-install refresh preserves the page and clamps it if the list shrinks.
 **SETUP → Remember filters and sorting** optionally saves type, update/compatibility filters and sort order in the source drive's existing `manager-preferences.json`.

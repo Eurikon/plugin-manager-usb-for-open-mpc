@@ -79,7 +79,62 @@ static void detailedChecks(const std::vector<unsigned char>& image){
         {ThumbnailCache cache(fetch,root);cache.visible({url},true);until([&]{const auto value=cache.get(url);return value&&value->width>ThumbnailCache::width&&conditional;});}
         check(bodies==2,"Reopening the viewer reuses saved larger pixels with conditional validation");
         conditional=false;
-        {ThumbnailCache cache(fetch,root);cache.visible({url});until([&]{return bool(cache.get(url))&&conditional;});check(cache.get(url)->width>ThumbnailCache::width,"Cards reuse the saved larger image without a second cache file");}
+        {ThumbnailCache cache(fetch,root);cache.visible({url});until([&]{return bool(cache.get(url))&&conditional;});check(cache.get(url)->width<=ThumbnailCache::width,"Cards use a small RAM copy of the saved larger image");cache.visible({url},true);until([&]{return cache.get(url)&&cache.get(url)->width>ThumbnailCache::width;});check(bodies==2,"Opening details restores saved larger pixels without downloading another image");}
+        fs::remove_all(root);
+    }catch(...){fs::remove_all(root);throw;}
+}
+static void retainedCardChecks(){
+    namespace fs=std::filesystem;
+    char pattern[]="/tmp/manager-retained-cards.XXXXXX";const auto made=mkdtemp(pattern);if(!made)throw std::runtime_error("Cannot create thumbnail retention fixture");const fs::path root=made;
+    const auto image=png(1280,800);const std::string etag="\"retained\"";std::vector<std::string> urls;
+    std::atomic<int> bodies{0},validations{0};
+    auto fetch=[&](const ThumbnailCache::Request& request,const auto&){if(request.etag==etag){++validations;return ThumbnailCache::Response{{},etag,{},true};}++bodies;return ThumbnailCache::Response{image,etag};};
+    const auto file=[&](const std::string& url){return root/("pmu-"+pmu::sha256Text(url)+".thumb");};
+    const auto content=[](const fs::path& path){std::ifstream input(path,std::ios::binary);return std::string(std::istreambuf_iterator<char>(input),{});};
+    try{
+        {ThumbnailCache cache(fetch,root,4*1024*1024);for(int i=0;i<12;++i){urls.push_back("https://example.com/retained-"+std::to_string(i)+".png");cache.visible({urls.back()});until([&]{return bool(cache.get(urls.back()));});}}
+        std::map<std::string,std::string> original;for(const auto& url:urls)original[url]=content(file(url));
+        for(int i=0;i<6;++i){
+            const auto url="https://example.com/enlarged-"+std::to_string(i)+".png";urls.push_back(url);
+            {ThumbnailCache cache(fetch,root,4*1024*1024);cache.visible({url},true);until([&]{const auto value=cache.get(url);return value&&value->width>ThumbnailCache::width;});}
+            uint64_t bytes=0;for(const auto& entry:fs::directory_iterator(root))bytes+=entry.file_size();
+            check(bytes<=4*1024*1024,"Enlarged previews remain within the persistent cache budget");
+            check(std::all_of(original.begin(),original.end(),[&](const auto& item){return content(file(item.first))==item.second;}),"Opening enlarged previews preserves existing card records byte for byte");
+            check(std::all_of(urls.begin(),urls.end(),[&](const auto& key){return fs::is_regular_file(file(key));}),"Older enlarged previews shrink to cards instead of losing catalog artwork");
+        }
+        const auto downloaded=bodies.load();validations=0;
+        {ThumbnailCache cache(fetch,root,4*1024*1024);for(size_t i=0;i<urls.size();++i){cache.visible({urls[i]});until([&]{return bool(cache.get(urls[i]))&&validations>=int(i+1);});}}
+        check(bodies==downloaded&&validations==int(urls.size()),"Every retained card reopens using conditional validation without downloading an image body");
+        {const auto url="https://example.com/limited-preview.png";ThumbnailCache cache(fetch,root/"limited",80*1024);cache.visible({url},true);until([&]{return bool(cache.get(url));});check(cache.get(url)->width>ThumbnailCache::width,"An oversized persistent preview still displays at full quality in RAM");}
+        uint64_t bytes=0;for(const auto& entry:fs::directory_iterator(root/"limited"))bytes+=entry.file_size();check(bytes>0&&bytes<=80*1024,"A preview larger than the disk budget retains a small saved thumbnail");
+        fs::remove_all(root);
+    }catch(...){fs::remove_all(root);throw;}
+}
+static void crowdedPageChecks(){
+    namespace fs=std::filesystem;
+    char pattern[]="/tmp/manager-crowded-images.XXXXXX";const auto made=mkdtemp(pattern);if(!made)throw std::runtime_error("Cannot create crowded thumbnail fixture");const fs::path root=made;
+    const auto image=png(1700,800);const std::string etag="\"large\"";std::vector<std::string> urls;
+    for(int i=0;i<6;++i)urls.push_back("https://example.com/large-"+std::to_string(i)+".png");
+    std::atomic<int> bodies{0},validations{0};
+    auto fetch=[&](const ThumbnailCache::Request& request,const auto&){if(request.etag==etag){++validations;return ThumbnailCache::Response{{},etag,{},true};}++bodies;return ThumbnailCache::Response{image,etag};};
+    auto stored=[&]{std::map<std::string,std::string> result;for(const auto& file:fs::directory_iterator(root)){std::ifstream input(file.path(),std::ios::binary);result[file.path().filename().string()]=std::string(std::istreambuf_iterator<char>(input),{});}return result;};
+    try{
+        {ThumbnailCache cache(fetch,root);for(const auto& url:urls){cache.visible({url},true);until([&]{const auto value=cache.get(url);return value&&value->width>ThumbnailCache::width;});}}
+        const auto before=stored();check(before.size()==6&&bodies==6,"Six enlarged images are saved independently of the RAM limit");
+        validations=0;
+        {ThumbnailCache cache(fetch,root);auto allSmall=[&]{for(const auto& url:urls){const auto value=cache.get(url);if(!value||value->width>ThumbnailCache::width||value->height>ThumbnailCache::height)return false;}return true;};
+            cache.visible(urls);until([&]{return validations==6&&allSmall();});
+            const auto revision=cache.revision();std::this_thread::sleep_for(std::chrono::milliseconds(150));
+            check(allSmall()&&cache.revision()==revision&&validations==6,"A page of enlarged saved images settles without repeated eviction or redraw");
+            check(cache.bytes()<=6*size_t(ThumbnailCache::width)*ThumbnailCache::height*4,"Visible cards retain only card-sized RAM allocations");
+            cache.visible({});cache.visible(urls);std::this_thread::sleep_for(std::chrono::milliseconds(50));
+            check(allSmall()&&cache.revision()==revision,"Returning to the same page preserves all six thumbnails without flicker");
+            cache.visible({urls.front()},true);until([&]{const auto value=cache.get(urls.front());return value&&value->width>ThumbnailCache::width&&validations>=7;});
+            cache.visible(urls);until([&]{return allSmall()&&validations>=13;});
+            const auto settled=cache.revision();std::this_thread::sleep_for(std::chrono::milliseconds(150));
+            check(allSmall()&&cache.revision()==settled&&cache.bytes()<=ThumbnailCache::cacheLimit,"Returning from enlarged artwork restores a stable bounded card cache");
+        }
+        check(bodies==6&&stored()==before,"Card and enlarged views preserve saved full-size images without downloading or rewriting them");
         fs::remove_all(root);
     }catch(...){fs::remove_all(root);throw;}
 }
@@ -116,5 +171,7 @@ int main(int argc,char** argv){try{
     }check(std::chrono::steady_clock::now()-shutdown<std::chrono::seconds(1),"Shutdown cancels worker and joins promptly");
     persistentChecks(landscape,portrait);
     detailedChecks(landscape);
+    crowdedPageChecks();
+    retainedCardChecks();
     std::cout<<"PASS: "<<checks<<" thumbnail URL, PNG/JPEG, bounds, asynchronous navigation, cache and cleanup checks\n";return 0;
 }catch(const std::exception& e){std::cerr<<"FAIL: "<<e.what()<<"\n";return 1;}}

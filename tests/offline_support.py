@@ -18,7 +18,7 @@ def disposable_root(path):
     busybox = root / "usr/bin/busybox.nosuid"
     if not busybox.is_file() or not busybox.resolve().is_relative_to(root):
         raise ValueError("Extracted firmware root must contain usr/bin/busybox.nosuid")
-    for relative in ("tmp", "proc/mounts", "sdcard/Expansions", "run", "media/az01-internal/Settings/MPC/MPC.settings"):
+    for relative in ("tmp", "var/volatile", "proc/mounts", "sdcard/Expansions", "run", "media/az01-internal/Settings/MPC/MPC.settings"):
         if not (root / relative).resolve().is_relative_to(root):
             raise ValueError(f"Fixture path escapes disposable root: {relative}")
     return root
@@ -70,12 +70,14 @@ class ChrootRunner:
     def command(self, script):
         inner = ["chroot", str(self.root), "/usr/bin/busybox.nosuid", "sh", "-c", script]
         if self.direct:
-            return inner
+            return ["unshare", "--mount", "--propagation", "private", "/bin/sh", "-ec",
+                    'mkdir -p "$1/var/volatile"; mount -t tmpfs -o size=16m tmpfs "$1/var/volatile"; mkdir -p "$1/var/volatile/tmp"; exec chroot "$@"',
+                    "fixture", *inner[1:]]
         inner[1] = "/firmware-root"
         return ["docker", "run", "--rm", "--pull", "never", "--name", "mpc-manager-test-" + uuid.uuid4().hex,
                 "--platform", "linux/arm/v7", "--network", "none", "--mount",
-                f"type=bind,src={self.root},dst=/firmware-root", "--entrypoint", "chroot", self.image,
-                *inner[1:]]
+                f"type=bind,src={self.root},dst=/firmware-root", "--tmpfs", "/firmware-root/var/volatile:rw,nosuid,nodev,size=16m", "--entrypoint", "/bin/sh", self.image,
+                "-ec", 'mkdir -p /firmware-root/var/volatile/tmp; exec chroot "$@"', "fixture", *inner[1:]]
 
     def run(self, script):
         return execute(self.command(script), self.timeout)

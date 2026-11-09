@@ -199,6 +199,7 @@ void Manager::openCatalog() {
                             asset=&version.at("assets").at(arch);
                         }
                         if(asset->value("sha256","")!=item.at("sha"))continue;
+                        item["requires_user_rom"]=pmu::requiresUserRom(version.value("manifest",Json::object()));
                         for(const char* field:{"author","summary","license","screenshot"})if(plugin.contains(field)&&plugin.at(field).is_string())item[field]=plugin.at(field);
                     }
                 }

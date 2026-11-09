@@ -30,7 +30,7 @@ static std::string field(const std::string& name){
     assert(false);return {};
 }
 static void configured(const std::string& expected){
-    assert(contents(dropin)=="[Service]\nEnvironmentFile="+(base/"shortcut.env").string()+"\n");
+    assert(contents(dropin)=="[Service]\nEnvironmentFile="+(base/"shortcut.env").string()+"\nExecStopPost=-"+(base/"shortcut").string()+" --pmu-native-cache-v1\n");
     assert(field("LD_PRELOAD")==expected&&field("MPC_PANEL_PORT")=="hw:1,0,1"&&field("MPC_SHORTCUT_SOCKET")=="/tmp/mpc-usb-session.test/shortcut.sock");
     struct stat mode{};assert(stat((base/"shortcut.env").c_str(),&mode)==0&&(mode.st_mode&0777)==0600&&mode.st_uid==0);preserved();
 }

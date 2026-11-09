@@ -41,7 +41,7 @@ ASSETS = {
     "assets/favicon.svg": "assets/favicon.svg", "assets/favicon.ico": "assets/favicon.ico",
     "styles.css": "assets/styles.css", "site.js": "assets/site.js", "assets/manager-catalog.png": "assets/manager-catalog.png",
     **{"assets/tab-{}.svg".format(kind): "assets/tab-{}.svg".format(kind) for kind in ("catalog", "local", "installed", "history")},
-    **{"assets/manager-{}.png".format(page): "assets/manager-{}.png".format(page) for page in ("welcome", "setup", "local", "on-mpc", "history", "sd-removal")},
+    **{"assets/manager-{}.png".format(page): "assets/manager-{}.png".format(page) for page in ("welcome", "setup", "local", "on-mpc", "history", "sd-removal", "filter", "sort", "find", "details")},
 }
 NOTICES = {"LICENSE": "license.txt", "licenses/community-tools.txt": "community-tools-license.txt"}
 

@@ -205,8 +205,22 @@ Thumbnail ThumbnailCache::decode(const std::vector<unsigned char>& encoded,bool 
     }
     return result;
 }
+static std::shared_ptr<const Thumbnail> cardImage(std::shared_ptr<const Thumbnail> source){
+    if(!source||(source->width<=ThumbnailCache::width-2&&source->height<=ThumbnailCache::height-2))return source;
+    auto result=std::make_shared<Thumbnail>();
+    const int width=ThumbnailCache::width-2,height=ThumbnailCache::height-2;
+    if(source->width*height>=source->height*width){result->width=width;result->height=std::max(1,source->height*width/source->width);}else{result->height=height;result->width=std::max(1,source->width*height/source->height);}
+    result->pixels.resize(size_t(result->width)*result->height);
+    for(int y=0;y<result->height;++y)for(int x=0;x<result->width;++x){
+        const int x0=x*source->width/result->width,x1=std::max(x0+1,(x+1)*source->width/result->width),y0=y*source->height/result->height,y1=std::max(y0+1,(y+1)*source->height/result->height);
+        uint64_t alpha=0,red=0,green=0,blue=0;const unsigned count=(x1-x0)*(y1-y0);
+        for(int sy=y0;sy<y1;++sy)for(int sx=x0;sx<x1;++sx){const auto p=source->pixels[size_t(sy)*source->width+sx];const auto a=p>>24;alpha+=a;red+=((p>>16)&255)*a;green+=((p>>8)&255)*a;blue+=(p&255)*a;}
+        result->pixels[size_t(y)*result->width+x]=uint32_t(alpha/count)<<24|(alpha?uint32_t(red/alpha)<<16|uint32_t(green/alpha)<<8|uint32_t(blue/alpha):0);
+    }
+    return result;
+}
 struct ThumbnailCache::Storage {
-    struct Record {std::shared_ptr<const Thumbnail> image;std::string etag,lastModified;};
+    struct Record {std::shared_ptr<const Thumbnail> image;std::string etag,lastModified;std::string url{};};
     struct Fd {int value;explicit Fd(int fd):value(fd){}~Fd(){if(value>=0)close(value);}Fd(const Fd&)=delete;Fd& operator=(const Fd&)=delete;};
     int directory=-1;
     size_t budget;
@@ -232,18 +246,19 @@ struct ThumbnailCache::Storage {
         while(done<value.size()){const auto count=read(input.value,value.data()+done,value.size()-done);if(count<0&&errno==EINTR)continue;if(count<=0)return {};done+=size_t(count);}
         char extra;if(read(input.value,&extra,1)!=0)return {};return value;
     }
-    std::optional<Record> load(const std::string& url){
+    std::optional<Record> loadFile(const std::string& file){
         try{
-            auto value=bytes(name(url));if(!value)return {};const size_t end=value->size()-64;
+            auto value=bytes(file);if(!value)return {};const size_t end=value->size()-64;
             if(pmu::sha256Data(std::string_view(*value).substr(0,end))!=value->substr(end))return {};
             const auto newline=value->find('\n');if(newline==std::string::npos||newline>8192||newline>=end)return {};
             std::istringstream header(value->substr(0,newline));std::string magic,stored,etag,modified;int width=0,height=0;
-            if(!(header>>magic>>width>>height>>std::quoted(stored)>>std::quoted(etag)>>std::quoted(modified))||(magic!="PMU-THUMBNAIL-LE-1"&&magic!="PMU-THUMBNAIL-LE-2")||stored!=url||width<1||width>(magic=="PMU-THUMBNAIL-LE-1"?ThumbnailCache::width:ThumbnailCache::detailWidth)-2||height<1||height>(magic=="PMU-THUMBNAIL-LE-1"?ThumbnailCache::height:ThumbnailCache::detailHeight)-2||!validator(etag)||!validator(modified))return {};
+            if(!(header>>magic>>width>>height>>std::quoted(stored)>>std::quoted(etag)>>std::quoted(modified))||(magic!="PMU-THUMBNAIL-LE-1"&&magic!="PMU-THUMBNAIL-LE-2")||!validUrl(stored)||name(stored)!=file||width<1||width>(magic=="PMU-THUMBNAIL-LE-1"?ThumbnailCache::width:ThumbnailCache::detailWidth)-2||height<1||height>(magic=="PMU-THUMBNAIL-LE-1"?ThumbnailCache::height:ThumbnailCache::detailHeight)-2||!validator(etag)||!validator(modified))return {};
             header>>std::ws;if(!header.eof()||end-newline-1!=size_t(width)*height*4)return {};
             auto image=std::make_shared<Thumbnail>();image->width=width;image->height=height;image->pixels.resize(size_t(width)*height);std::memcpy(image->pixels.data(),value->data()+newline+1,image->pixels.size()*4);
-            return Record{std::move(image),std::move(etag),std::move(modified)};
+            return Record{std::move(image),std::move(etag),std::move(modified),std::move(stored)};
         }catch(const std::exception&){return {};}
     }
+    std::optional<Record> load(const std::string& url){auto record=loadFile(name(url));if(record&&record->url==url)return record;return {};}
     void prune(const std::string& keep){
         struct Entry {std::string name;uint64_t size;time_t modified;};std::vector<Entry> files;uint64_t total=0;
         const int duplicate=openat(directory,".",O_RDONLY|O_DIRECTORY|O_CLOEXEC);if(duplicate<0)return;DIR* stream=fdopendir(duplicate);if(!stream){close(duplicate);return;}
@@ -254,23 +269,33 @@ struct ThumbnailCache::Storage {
             total+=uint64_t(info.st_size);files.push_back({item->d_name,uint64_t(info.st_size),info.st_mtime});if(files.size()>=4096)break;
         }
         closedir(stream);std::sort(files.begin(),files.end(),[](const auto& a,const auto& b){return a.modified<b.modified;});
+        for(auto& file:files){
+            if(total<=budget)break;
+            auto record=loadFile(file.name);if(!record)continue;
+            auto small=cardImage(record->image);if(small==record->image)continue;
+            if(!save(record->url,{std::move(small),record->etag,record->lastModified},false))continue;
+            struct stat info{};
+            if(fstatat(directory,file.name.c_str(),&info,AT_SYMLINK_NOFOLLOW)==0&&S_ISREG(info.st_mode)&&info.st_size>=0&&uint64_t(info.st_size)<file.size){total-=file.size-uint64_t(info.st_size);file.size=uint64_t(info.st_size);}
+        }
         for(const auto& file:files){if(total<=budget)break;if(file.name!=keep&&unlinkat(directory,file.name.c_str(),0)==0)total-=file.size;}
     }
-    void save(const std::string& url,const Record& record){
+    bool save(const std::string& url,const Record& record,bool enforceBudget=true){
         try{
             need(record.image&&validator(record.etag)&&validator(record.lastModified),"Invalid cached thumbnail");
             const bool detailed=record.image->width>ThumbnailCache::width-2||record.image->height>ThumbnailCache::height-2;
             std::ostringstream header;header<<(detailed?"PMU-THUMBNAIL-LE-2 ":"PMU-THUMBNAIL-LE-1 ")<<record.image->width<<' '<<record.image->height<<' '<<std::quoted(url)<<' '<<std::quoted(record.etag)<<' '<<std::quoted(record.lastModified)<<'\n';
-            std::string body=header.str();body.append(reinterpret_cast<const char*>(record.image->pixels.data()),record.image->pixels.size()*4);body+=pmu::sha256Data(body);need(body.size()<=entryLimit&&body.size()<=budget,"Thumbnail storage limit reached");
-            const auto target=name(url);const auto before=bytes(target);if(before&&*before==body)return;
+            std::string body=header.str();body.append(reinterpret_cast<const char*>(record.image->pixels.data()),record.image->pixels.size()*4);body+=pmu::sha256Data(body);
+            if(body.size()>budget&&detailed)return save(url,{cardImage(record.image),record.etag,record.lastModified},enforceBudget);
+            need(body.size()<=entryLimit&&body.size()<=budget,"Thumbnail storage limit reached");
+            const auto target=name(url);const auto before=bytes(target);if(before&&*before==body)return true;
             struct stat info{};if(fstatat(directory,target.c_str(),&info,AT_SYMLINK_NOFOLLOW)==0)need(S_ISREG(info.st_mode)&&info.st_nlink==1,"Linked thumbnail cache entry preserved");else need(errno==ENOENT,"Cannot inspect cached thumbnail");
             const auto temporary="."+target+"."+std::to_string(getpid())+"."+std::to_string(++sequence);
             Fd output(openat(directory,temporary.c_str(),O_WRONLY|O_CREAT|O_EXCL|O_NOFOLLOW|O_CLOEXEC,0600));need(output.value>=0,"Cannot stage cached thumbnail");
             try{
                 size_t done=0;while(done<body.size()){const auto count=write(output.value,body.data()+done,body.size()-done);if(count<0&&errno==EINTR)continue;need(count>0,"Cannot write cached thumbnail");done+=size_t(count);}
-                need(fsync(output.value)==0&&renameat(directory,temporary.c_str(),directory,target.c_str())==0,"Cannot publish cached thumbnail");fsync(directory);prune(target);
+                need(fsync(output.value)==0&&renameat(directory,temporary.c_str(),directory,target.c_str())==0,"Cannot publish cached thumbnail");fsync(directory);if(enforceBudget)prune(target);return true;
             }catch(...){unlinkat(directory,temporary.c_str(),0);throw;}
-        }catch(const std::exception& error){if(!reported){reported=true;std::fprintf(stderr,"Thumbnail was not saved: %s\n",error.what());}}
+        }catch(const std::exception& error){if(!reported){reported=true;std::fprintf(stderr,"Thumbnail was not saved: %s\n",error.what());}return false;}
     }
 };
 
@@ -289,7 +314,8 @@ void ThumbnailCache::run(){
     std::set<std::string> checked;uint64_t checkedGeneration=0;
     auto large=[](const Thumbnail& image){return image.width>width-2||image.height>height-2;};
     auto needs=[&](const std::string& key){const auto found=cache.find(key);return !failed.count(key)&&(found==cache.end()||(!checked.count(key)&&(storage||(wantedDetailed&&!large(*found->second.image)))));};
-    auto publish=[&](const std::string& url,uint64_t epoch,std::shared_ptr<const Thumbnail> image){
+    auto publish=[&](const std::string& url,uint64_t epoch,std::shared_ptr<const Thumbnail> image,bool detailed){
+        if(!detailed)image=cardImage(std::move(image));
         std::lock_guard<std::mutex> lock(mutex);if(stopped||epoch!=generation||std::find(wanted.begin(),wanted.end(),url)==wanted.end())return;
         if(!image){failed.insert(url);changed.fetch_add(1);return;}const size_t size=image->pixels.size()*sizeof(uint32_t);
         const auto existing=cache.find(url);if(existing!=cache.end()){pixelBytes-=existing->second.image->pixels.size()*sizeof(uint32_t);cache.erase(existing);}
@@ -300,18 +326,19 @@ void ThumbnailCache::run(){
         uint64_t epoch;std::vector<std::string> visible;bool detailed;
         {std::unique_lock<std::mutex> lock(mutex);wake.wait(lock,[&]{return stopped||generation!=checkedGeneration||(failed.size()<256&&std::any_of(wanted.begin(),wanted.end(),needs));});if(stopped)return;epoch=generation;visible=wanted;detailed=wantedDetailed;}
         if(epoch!=checkedGeneration){checked.clear();checkedGeneration=epoch;}
-        std::map<std::string,Storage::Record> saved;
-        if(storage)for(const auto& url:visible){
-            bool present;{std::lock_guard<std::mutex> lock(mutex);present=cache.count(url);}
-            if(present&&checked.count(url))continue;
-            if(auto record=storage->load(url)){if(!present)publish(url,epoch,record->image);saved.emplace(url,std::move(*record));}
+        for(const auto& url:visible){
+            std::shared_ptr<const Thumbnail> present;{std::lock_guard<std::mutex> lock(mutex);const auto found=cache.find(url);if(found!=cache.end())present=found->second.image;}
+            if(present&&!detailed&&large(*present))publish(url,epoch,std::move(present),false);
+            else if(storage&&(!present||(detailed&&!large(*present))))if(auto record=storage->load(url)){
+                if(!present||(detailed&&large(*record->image)))publish(url,epoch,std::move(record->image),detailed);
+            }
         }
         std::string url;
         {std::lock_guard<std::mutex> lock(mutex);if(epoch!=generation||visible!=wanted)continue;for(const auto& key:wanted)if(needs(key)){url=key;break;}}
         if(url.empty())continue;
         auto cancelled=[&]{if(stopped)return true;std::lock_guard<std::mutex> lock(mutex);return epoch!=generation||std::find(wanted.begin(),wanted.end(),url)==wanted.end();};
         if(cancelled())continue;
-        const auto found=saved.find(url);const auto* prior=found==saved.end()?nullptr:&found->second;
+        const auto saved=storage?storage->load(url):std::optional<Storage::Record>{};const auto* prior=saved?&*saved:nullptr;
         try{
             const bool upgrade=detailed&&prior&&!large(*prior->image);
             const auto response=fetch({url,prior&&!upgrade?prior->etag:"",prior&&!upgrade?prior->lastModified:""},cancelled);if(cancelled())continue;
@@ -320,8 +347,8 @@ void ThumbnailCache::run(){
             else image=std::make_shared<Thumbnail>(decode(response.data,detailed||(prior&&large(*prior->image))));
             const bool same=prior&&prior->image->width==image->width&&prior->image->height==image->height&&prior->image->pixels==image->pixels;
             if(storage)storage->save(url,{image,response.unchanged&&response.etag.empty()?prior->etag:response.etag,response.unchanged&&response.lastModified.empty()?prior->lastModified:response.lastModified});
-            if(!same)publish(url,epoch,std::move(image));
-        }catch(const std::exception&){if(!cancelled()&&!prior)publish(url,epoch,{});}
+            if(!same)publish(url,epoch,std::move(image),detailed);
+        }catch(const std::exception&){if(!cancelled()&&!prior)publish(url,epoch,{},detailed);}
         if(!cancelled()){if(checked.size()>=1024)checked.clear();checked.insert(url);}
     }}catch(const std::exception&){stopped=true;changed.fetch_add(1);}
 }

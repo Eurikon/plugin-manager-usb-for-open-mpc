@@ -179,7 +179,8 @@ class OfflineRunnerTests(unittest.TestCase):
     def test_direct_mode_does_not_use_nested_docker(self):
         with mock.patch('offline_support.platform.system', return_value='Linux'), mock.patch('offline_support.os.geteuid', return_value=0):
             command = ChrootRunner(self.root, direct=True).command('echo test')
-        self.assertEqual(command[:3], ['chroot', str(self.root), '/usr/bin/busybox.nosuid'])
+        self.assertEqual(command[:3], ['unshare', '--mount', '--propagation'])
+        self.assertEqual(command[-5:-3], [str(self.root), '/usr/bin/busybox.nosuid'])
         self.assertNotIn('docker', build_command('ignored', True))
 
     def test_direct_mode_requires_linux_root(self):
