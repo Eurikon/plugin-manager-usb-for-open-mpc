@@ -63,9 +63,11 @@ The first insertion does not show the older script prompt.<br>
 Import the supplied helper once:
 
 1. In MPC's Browser, open the USB stick and select `Plugin Manager helper.xpa`.
-2. Choose **Load**, select the internal **MPC Documents** folder as the extraction destination, then confirm with **Save**. Do not extract beside the XPA on the USB stick.
-3. Let extraction finish. It creates `Devices/Plugin Manager helper` inside MPC Documents.
-4. Shut down the MPC normally, then switch it back on to activate the helper. Keep the USB inserted; hold **Shift + Menu for two seconds** to open the manager.
+2. Choose **Load**. MPC opens a screen with a **Save** button; here you are choosing where to unpack the helper, not saving a project.
+3. Open **User → MPC Documents** on the MPC's internal storage. If you see another location also called **MPC Documents**, choose the one inside **User**. Do not choose the USB stick or unpack beside the XPA file.
+4. Leave the **Save as / filename** field completely **blank**, then tap **Save**. Do not type a name in this field.
+5. Let extraction finish. It creates `Devices/Plugin Manager helper` inside the selected MPC Documents folder.
+6. Shut down the MPC normally, then switch it back on to activate the helper. Keep the USB inserted; hold **Shift + Menu for two seconds** to open the manager.
 
 The helper is a controller profile, separate from the manager application.<br>
 This one-time helper setup lets you run the manager directly from USB; installing the manager on SD remains optional.<br>
