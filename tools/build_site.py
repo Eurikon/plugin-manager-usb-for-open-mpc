@@ -364,7 +364,7 @@ SCREEN_PAGES = [
 ]
 
 
-def shell(title: str, description: str, current: str, body: str, repository: str, style_version: str, sections: str = "") -> str:
+def shell(title: str, description: str, current: str, body: str, repository: str, style_version: str, sections: str = "", notice: str = "") -> str:
     document_title = title if current == "index.html" else title + " · Plugin Manager USB"
     page_title, glyph = next((label, symbol) for page, label, symbol in PAGE_NAVIGATION if page == current)
     navigation = "".join('<a href="{}"{}>{}<span>{}</span></a>'.format(
@@ -397,7 +397,7 @@ def shell(title: str, description: str, current: str, body: str, repository: str
 <a class="skip-link" href="#content">Skip to content</a>
 <aside class="site-sidebar" aria-label="Site navigation">
   <a class="sidebar-brand" href="index.html" aria-label="Plugin Manager USB overview"><img src="assets/favicon.svg" width="32" height="32" alt=""><span class="title-pill"><span>PLUGIN MANAGER</span><b>USB</b></span></a>
-  <div class="sidebar-scroll"><nav class="sidebar-nav" aria-label="Main navigation">{navigation}</nav><div class="sidebar-divider"></div>{sections}</div>
+  <div class="sidebar-scroll"><nav class="sidebar-nav" aria-label="Main navigation">{navigation}</nav>{notice}<div class="sidebar-divider"></div>{sections}</div>
   <div class="sidebar-footer">{download}{source}</div>
 </aside>
 <header class="site-toolbar"><div class="toolbar-title">{page_icon}<span>{page_title}</span></div><button class="theme-toggle" type="button" aria-label="Switch to light theme" aria-pressed="false"><span class="theme-symbol theme-sun">{sun}</span><span class="theme-symbol theme-moon">{moon}</span><span class="theme-label">Light</span></button></header>
@@ -405,7 +405,7 @@ def shell(title: str, description: str, current: str, body: str, repository: str
 <footer class="site-footer"><div><a href="guide.html#credits-and-acknowledgments">About this project</a></div></footer>
 </body>
 </html>
-'''.format(title=html.escape(document_title), description=html.escape(description, quote=True), navigation=navigation, sections=sections, download=download, source=source, page_icon=site_icon(glyph), page_title=page_title, sun=site_icon("sun"), moon=site_icon("moon"), body=body, style_version=style_version)
+'''.format(title=html.escape(document_title), description=html.escape(description, quote=True), navigation=navigation, sections=sections, notice=notice, download=download, source=source, page_icon=site_icon(glyph), page_title=page_title, sun=site_icon("sun"), moon=site_icon("moon"), body=body, style_version=style_version)
 
 
 def landing(readme: str, root: Path, repository: str, revision: str) -> str:
@@ -451,9 +451,16 @@ def build(output: Path, repository: str = "", revision: str = "main", root: Path
     for notice, destination in NOTICES.items():
         shutil.copyfile(root / notice, output / destination)
     readme = (root / "README.md").read_text(encoding="utf-8")
+    notice_match = re.search(r"^> As of firmware 3\.10\.1[^\n]*(?:\n>[^\n]*)*", readme, re.M)
+    if not notice_match:
+        raise ValueError("README must include the development halt notice")
+    notice_text = "\n".join(line.removeprefix(">").lstrip() for line in notice_match[0].splitlines())
+    notice = '<section class="sidebar-notice" aria-label="Development notice">{}</section>'.format(
+        Markdown(root, repository, revision).render(notice_text)
+    )
     (output / "index.html").write_text(shell(
         "Plugin Manager USB", "USB plugin installer and catalog for MPC standalone.",
-        "index.html", landing(readme, root, repository, revision), repository, style_version,
+        "index.html", landing(readme, root, repository, revision), repository, style_version, notice=notice,
     ), encoding="utf-8")
     for filename, (page, title) in DOCUMENTS.items():
         text = (root / filename).read_text(encoding="utf-8")
@@ -474,7 +481,7 @@ def build(output: Path, repository: str = "", revision: str = "main", root: Path
         ) for h in headings)
         search = '<div class="faq-search"><label for="faq-search">Search the developer FAQ</label><div class="search-controls"><input id="faq-search" type="search" placeholder="Try checksums, firmware or uninstall" autocomplete="off" aria-describedby="search-status"><button class="search-clear" type="button">Clear</button></div><p id="search-status" role="status" aria-live="polite"></p><p id="no-results" hidden>No matching questions. Try another term or clear the search.</p></div>' if filename == "DEVELOPER_FAQ.md" else ""
         body = '<div class="docs-layout"><div class="doc-main">{}<article class="prose">{}</article></div></div>'.format(search, content)
-        (output / page).write_text(shell(title, title + " for the Plugin Manager USB source.", page, body, repository, style_version, toc), encoding="utf-8")
+        (output / page).write_text(shell(title, title + " for the Plugin Manager USB source.", page, body, repository, style_version, toc, notice), encoding="utf-8")
     (output / ".nojekyll").write_text("", encoding="utf-8")
 
 

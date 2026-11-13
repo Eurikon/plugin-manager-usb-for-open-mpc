@@ -397,6 +397,30 @@ a,button {
   display:grid;
   gap:5px
 }
+.sidebar-notice {
+  margin-top:20px;
+  padding:13px;
+  background:var(--panel);
+  border:1px solid var(--line);
+  border-radius:2px;
+  color:var(--muted);
+  font-size:12px;
+  line-height:1.55
+}
+.sidebar-notice p {
+  margin:0 0 12px
+}
+.sidebar-notice p:first-child {
+  color:var(--ink);
+  font-weight:600
+}
+.sidebar-notice p:last-child {
+  margin-bottom:0
+}
+.sidebar-notice a {
+  color:var(--amber);
+  text-underline-offset:3px
+}
 .sidebar-nav a {
   display:flex;
   align-items:center;
