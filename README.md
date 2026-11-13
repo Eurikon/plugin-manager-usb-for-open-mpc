@@ -6,12 +6,12 @@
 [![User guide](https://img.shields.io/badge/Guide-Website-blue?logo=githubpages)](https://eurikon.github.io/plugin-manager-usb-for-open-mpc/guide.html)
 [![MIT license](https://img.shields.io/github/license/Eurikon/plugin-manager-usb-for-open-mpc)](LICENSE)
 
-<picture>
-  <source media="(max-width: 600px)" srcset="site/assets/development-notice-mobile.svg">
-  <img src="site/assets/development-notice.svg" alt="As of firmware 3.10.1, development on Plugin Manager USB for Open-MPC will be halted. Akai now supports external plugin development, and plugins can be installed directly in the appropriate location. The official Open-MPC plugin already handles this, making Plugin Manager USB obsolete. Thank you for trying it out and for your support." width="920">
-</picture>
-
-[Official Open-MPC plugin](https://github.com/open-mpc/mpc-vst-plugins/tree/main/tools/plugin_manager_g2)
+> As of firmware 3.10.1, development on Plugin Manager USB for Open-MPC will be halted.
+>
+> Akai now supports external plugin development, and plugins can be installed directly in the appropriate location.
+> The [official Open-MPC plugin](https://github.com/open-mpc/mpc-vst-plugins/tree/main/tools/plugin_manager_g2) already handles this, making Plugin Manager USB obsolete.
+>
+> Thank you for trying it out and for your support.
 
 Browse, install, update and remove community instruments and effects on your MPC touchscreen.<br>
 Run the manager directly from USB.<br>
