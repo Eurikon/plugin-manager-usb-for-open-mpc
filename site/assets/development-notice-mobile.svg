@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="390" height="288" viewBox="0 0 390 288" role="img" aria-labelledby="title description">
+  <title id="title">Development notice</title>
+  <desc id="description">As of firmware 3.10.1, development on Plugin Manager USB for Open-MPC will be halted. Akai now supports external plugin development, and plugins can be installed directly in the appropriate location. The official Open-MPC plugin already handles this, making Plugin Manager USB obsolete. Thank you for trying it out and for your support.</desc>
+  <rect width="390" height="288" fill="#090c10"/>
+  <g fill="#c9d1d9" font-family="Arial, Helvetica, sans-serif" font-size="16">
+  <text x="20" y="36">As of firmware 3.10.1, development on Plugin</text>
+  <text x="20" y="61">Manager USB for Open-MPC will be halted.</text>
+  <text x="20" y="95">Akai now supports external plugin</text>
+  <text x="20" y="120">development, and plugins can be installed</text>
+  <text x="20" y="145">directly in the appropriate location.</text>
+  <text x="20" y="179">The official Open-MPC plugin already handles</text>
+  <text x="20" y="204">this, making Plugin Manager USB obsolete.</text>
+  <text x="20" y="238">Thank you for trying it out and for your</text>
+  <text x="20" y="263">support.</text>
+  </g>
+</svg>
