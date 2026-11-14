@@ -9,8 +9,8 @@
 > As of firmware 3.10.1, development on Plugin Manager USB for Open-MPC will be halted.
 >
 > Akai now supports external plugin development, and plugins can be installed directly in the appropriate location.<br>
-> The [official Open-MPC plugin manager]([https://open-mpc.github.io/install.html]) already handles this,
-> making Plugin Manager USB now obsolete.
+> The [official Open-MPC plugin manager](https://open-mpc.github.io/install.html) already handles this.
+> This makes Plugin Manager USB obsolete.
 >
 > Thank you for trying it out and for your support.
 
